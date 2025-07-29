@@ -1,0 +1,56 @@
+name: Deploy to AKS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        run: |
+          echo ${{ secrets.ACR_PASSWORD }} | docker login agrofount.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t agrofount.azurecr.io/agrofount-backend:latest .
+          docker push agrofount.azurecr.io/agrofount-backend:latest
+
+      - name: Deploy to AKS
+        run: |
+          az aks get-credentials --resource-group agrofount-resource-group --name agrofount-cluster
+          kubectl create secret generic agrofount-secrets \
+            --from-literal=DB_SYNCHRONIZE=true \
+            --from-literal=JWT_SECRET=${{ secrets.JWT_SECRET }} \
+            --from-literal=JWT_EXPIRATION=3600 \
+            --from-literal=SENDGRID_API_KEY=${{ secrets.SENDGRID_API_KEY }} \
+            --from-literal=SENDGRID_FROM_EMAIL=${{ secrets.SENDGRID_FROM_EMAIL }} \
+            --from-literal=SEND_IN_BLUE_API_KEY=${{ secrets.SEND_IN_BLUE_API_KEY }} \
+            --from-literal=SEND_IN_BLUE_FROM_EMAIL=${{ secrets.SEND_IN_BLUE_FROM_EMAIL }} \
+            --from-literal=FRONTEND_URL=${{ secrets.FRONTEND_URL }} \
+            --from-literal=ADMIN_FRONTEND_URL=${{ secrets.ADMIN_FRONTEND_URL }} \
+            --from-literal=AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+            --from-literal=AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+            --from-literal=AWS_S3_REGION=${{ secrets.AWS_S3_REGION }} \
+            --from-literal=AWS_BUCKET_NAME=${{ secrets.AWS_BUCKET_NAME }} \
+            --from-literal=PAYSTACK_SECRET_KEY=${{ secrets.PAYSTACK_SECRET_KEY }} \
+            --from-literal=PAYSTACK_PUBLIC_KEY=${{ secrets.PAYSTACK_PUBLIC_KEY }} \
+            --from-literal=PAYSTACK_URL=${{ secrets.PAYSTACK_URL }} \
+            --from-literal=REDIS_URL=${{ secrets.REDIS_URL }}
+          kubectl apply -f kubernetes/configmap.yaml
+          kubectl apply -f kubernetes/deployment.yaml
+          kubectl apply -f kubernetes/service.yaml
