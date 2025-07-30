@@ -40,7 +40,6 @@ export class CreditFacilityService {
     @InjectRepository(OrderEntity)
     private readonly orderRepository: Repository<OrderEntity>,
     @InjectRepository(DisbursementEntity)
-    private readonly disbursementRepository: Repository<DisbursementEntity>,
     private readonly notificationService: NotificationService, // Inject NotificationService
   ) {}
 

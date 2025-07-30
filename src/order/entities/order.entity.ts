@@ -18,7 +18,6 @@ import {
 import { UserEntity } from '../../user/entities/user.entity';
 import { InvoiceEntity } from '../../invoice/entities/invoice.entity';
 import { ShipmentEntity } from '../../supply-chain/entities/shipment.entity';
-import { OrderItemEntity } from './order-item.entity';
 
 export interface addressInterface {
   street: string;
@@ -62,15 +61,8 @@ export class OrderEntity {
   @Column('decimal', { precision: 10, scale: 2, nullable: true })
   vat: number;
 
-  // @Column('json')
-  // items: orderItemInterface[];
-
-  @OneToMany(() => OrderItemEntity, (item) => item.order, {
-    cascade: true,
-    eager: true,
-    nullable: true,
-  })
-  items: OrderItemEntity[];
+  @Column('json', { default: [] })
+  items: orderItemInterface[];
 
   @Column('json')
   address: addressInterface;

@@ -7,7 +7,7 @@ BEGIN
     -- Check if the order status is updated to 'confirmed'
     IF NEW.status = 'confirmed' THEN
         -- Loop through each item in the order's items JSON array
-        FOR item IN SELECT * FROM jsonb_to_recordset(NEW.items::jsonb) AS x(id UUID, quantity INT) LOOP
+        FOR item IN SELECT * FROM jsonb_to_recordset(NEW.items::jsonb) AS x(id UUID, quantity NUMERIC) LOOP
             -- Update the purchaseCount for the corresponding product location
             UPDATE product_location
             SET "purchaseCount" = "purchaseCount" + item.quantity

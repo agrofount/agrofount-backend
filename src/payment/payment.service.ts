@@ -144,7 +144,10 @@ export class PaymentService {
     payment.transferReceived = true;
     payment.paymentStatus = PaymentStatus.Completed;
 
-    const updatedPayment = await this.paymentRepository.save(payment);
+    const updatedPayment = await this.paymentRepository.update(
+      paymentId,
+      payment,
+    );
 
     await this.processReferralCommission(payment);
 

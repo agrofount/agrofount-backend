@@ -57,7 +57,7 @@ export class ProductLocationEntity {
   @Column({ default: 0 })
   addToCartCount: number;
 
-  @Column({ default: 0 })
+  @Column('decimal', { precision: 10, scale: 2, default: 0 })
   purchaseCount: number;
 
   @Column('boolean', { default: true })

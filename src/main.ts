@@ -5,6 +5,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import * as cookieParser from 'cookie-parser';
 import { setupTriggers } from './config/database/triggers/script';
 import { GlobalExceptionFilter } from './utils/Exceptions/globalException.filter';
+import { getDataSourceToken } from '@nestjs/typeorm';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -50,7 +51,10 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api', app, document);
 
-  // await setupTriggers();
+  const dataSource = app.get(getDataSourceToken()); // Or your preferred way to get DataSource
+
+  // Setup triggers after DB connection is established
+  await setupTriggers(dataSource);
 
   await app.listen(process.env.PORT ?? 3000);
 }

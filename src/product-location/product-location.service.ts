@@ -290,11 +290,12 @@ export class ProductLocationService {
     for (const product of products) {
       const positiveReviews = product.reviews.filter((r) => r.star >= 4).length;
 
-      product.popularityScore =
+      product.popularityScore = Math.round(
         (product.views || 0) * 1 +
-        (product.addToCartCount || 0) * 2 +
-        (product.purchaseCount || 0) * 5 +
-        positiveReviews * 3;
+          (product.addToCartCount || 0) * 2 +
+          (product.purchaseCount || 0) * 5 +
+          positiveReviews * 3,
+      );
 
       await this.productLocationRepo.save(product);
     }

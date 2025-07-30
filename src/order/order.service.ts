@@ -182,7 +182,7 @@ export class OrderService {
         searchableColumns: ['status', 'paymentMethod'],
         defaultSortBy: [['createdAt', 'DESC']],
         filterableColumns: {
-          'items.category': [FilterOperator.IN],
+          category: [FilterOperator.EQ],
           price: [FilterOperator.GTE, FilterOperator.LTE],
           createdAt: [FilterOperator.GTE, FilterOperator.LTE],
           status: [FilterOperator.EQ],

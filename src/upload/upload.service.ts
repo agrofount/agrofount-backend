@@ -21,10 +21,6 @@ export class UploadService {
 
     this.s3Client = new S3Client({
       region: this.configService.getOrThrow<string>('AWS_S3_REGION'),
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
     });
   }
   async upload(name: string, buffer: Buffer, clientId: string, server: Server) {

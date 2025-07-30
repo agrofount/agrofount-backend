@@ -8,11 +8,10 @@ import { PaymentModule } from '../payment/payment.module';
 import { VoucherModule } from '../voucher/voucher.module';
 import { NotificationModule } from '../notification/notification.module';
 import { ProductLocationModule } from '../product-location/product-location.module';
-import { OrderItemEntity } from './entities/order-item.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([OrderEntity, OrderItemEntity, PaymentEntity]),
+    TypeOrmModule.forFeature([OrderEntity, PaymentEntity]),
     PaymentModule,
     VoucherModule,
     NotificationModule,

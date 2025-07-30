@@ -4,7 +4,7 @@
 /build
 /certificate
 /kubernetes_temp
-kubernetes/secret.yaml
+/kubernetes
 
 # Logs
 logs

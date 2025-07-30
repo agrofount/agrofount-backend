@@ -33,11 +33,8 @@ export class CartController {
     description: 'Json structure for adding item to cart',
   })
   async addToCart(@Body() dto: AddToCartDto, @CurrentUser() user: UserEntity) {
-    console.log('this is the user: ', user);
     this.logger.debug(`Add to cart`);
-
     const cartData = await this.cartService.addToCart(user.id, dto);
-
     return {
       success: true,
       message: 'Item added to cart',
