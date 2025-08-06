@@ -21,6 +21,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 import { CurrentUser } from 'src/utils/decorators/current-user.decorator';
 import { UserEntity } from 'src/user/entities/user.entity';
+import { PaymentStatus } from './enum/payment.enum';
 
 @ApiTags('Payment')
 @Controller('payment')
@@ -61,11 +62,14 @@ export class PaymentController {
     return this.paymentService.confirmTransfer(id, user.id);
   }
 
-  @Patch(':id/transfer-received')
+  @Patch(':id/confirm-transfer-received')
   @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
   @RequiredPermissions('update_payments')
-  transferReceived(@Param('id') id: string) {
-    this.logger.log('Transfer received');
-    return this.paymentService.transferReceived(id);
+  confirmTransferReceived(
+    @Param('id') id: string,
+    @Query('status') status?: PaymentStatus,
+  ) {
+    this.logger.log('Confirming transfer received');
+    return this.paymentService.confirmTransferReceived(id, status);
   }
 }

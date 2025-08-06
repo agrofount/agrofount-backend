@@ -120,15 +120,27 @@ export class PaymentService {
   async confirmTransfer(paymentId: string, userId: string) {
     const payment = await this.findOne(paymentId);
 
+    if (payment.paymentMethod !== PaymentMethod.BankTransfer) {
+      throw new BadRequestException('Payment method is not Bank Transfer');
+    }
+    if (payment.paymentStatus !== PaymentStatus.Pending) {
+      throw new BadRequestException('Payment status is not Pending');
+    }
+    if (payment.confirmTransfer) {
+      throw new BadRequestException('Transfer already confirmed');
+    }
+
     payment.confirmTransfer = true;
     const updatedPayment = await this.paymentRepository.save(payment);
-
+    this.logger.debug(
+      `Payment ${updatedPayment.id} confirmed with status ${updatedPayment.paymentStatus}`,
+    );
     this.cartService.clear(userId);
 
     return updatedPayment;
   }
 
-  async transferReceived(paymentId: string) {
+  async confirmTransferReceived(paymentId: string, status?: PaymentStatus) {
     const payment = await this.findOne(paymentId);
 
     if (payment.paymentMethod !== PaymentMethod.BankTransfer) {
@@ -141,41 +153,44 @@ export class PaymentService {
       throw new BadRequestException('Transfer already received');
     }
 
+    payment.paymentStatus = status || PaymentStatus.Completed;
+    payment.confirmTransfer = status === PaymentStatus.Completed;
     payment.transferReceived = true;
-    payment.paymentStatus = PaymentStatus.Completed;
 
     const updatedPayment = await this.paymentRepository.update(
       paymentId,
       payment,
     );
 
-    await this.processReferralCommission(payment);
+    if (status === PaymentStatus.Completed) {
+      await this.processReferralCommission(payment);
 
-    // Send notification when transfer is received
-    const paymentInfo = {
-      payment_id: payment.id,
-      reference: payment.reference,
-      amount: payment.amount,
-      amountPaid: payment.amountPaid,
-      paymentStatus: payment.paymentStatus,
-      paymentMethod: payment.paymentMethod,
-      transferReceived: payment.transferReceived,
-      createdAt: payment.createdAt,
-    };
-    if (payment.email) {
-      await this.notificationService.sendNotification(
-        NotificationChannels.EMAIL,
-        { email: payment.email, userId: payment.userId },
-        MessageTypes.PAYMENT_RECEIVED_NOTIFICATION,
-        paymentInfo,
-      );
-    } else if (payment.phone) {
-      await this.notificationService.sendNotification(
-        NotificationChannels.SMS,
-        { phoneNumber: payment.phone, userId: payment.userId },
-        MessageTypes.PAYMENT_RECEIVED_NOTIFICATION,
-        paymentInfo,
-      );
+      // Send notification when transfer is received
+      const paymentInfo = {
+        payment_id: payment.id,
+        reference: payment.reference,
+        amount: payment.amount,
+        amountPaid: payment.amountPaid,
+        paymentStatus: payment.paymentStatus,
+        paymentMethod: payment.paymentMethod,
+        transferReceived: payment.transferReceived,
+        createdAt: payment.createdAt,
+      };
+      if (payment.email) {
+        await this.notificationService.sendNotification(
+          NotificationChannels.EMAIL,
+          { email: payment.email, userId: payment.userId },
+          MessageTypes.PAYMENT_RECEIVED_NOTIFICATION,
+          paymentInfo,
+        );
+      } else if (payment.phone) {
+        await this.notificationService.sendNotification(
+          NotificationChannels.SMS,
+          { phoneNumber: payment.phone, userId: payment.userId },
+          MessageTypes.PAYMENT_RECEIVED_NOTIFICATION,
+          paymentInfo,
+        );
+      }
     }
 
     return updatedPayment;
