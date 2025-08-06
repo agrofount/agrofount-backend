@@ -7,6 +7,11 @@ BEGIN
         SET status = 'confirmed',
             "paymentStatus" = 'completed'
         WHERE id = NEW."orderId"::uuid;
+    ELSIF NEW."paymentStatus" = 'cancelled' OR NEW."paymentStatus" = 'refunded' THEN
+        UPDATE orders
+        SET status = 'cancelled',
+            "paymentStatus" = 'cancelled'
+        WHERE id = NEW."orderId"::uuid;
     END IF;
     RETURN NEW;
 END;
