@@ -192,13 +192,9 @@ export class OrderService {
             ? undefined
             : { user: { id: user.id } },
         relations: ['user'],
+        defaultLimit: Number.MAX_SAFE_INTEGER,
+        maxLimit: Number.MAX_SAFE_INTEGER,
       };
-
-      const modifiedQuery = query;
-
-      if (!query.limit) {
-        modifiedQuery.limit = Number.MAX_SAFE_INTEGER;
-      }
 
       const result = await paginate(
         query,
