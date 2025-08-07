@@ -173,6 +173,23 @@ export class UserService {
     return result;
   }
 
+  async activate(id: string, activate: boolean): Promise<UserEntity> {
+    const user = await this.userRepo.findOne({ where: { id } });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    if (user.isVerified === activate) {
+      throw new BadRequestException(
+        `User is already ${activate ? 'active' : 'inactive'}`,
+      );
+    }
+
+    user.isVerified = activate;
+    return this.userRepo.save(user);
+  }
+
   async findOne(id: string): Promise<UserEntity> {
     const user = await this.userRepo.findOne({ where: { id } });
 

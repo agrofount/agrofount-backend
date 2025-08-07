@@ -9,6 +9,8 @@ import {
   Post,
   Body,
   Put,
+  Patch,
+  Query,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
@@ -39,6 +41,16 @@ export class UserController {
   @UseGuards(JwtAuthGuard, AdminAuthGuard)
   findAll(@Paginate() query: PaginateQuery): Promise<Paginated<UserEntity>> {
     return this.userService.findAll(query);
+  }
+
+  @Patch(':id/activate')
+  @UseInterceptors(ClassSerializerInterceptor)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  activate(
+    @Param('id') id: string,
+    @Query('activate') activate: boolean,
+  ): Promise<UserEntity> {
+    return this.userService.activate(id, activate);
   }
 
   @Get('profile')
