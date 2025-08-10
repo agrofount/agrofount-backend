@@ -14,7 +14,6 @@ import { SendInBlueModule } from './notification/modules/sendinblue.module';
 import { CartModule } from './cart/cart.module';
 import appConfig from './config/app.config';
 import { CacheModule } from '@nestjs/cache-manager';
-import { redisStore } from 'cache-manager-redis-yet';
 import { UploadModule } from './upload/upload.module';
 import { SubscriberModule } from './subscriber/subscriber.module';
 import { WalletModule } from './wallet/wallet.module';
@@ -37,6 +36,8 @@ import termiiConfig from './config/termii.config';
 import { AiChatModule } from './ai-chat/ai-chat.module';
 import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
+import { createKeyv, Keyv } from '@keyv/redis';
+import { CacheableMemory } from 'cacheable';
 
 @Module({
   imports: [
@@ -65,10 +66,12 @@ import { SupplyChainModule } from './supply-chain/supply-chain.module';
       useFactory: async (configService: ConfigService) => {
         const redisUrl = configService.get<string>('REDIS_URL');
         return {
-          store: await redisStore({
-            url: redisUrl,
-            password: configService.get<string>('REDIS_SECRET'),
-          }),
+          stores: [
+            new Keyv({
+              store: new CacheableMemory({ ttl: 60000, lruSize: 5000 }),
+            }),
+            createKeyv(redisUrl),
+          ],
         };
       },
       isGlobal: true,

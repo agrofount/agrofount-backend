@@ -45,7 +45,8 @@ export class UserController {
 
   @Patch(':id/activate')
   @UseInterceptors(ClassSerializerInterceptor)
-  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_users')
   activate(
     @Param('id') id: string,
     @Query('activate') activate: boolean,
