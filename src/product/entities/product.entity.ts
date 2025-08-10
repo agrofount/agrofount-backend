@@ -14,6 +14,9 @@ import { ProductLocationEntity } from '../../product-location/entities/product-l
 import slugify from 'slugify';
 
 @Entity('products')
+@Index('IDX_PRODUCT_CATEGORY', ['category'])
+@Index('IDX_PRODUCT_SUBCATEGORY', ['subCategory'])
+@Index('IDX_PRODUCT_BRAND', ['brand'])
 export class ProductEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

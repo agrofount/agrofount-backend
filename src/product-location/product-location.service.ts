@@ -11,7 +11,7 @@ import {
 import { UpdateProductLocationDto } from './dto/update-product-location.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ProductLocationEntity } from './entities/product-location.entity';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { ProductService } from '../product/services/product.service';
 import { CountryService } from '../country/country.service';
 import { StateService } from '../state/state.service';
@@ -152,6 +152,18 @@ export class ProductLocationService {
       console.error('Error parsing custom filters:', error);
       throw new BadRequestException('Error getting product location');
     }
+  }
+
+  async checkExistBySubCategory(subCategory: string) {
+    const count = await this.productLocationRepo.count({
+      where: {
+        product: {
+          subCategory,
+        },
+      },
+      relations: ['product'],
+    });
+    return count > 0;
   }
 
   async update(slug: string, dto: UpdateProductLocationDto) {
@@ -299,5 +311,136 @@ export class ProductLocationService {
 
       await this.productLocationRepo.save(product);
     }
+  }
+
+  async getRecommendations(filters: {
+    feedCategory: string;
+    productCategories: string[];
+    additives?: string[];
+    animalType: string;
+    lifecycleStage?: string;
+    limit?: number;
+  }) {
+    const query = this.productLocationRepo
+      .createQueryBuilder('productLocation')
+      .leftJoinAndSelect('productLocation.product', 'product')
+      .where('product.isAvailable = :isAvailable', { isAvailable: true });
+
+    // Apply feed category filter
+    if (filters.feedCategory) {
+      query.andWhere('product.feedCategory = :feedCategory', {
+        feedCategory: filters.feedCategory,
+      });
+    }
+
+    // Apply product categories filter
+    if (filters.productCategories?.length) {
+      query.andWhere('product.category IN (:...categories)', {
+        categories: filters.productCategories,
+      });
+    }
+
+    // Apply additives filter
+    if (filters.additives?.length) {
+      query.andWhere('product.subCategory IN (:...additives)', {
+        additives: filters.additives,
+      });
+    }
+
+    // Apply lifecycle stage filter if available
+    if (filters.lifecycleStage) {
+      query.andWhere('product.lifecycleStage = :lifecycleStage', {
+        lifecycleStage: filters.lifecycleStage,
+      });
+    }
+
+    // Order by popularity and price
+    query
+      .orderBy('productLocation.popularityScore', 'DESC')
+      .addOrderBy('productLocation.price', 'ASC')
+      .limit(filters.limit || 5);
+
+    const products = await query.getMany();
+
+    // Get best location for each product
+    return Promise.all(
+      products.map(async (product) => {
+        const bestLocation = await this.productLocationRepo.findOne({
+          where: { product: { id: product.id } },
+          order: { price: 'ASC' },
+        });
+
+        return {
+          ...product,
+          bestLocation,
+          dosage: this.getRecommendedDosage(product, filters.animalType),
+        };
+      }),
+    );
+  }
+
+  private getRecommendedDosage(
+    productLocation: ProductLocationEntity,
+    animalType: string,
+  ): string {
+    // Your logic to determine dosage based on product and animal type
+    return 'Follow manufacturer instructions';
+  }
+
+  private async getBestProductLocation(productId: string) {
+    return this.productLocationRepo.findOne({
+      where: { product: { id: productId } },
+      order: {
+        viewPriority: 'DESC',
+        popularityScore: 'DESC',
+        price: 'ASC', // Prefer lower prices
+      },
+      relations: ['state', 'country'],
+    });
+  }
+
+  async getAlternativeProducts(productId: string, limit = 3) {
+    // Get the original product to determine category and animal type
+    const original = await this.productLocationRepo.findOne({
+      where: { id: productId },
+      relations: ['product'],
+    });
+
+    if (!original) return [];
+
+    // Find similar products (same category and animal type)
+    return this.productLocationRepo.find({
+      where: {
+        product: {
+          category: original.product.category,
+          subCategory: original.product.subCategory,
+        },
+        id: Not(original.id), // Exclude the original product
+      },
+      relations: ['product'],
+      take: limit,
+      order: {
+        popularityScore: 'DESC',
+      },
+    });
+  }
+
+  async getAvailableRecommendations(
+    category: string,
+    animalType: string,
+    limit = 5,
+  ) {
+    const query = this.productLocationRepo
+      .createQueryBuilder('product')
+      .leftJoinAndSelect('product.productLocations', 'location')
+      .where('product.category = :category', { category })
+      .andWhere('product.subCategory = :animalType', { animalType })
+      .andWhere('location.isAvailable = :isAvailable', { isAvailable: true })
+      .orderBy('location.popularityScore', 'DESC')
+      .addOrderBy('location.bestSeller', 'DESC')
+      .addOrderBy('location.price', 'ASC')
+      .take(limit);
+
+    return query.getMany();
   }
 }

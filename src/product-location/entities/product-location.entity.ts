@@ -22,6 +22,10 @@ import slugify from 'slugify';
 import { SEOEntity } from './product-location-seo';
 
 @Entity('product_location')
+@Index('IDX_LOCATION_PRODUCT', ['product'])
+@Index('IDX_LOCATION_PRICE', ['price'])
+@Index('IDX_LOCATION_POPULARITY', ['popularityScore'])
+@Index('IDX_LOCATION_BESTSELLER', ['bestSeller'])
 export class ProductLocationEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

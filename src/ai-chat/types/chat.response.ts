@@ -1,0 +1,7 @@
+export type ChatResponseType =
+  | 'ADMIN_CONTACT'
+  | 'PRODUCT_RECOMMENDATION'
+  | 'FALL_BACK'
+  | 'GENERAL_RESPONSE'
+  | 'ELICIT_SLOT'
+  | 'DIAGNOSIS';
