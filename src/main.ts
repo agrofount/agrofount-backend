@@ -30,10 +30,13 @@ async function bootstrap() {
       'https://admin-dev.agrofount.com',
       'https://dev.agrofount.com',
       'https://staging.agrofount.com',
+      'https://dev-client.agrofount.com',
+      'https://dev-admin.agrofount.com',
+      'https://dev.development.agrofount.com',
     ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
-    allowedHeaders: 'Content-Type, Accept, Authorization',
+    allowedHeaders: 'Content-Type, Accept, Authorization, X-Session-Id',
   });
 
   const swaggerConfig = new DocumentBuilder()

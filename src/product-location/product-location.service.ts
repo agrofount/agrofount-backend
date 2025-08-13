@@ -324,33 +324,14 @@ export class ProductLocationService {
     const query = this.productLocationRepo
       .createQueryBuilder('productLocation')
       .leftJoinAndSelect('productLocation.product', 'product')
-      .where('product.isAvailable = :isAvailable', { isAvailable: true });
+      .where('productLocation.isAvailable = :isAvailable', {
+        isAvailable: true,
+      });
 
     // Apply feed category filter
     if (filters.feedCategory) {
-      query.andWhere('product.feedCategory = :feedCategory', {
+      query.andWhere('product.category = :feedCategory', {
         feedCategory: filters.feedCategory,
-      });
-    }
-
-    // Apply product categories filter
-    if (filters.productCategories?.length) {
-      query.andWhere('product.category IN (:...categories)', {
-        categories: filters.productCategories,
-      });
-    }
-
-    // Apply additives filter
-    if (filters.additives?.length) {
-      query.andWhere('product.subCategory IN (:...additives)', {
-        additives: filters.additives,
-      });
-    }
-
-    // Apply lifecycle stage filter if available
-    if (filters.lifecycleStage) {
-      query.andWhere('product.lifecycleStage = :lifecycleStage', {
-        lifecycleStage: filters.lifecycleStage,
       });
     }
 
@@ -431,14 +412,16 @@ export class ProductLocationService {
     limit = 5,
   ) {
     const query = this.productLocationRepo
-      .createQueryBuilder('product')
-      .leftJoinAndSelect('product.productLocations', 'location')
+      .createQueryBuilder('productLocation')
+      .leftJoinAndSelect('productLocation.product', 'product')
       .where('product.category = :category', { category })
       .andWhere('product.subCategory = :animalType', { animalType })
-      .andWhere('location.isAvailable = :isAvailable', { isAvailable: true })
-      .orderBy('location.popularityScore', 'DESC')
-      .addOrderBy('location.bestSeller', 'DESC')
-      .addOrderBy('location.price', 'ASC')
+      .andWhere('productLocation.isAvailable = :isAvailable', {
+        isAvailable: true,
+      })
+      .orderBy('productLocation.popularityScore', 'DESC')
+      .addOrderBy('productLocation.bestSeller', 'DESC')
+      .addOrderBy('productLocation.price', 'ASC')
       .take(limit);
 
     return query.getMany();
