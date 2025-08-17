@@ -18,6 +18,7 @@ import {
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import {
   AISubcategoryMap,
+  AnimalCategory,
   LivestockFeedCategory,
   ProductCategory,
   ProductSubCategory,
@@ -298,11 +299,11 @@ export class AiChatService {
     sessionData: any,
   ) {
     const animalType = this.determineAnimalType(message);
-    const productType = this.mapAnimalToProductType(animalType);
 
     // Verify we have products for this animal type
-    const hasProducts =
-      await this.productLocationService.checkExistBySubCategory(productType);
+    const hasProducts = await this.productLocationService.checkExistByCategory(
+      message as AnimalCategory,
+    );
 
     if (!hasProducts) {
       return {
@@ -971,17 +972,6 @@ export class AiChatService {
   ): string {
     // Your logic to determine lifecycle stage based on diagnosis and animal type
     return 'Starter'; // Default
-  }
-
-  private mapAnimalToProductType(animalType: string): string {
-    const mapping = {
-      cattle: 'Cattle Feed',
-      poultry: 'Poultry Feed',
-      sheep: 'Sheep Feed',
-      goats: 'Goat Feed',
-      pigs: 'Pig Feed',
-    };
-    return mapping[animalType.toLowerCase()] || 'General Livestock';
   }
 
   // Helper methods

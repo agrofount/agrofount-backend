@@ -60,7 +60,10 @@ export class ProductController {
   @Get('livestock-feed-categories')
   @ApiOperation({ summary: 'Get Livestock Feed Categories' })
   @ApiOkResponse({ type: Object })
-  getLivestockFeedCategories(): Record<string, string[]> {
+  getLivestockFeedCategories(): Record<
+    string,
+    Record<string, string[]> | string[]
+  > {
     return this.productService.getAgrofountCategories();
   }
 

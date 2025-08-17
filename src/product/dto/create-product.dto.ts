@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsArray, IsNotEmpty, IsString } from 'class-validator';
+import { AnimalCategory, ProductSubCategoryType } from '../types/product.enum';
 
 export class CreateProductDto {
   @ApiProperty({ description: 'Product name', example: 'Product A' })
@@ -15,10 +16,15 @@ export class CreateProductDto {
   @IsNotEmpty()
   description: string;
 
+  @ApiProperty({ description: 'Product primary category' })
+  @IsString()
+  @IsNotEmpty()
+  primaryCategory: ProductSubCategoryType;
+
   @ApiProperty({ description: 'Product category' })
   @IsString()
   @IsNotEmpty()
-  category: string;
+  category: AnimalCategory;
 
   @ApiProperty({
     description: 'Product sub-category',

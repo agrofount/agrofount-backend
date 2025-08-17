@@ -12,6 +12,11 @@ import {
 } from 'typeorm';
 import { ProductLocationEntity } from '../../product-location/entities/product-location.entity';
 import slugify from 'slugify';
+import {
+  AnimalCategory,
+  PrimaryProductCategory,
+  ProductSubCategoryType,
+} from '../types/product.enum';
 
 @Entity('products')
 @Index('IDX_PRODUCT_CATEGORY', ['category'])
@@ -31,10 +36,21 @@ export class ProductEntity {
   @Column('text', { default: 'this is a sample description' })
   description: string;
 
-  @Column({ default: 'Poultry Feed' })
-  category: string;
+  @Column({
+    // type: 'enum',
+    enum: ProductSubCategoryType,
+    default: ProductSubCategoryType.LIVESTOCK,
+  })
+  primaryCategory: ProductSubCategoryType;
 
-  @Column({ default: 'Starter Mash' })
+  @Column({
+    // type: 'enum',
+    enum: AnimalCategory,
+    default: AnimalCategory.POULTRY,
+  })
+  category: AnimalCategory;
+
+  @Column({ default: 'Starter' })
   subCategory: string;
 
   @Column({ default: 'Agrofount' })

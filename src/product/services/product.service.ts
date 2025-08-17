@@ -14,7 +14,13 @@ import {
   Paginated,
   PaginateQuery,
 } from 'nestjs-paginate';
-import { AgrofountSubCategories } from '../types/product.enum';
+import {
+  AgrofountSubCategories,
+  AnimalSubCategories,
+  Brands,
+  Drugs,
+  ProductSubCategories,
+} from '../types/product.enum';
 
 @Injectable()
 export class ProductService {
@@ -53,8 +59,17 @@ export class ProductService {
     });
   }
 
-  getAgrofountCategories(): Record<string, string[]> {
-    return AgrofountSubCategories;
+  getAgrofountCategories(): Record<
+    string,
+    Record<string, string[]> | string[]
+  > {
+    return {
+      feed: AgrofountSubCategories,
+      livestock: AnimalSubCategories,
+      brands: Brands,
+      drugs: Drugs,
+      primaryCategories: Object.keys(ProductSubCategories),
+    };
   }
 
   async findOne(id: string) {

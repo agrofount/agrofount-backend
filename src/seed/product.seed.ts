@@ -1,7 +1,9 @@
 import { setSeederFactory } from 'typeorm-extension';
 import { ProductEntity } from '../product/entities/product.entity';
 import {
+  AnimalCategory,
   ProductCategory,
+  ProductSubCategories,
   ProductSubCategory,
 } from '../product/types/product.enum';
 
@@ -59,11 +61,11 @@ export const productFactory = setSeederFactory(ProductEntity, (faker) => {
   product.description = faker.commerce.productDescription();
 
   // Randomly select a category and a corresponding subcategory
-  const categories = Object.keys(categorySubCategoryMap) as ProductCategory[];
+  const categories = Object.keys(categorySubCategoryMap) as AnimalCategory[];
   const category = faker.helpers.arrayElement(categories);
   const subCategory = faker.helpers.arrayElement(
-    categorySubCategoryMap[category],
-  );
+    ProductSubCategories[category],
+  ) as string;
 
   product.category = category;
   product.subCategory = subCategory;

@@ -26,6 +26,7 @@ import { NotificationService } from '../notification/notification.service';
 import { AddSEODto } from './dto/add-seo.dto';
 import { SEOEntity } from './entities/product-location-seo';
 import { Cron } from '@nestjs/schedule';
+import { AnimalCategory } from 'src/product/types/product.enum';
 
 @Injectable()
 export class ProductLocationService {
@@ -152,6 +153,18 @@ export class ProductLocationService {
       console.error('Error parsing custom filters:', error);
       throw new BadRequestException('Error getting product location');
     }
+  }
+
+  async checkExistByCategory(category: AnimalCategory) {
+    const count = await this.productLocationRepo.count({
+      where: {
+        product: {
+          category,
+        },
+      },
+      relations: ['product'],
+    });
+    return count > 0;
   }
 
   async checkExistBySubCategory(subCategory: string) {

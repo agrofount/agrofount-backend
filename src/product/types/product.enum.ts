@@ -1,3 +1,7 @@
+// ======================
+// Core Category Types
+// ======================
+
 export enum ProductCategory {
   ENERGY_SOURCES = 'Energy Sources',
   PROTEIN_SOURCES = 'Protein Sources',
@@ -8,6 +12,180 @@ export enum ProductCategory {
   ADDITIVES = 'Additives',
   OTHERS = 'Others',
 }
+
+export enum PrimaryProductCategory {
+  ANIMAL_FEED = 'Animal Feed',
+  DRUGS_AND_MEDICINES = 'Drugs & Medicines',
+  FARM_EQUIPMENT = 'Farm Equipment',
+  LIVESTOCK = 'Livestock',
+  OTHER_AGRO_PRODUCTS = 'Other Agro Products',
+}
+
+export enum AnimalCategory {
+  POULTRY = 'poultry',
+  AQUACULTURE = 'aquaculture',
+  RUMINANTS = 'ruminants',
+  PIG = 'pig',
+  PETS = 'pets',
+}
+
+// ======================
+// Animal Subcategories
+// ======================
+
+type AnimalSubCategoryMap = {
+  [key in AnimalCategory]: string[];
+};
+
+export const AnimalSubCategories: AnimalSubCategoryMap = {
+  [AnimalCategory.POULTRY]: [
+    'Broiler',
+    'Layer',
+    'Breeder',
+    'Cockerel',
+    'Pullet',
+    'Chick',
+    'Frozen',
+  ],
+  [AnimalCategory.AQUACULTURE]: [
+    'Tilapia',
+    'Catfish',
+    'Salmon',
+    'Shrimp',
+    'Trout',
+    'Carp',
+  ],
+  [AnimalCategory.RUMINANTS]: [
+    'Dairy Cattle',
+    'Beef Cattle',
+    'Goat',
+    'Sheep',
+    'Calf',
+  ],
+  [AnimalCategory.PIG]: ['Piglet', 'Grower Pig', 'Sow', 'Boar', 'Fattener'],
+  [AnimalCategory.PETS]: ['Dog', 'Cat', 'Bird', 'Rabbit'],
+};
+
+// ======================
+// Product Subcategories
+// ======================
+
+export enum ProductSubCategoryType {
+  FEED = 'feed',
+  DRUG = 'drug',
+  EQUIPMENT = 'equipment',
+  LIVESTOCK = 'livestock',
+}
+
+type ProductSubCategories = {
+  [key in ProductSubCategoryType]: string[];
+};
+
+export const ProductSubCategories: ProductSubCategories = {
+  [ProductSubCategoryType.FEED]: [
+    'Starter',
+    'Grower',
+    'Finisher',
+    'Layer',
+    'Broiler',
+    'Breeder',
+    'Fingerling',
+    'Juvenile',
+    'Broodstock',
+    'Floating',
+    'Sinking',
+    'Piglet',
+    'Weaner',
+    'Sow',
+    'Boar',
+    'Calf',
+    'Dairy',
+    'Beef',
+    'Mineral Supplements',
+    'Silage',
+    'Sheep',
+    'Goat',
+    'Pelleted',
+    'Fresh Forage',
+    'Puppy',
+    'Adult Dog',
+    'Working Dog',
+    'Kitten',
+    'Adult Cat',
+    'Senior Cat',
+    'Multipurpose',
+    'Custom Blends',
+  ],
+  [ProductSubCategoryType.DRUG]: [
+    'Antibiotics',
+    'Disinfectants',
+    'Vaccines',
+    'Anti-parasitics',
+    'Hormones',
+    'Pain Relievers',
+    'Vitamins and Supplements',
+    'Others',
+  ],
+  [ProductSubCategoryType.EQUIPMENT]: [
+    'Feeding',
+    'Watering',
+    'Housing',
+    'Medical',
+    'Tools',
+    'Mechanization',
+  ],
+  [ProductSubCategoryType.LIVESTOCK]: [
+    'Fishery',
+    'Poultry',
+    'Cattle',
+    'Sheep',
+    'Goats',
+    'Pigs',
+  ],
+};
+
+// ======================
+// Brands
+// ======================
+
+export const Brands = [
+  'Olam',
+  'Ultima',
+  'Chikun',
+  'New Hope',
+  'Happy Chicken',
+  'Zartech',
+  'CHI',
+  'Agrited',
+  'Fidan',
+  'Yammfy',
+  'AMO',
+  'Valentine',
+  'Sayed',
+  'Cascada',
+];
+
+// ======================
+// Drugs
+// ======================
+
+export const Drugs = [
+  'Antibiotics',
+  'Disinfectants',
+  'Vaccines',
+  'Anti-parasitics',
+  'Hormones',
+  'Pain Relievers',
+  'Vitamins and Supplements',
+  'Others',
+];
+
+// ======================
+// Helper Types and Functions
+// ======================
+
+export type AnimalSubCategory<T extends AnimalCategory> =
+  keyof (typeof AnimalSubCategories)[T];
 
 export enum ProductSubCategory {
   // Energy Sources
@@ -111,33 +289,6 @@ export const AgrofountSubCategories = {
   [LivestockFeedCategory.DOG]: ['Puppy', 'Adult Dog', 'Working Dog'],
   [LivestockFeedCategory.CAT]: ['Kitten', 'Adult Cat', 'Senior Cat'],
   [LivestockFeedCategory.OTHERS]: ['Multipurpose', 'Custom Blends'],
-  brands: [
-    'Olam',
-    'Ultima',
-    'Chikun',
-    'New Hope',
-    'Happy Chicken',
-    'Zartech',
-    'CHI',
-    'Agrited',
-    'Fidan',
-    'Yammfy',
-    'AMO',
-    'Valentine',
-    'Sayed',
-    'Cascada',
-  ],
-  drugs: [
-    'Antibiotics',
-    'Disinfectants',
-    'Vaccines',
-    'Anti-parasitics',
-    'Hormones',
-    'Pain Relievers',
-    'Vitamins and Supplements',
-    'Others',
-  ],
-  livestocks: ['Fishery', 'Poultry'],
 };
 
 export const AISubcategoryMap = {
