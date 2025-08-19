@@ -45,6 +45,10 @@ export const AnimalSubCategories: AnimalSubCategoryMap = {
     'Cockerel',
     'Pullet',
     'Chick',
+    'Turkey',
+    'Duck',
+    'Guinea fowl',
+    'Geese',
     'Frozen',
   ],
   [AnimalCategory.AQUACULTURE]: [
@@ -302,6 +306,10 @@ export const AISubcategoryMap = {
       'breeder',
       'starter',
       'grower',
+      'turkey',
+      'duck',
+      'guinea fowl',
+      'geese',
       'finisher',
     ],
     subcategories: [
@@ -310,6 +318,7 @@ export const AISubcategoryMap = {
       'Finisher',
       'Layer',
       'Broiler',
+      'Pullet',
       'Breeder',
     ],
     commonSymptoms: [
@@ -329,7 +338,7 @@ export const AISubcategoryMap = {
       'open-mouth breathing',
     ],
   },
-  fish: {
+  aquaculture: {
     keywords: [
       'fingerling',
       'juvenile',

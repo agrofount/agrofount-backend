@@ -30,6 +30,7 @@ export const PRODUCT_LOCATION_PAGINATION_CONFIG: PaginateConfig<ProductLocationE
       'country.id': [FilterOperator.EQ],
       'product.brand': [FilterOperator.EQ, FilterOperator.IN],
       'product.category': [FilterOperator.EQ, FilterOperator.IN],
+      'product.primaryCategory': [FilterOperator.EQ, FilterOperator.IN],
       'product.subCategory': [FilterOperator.EQ, FilterOperator.IN],
       price: [FilterOperator.EQ, FilterOperator.GTE, FilterOperator.LTE],
       isAvailable: [FilterOperator.EQ],
