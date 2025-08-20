@@ -112,6 +112,9 @@ export class ProductLocationEntity {
   @Column('int', { default: 0 })
   popularityScore: number;
 
+  @Column({ type: 'integer', default: 0 })
+  likesCount: number;
+
   @Column()
   createdById: string;
 
