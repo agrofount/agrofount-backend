@@ -47,10 +47,8 @@ export class ProductLocationEntity {
       price: number;
       discount: number;
     }[];
+    moq?: number; // Minimum Order Quantity
   }[]; // Unit of Measure
-
-  @Column('int', { default: 5 })
-  moq: number;
 
   @Column('int', { default: 2 })
   viewPriority: number;

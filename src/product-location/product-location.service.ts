@@ -97,7 +97,6 @@ export class ProductLocationService {
     const productLocation = this.productLocationRepo.create({
       price,
       uom,
-      moq,
       product,
       country,
       state,
