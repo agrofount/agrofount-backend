@@ -11,6 +11,7 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { ProductLikesService } from './product-location-like.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { UserEntity } from 'src/user/entities/user.entity';
 
 @Controller('likes')
 @ApiTags('Product Likes')
@@ -22,35 +23,35 @@ export class ProductLikesController {
   @Post(':productLocationId/like')
   async like(
     @Param('productLocationId') productLocationId: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: UserEntity,
   ) {
-    return this.likesService.like(productLocationId, userId);
+    return this.likesService.like(productLocationId, user.id);
   }
 
   @Delete(':productLocationId/like')
   async unlike(
     @Param('productLocationId') productLocationId: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: UserEntity,
   ) {
-    return this.likesService.unlike(productLocationId, userId);
+    return this.likesService.unlike(productLocationId, user.id);
   }
 
   @Get(':productLocationId/is-liked')
   async isLiked(
     @Param('productLocationId') productLocationId: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: UserEntity,
   ) {
-    const liked = await this.likesService.isLiked(productLocationId, userId);
+    const liked = await this.likesService.isLiked(productLocationId, user.id);
     return { liked };
   }
 
   @Get('me/likes')
   async myLikes(
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: UserEntity,
     @Query('page') page = '1',
     @Query('limit') limit = '20',
   ) {
-    return this.likesService.listMyLikes(userId, Number(page), Number(limit));
+    return this.likesService.listMyLikes(user.id, Number(page), Number(limit));
   }
 
   @Get('trending')

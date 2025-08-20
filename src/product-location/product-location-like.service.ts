@@ -2,12 +2,14 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { ProductLocationEntity } from './entities/product-location.entity';
 import { ProductLike } from './entities/product-likes.entity';
 import { UserEntity } from '../user/entities/user.entity';
+import { Cache, CACHE_MANAGER } from '@nestjs/cache-manager';
 
 @Injectable()
 export class ProductLikesService {
@@ -17,6 +19,7 @@ export class ProductLikesService {
     @InjectRepository(ProductLocationEntity)
     private readonly productRepo: Repository<ProductLocationEntity>,
     private readonly dataSource: DataSource,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   async like(productLocationId: string, userId: string) {
@@ -32,14 +35,14 @@ export class ProductLikesService {
           productLocation: { id: productLocationId },
           user: { id: userId },
         },
-        relations: ['product', 'user'],
+        relations: ['productLocation', 'user'],
       });
       if (existing)
         return { liked: true, likesCount: productLocation.likesCount };
 
       // Insert like
       const like = manager.create(ProductLike, {
-        product: { id: productLocationId } as ProductLocationEntity,
+        productLocation: { id: productLocationId } as ProductLocationEntity,
         user: { id: userId } as UserEntity,
       });
       await manager.save(like);
@@ -55,6 +58,7 @@ export class ProductLikesService {
       const updated = await manager.findOneByOrFail(ProductLocationEntity, {
         id: productLocationId,
       });
+
       return { liked: true, likesCount: updated.likesCount };
     });
   }
@@ -71,7 +75,7 @@ export class ProductLikesService {
           productLocation: { id: productLocationId },
           user: { id: userId },
         },
-        relations: ['product', 'user'],
+        relations: ['productLocation', 'user'],
       });
       if (!existing) {
         // idempotent: nothing to delete
@@ -89,6 +93,7 @@ export class ProductLikesService {
       const updated = await manager.findOneByOrFail(ProductLocationEntity, {
         id: productLocationId,
       });
+
       return { liked: false, likesCount: updated.likesCount };
     });
   }
@@ -139,4 +144,23 @@ export class ProductLikesService {
       likes: Number(r.likes),
     }));
   }
+
+  //   private async handleTrending(productLocationId: string, count = 1) {
+  //     const cacheKey = `product:${productLocationId}:likes`;
+  //     let cachedData = await this.cacheManager.get<string>(cacheKey);
+
+  //     if (!cachedData) {
+  //       // no cache yet → initialize
+  //       const initialData = { likes: 0 };
+  //       await this.cacheManager.set(cacheKey, JSON.stringify(initialData));
+  //       cachedData = JSON.stringify(initialData);
+  //     }
+
+  //     const data = JSON.parse(cachedData);
+  //     // now you can safely modify e.g.
+  //     data.likes += count;
+
+  //     // save updated
+  //     await this.cacheManager.set(cacheKey, JSON.stringify(data));
+  //   }
 }
