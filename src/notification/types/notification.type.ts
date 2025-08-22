@@ -27,6 +27,7 @@ export enum MessageTypes {
   'SHIPMENT_INITIATED' = 'SHIPMENT_INITIATED',
   'NEW_VOUCHER' = 'NEW_VOUCHER',
   'PASSWORD_RESET' = 'PASSWORD_RESET',
+  'PRICE_UPDATE_NOTIFICATION' = 'PRICE_UPDATE_NOTIFICATION',
 }
 
 export interface MessageRecipient {
@@ -64,4 +65,5 @@ export enum EmailTemplateIds {
   CREDIT_REJECTED = 15,
 
   PASSWORD_RESET = 16,
+  PRICE_UPDATE_NOTIFICATION = 17,
 }
