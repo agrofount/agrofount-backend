@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -30,6 +31,8 @@ import { AnimalCategory } from 'src/product/types/product.enum';
 
 @Injectable()
 export class ProductLocationService {
+  private readonly logger = new Logger(ProductLocationService.name);
+
   constructor(
     @InjectRepository(ProductLocationEntity)
     private readonly productLocationRepo: Repository<ProductLocationEntity>,
@@ -97,7 +100,6 @@ export class ProductLocationService {
     const productLocation = this.productLocationRepo.create({
       price,
       uom,
-      moq,
       product,
       country,
       state,
@@ -187,6 +189,7 @@ export class ProductLocationService {
     const state = await this.stateService.findOne(stateId);
 
     Object.assign(productLocation, { ...dto, state });
+
     return this.productLocationRepo.save(productLocation);
   }
 

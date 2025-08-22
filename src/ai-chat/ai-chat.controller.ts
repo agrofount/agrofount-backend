@@ -81,7 +81,6 @@ export class AiChatController {
           animalType: response.animalType,
           options: response.options,
           products: response.products,
-          type: response.type,
           timestamp: new Date().toISOString(),
         },
       };

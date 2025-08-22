@@ -46,6 +46,14 @@ export class UomDto {
 
   @ApiProperty({ type: [VtpDto], description: 'Volume tier prices' })
   vtp?: VtpDto[];
+
+  @ApiPropertyOptional({
+    description: 'Minimum order quantity',
+    example: 5,
+  })
+  @IsOptional()
+  @IsInt()
+  moq?: number;
 }
 
 export class CreateProductLocationDto {

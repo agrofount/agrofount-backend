@@ -68,7 +68,6 @@ export class ProductLocationResponseDto {
     this.price = productLocation.price;
     this.isAvailable = productLocation.isAvailable;
     this.uom = productLocation.uom;
-    this.moq = productLocation.moq;
     this.country = productLocation.country;
     this.state = productLocation.state;
     this.product = productLocation.product;
