@@ -38,6 +38,7 @@ import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
 import { createKeyv, Keyv } from '@keyv/redis';
 import { CacheableMemory } from 'cacheable';
+import { BullModule } from '@nestjs/bullmq';
 
 @Module({
   imports: [

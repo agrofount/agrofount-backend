@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -30,6 +31,8 @@ import { AnimalCategory } from 'src/product/types/product.enum';
 
 @Injectable()
 export class ProductLocationService {
+  private readonly logger = new Logger(ProductLocationService.name);
+
   constructor(
     @InjectRepository(ProductLocationEntity)
     private readonly productLocationRepo: Repository<ProductLocationEntity>,
@@ -186,6 +189,7 @@ export class ProductLocationService {
     const state = await this.stateService.findOne(stateId);
 
     Object.assign(productLocation, { ...dto, state });
+
     return this.productLocationRepo.save(productLocation);
   }
 
@@ -437,5 +441,94 @@ export class ProductLocationService {
       .take(limit);
 
     return query.getMany();
+  }
+
+  async triggerPriceUpdateDigest(): Promise<string> {
+    this.logger.log('Optimized price update digest started...');
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Use QueryRunner for transaction
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // Step 1: Fetch today’s price changes (latest per product)
+      const rawChanges = await this.priceHistoryRepo.find({
+        where: { changedAt: () => `changed_at >= '${today.toISOString()}'` },
+        relations: ['product'],
+        order: { changedAt: 'DESC' },
+      });
+
+      const latestChangesByProduct = new Map<number, PriceHistory>();
+      for (const change of rawChanges) {
+        if (!latestChangesByProduct.has(change.product.id)) {
+          latestChangesByProduct.set(change.product.id, change);
+        }
+      }
+      const latestChanges = Array.from(latestChangesByProduct.values());
+      const productIds = latestChanges.map((c) => c.product.id);
+
+      if (!productIds.length) {
+        await queryRunner.rollbackTransaction();
+        return 'No price changes today.';
+      }
+
+      // Step 2: Fetch all likes in one query
+      const likes = await this.userLikeRepo.find({
+        where: { product: { id: In(productIds) } },
+        relations: ['user', 'product'],
+      });
+
+      // Step 3: Group notifications by user
+      const userNotifications: Record<string, any[]> = {};
+      for (const like of likes) {
+        const change = latestChanges.find(
+          (c) => c.product.id === like.product.id,
+        );
+        if (!change) continue;
+
+        if (!userNotifications[like.user.id]) {
+          userNotifications[like.user.id] = [];
+        }
+
+        userNotifications[like.user.id].push({
+          productName: change.product.name,
+          oldPrice: change.oldPrice,
+          newPrice: change.newPrice,
+          percentageChange: this.calculatePercentageChange(
+            change.oldPrice,
+            change.newPrice,
+          ),
+        });
+      }
+
+      // Step 4: Queue notifications instead of sending immediately
+      for (const [userId, changes] of Object.entries(userNotifications)) {
+        await this.notificationQueue.add('sendPriceUpdateDigest', {
+          userId,
+          changes,
+        });
+      }
+
+      await queryRunner.commitTransaction();
+      return 'Price update digests queued successfully.';
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error('Failed to build price update digest', error);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  private calculatePercentageChange(
+    oldPrice: number,
+    newPrice: number,
+  ): number {
+    if (!oldPrice || oldPrice <= 0) return 0;
+    return Number((((newPrice - oldPrice) / oldPrice) * 100).toFixed(2));
   }
 }
