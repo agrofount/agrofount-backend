@@ -63,4 +63,9 @@ export const permissions = [
     resource: 'drivers',
     actions: ['read', 'create', 'update', 'delete'],
   },
+
+  {
+    resource: 'notifications',
+    actions: ['create', 'send_price_update'],
+  },
 ];
