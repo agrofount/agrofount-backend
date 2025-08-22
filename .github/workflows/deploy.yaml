@@ -9,6 +9,14 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: "eu-west-2"
+  ECR_REPOSITORY: "agrofount-backend-v2"
+  ECS_SERVICE: "agrofount-service-dev"
+  ECS_CLUSTER: "agrofount"
+  ECS_TASK_DEFINITION: "aprofount"
+  CONTAINER_NAME: "agrofount-port"
+                    
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -37,6 +45,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
  
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+        with:
+          role-to-assume: "arn:aws:iam::864899834894:role/github-cicd-pipeline"
+          role-session-name: samplerolesession
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Log in to AWS ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
@@ -44,10 +59,8 @@ jobs:
       - name: Build, tag, and push Docker image to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
