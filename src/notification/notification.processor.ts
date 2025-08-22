@@ -7,6 +7,7 @@ import { MessageTypes, NotificationChannels } from './types/notification.type';
 import { Logger } from '@nestjs/common';
 import { UserNotificationData } from './interfaces/notifications.interface';
 import { ProductLike } from '../product-like/entities/product-like.entity';
+import { Job } from 'bullmq';
 @Processor('price-updates')
 export class PriceUpdatesProcessor extends WorkerHost {
   private readonly BATCH_SIZE = 100;
@@ -18,7 +19,17 @@ export class PriceUpdatesProcessor extends WorkerHost {
     super();
   }
 
-  async process() {
+  async process(job: Job<any, any, string>) {
+    this.logger.log(`Processing job: ${job.name}`);
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    // 0 = Sunday, 1 = Monday, 4 = Thursday, etc.
+
+    if (![1, 4].includes(dayOfWeek)) {
+      this.logger.log(`⏸ Skipping job ${job.id} - only allowed on Mon/Thu`);
+      return;
+    }
+
     return this.dataSource.transaction(async (manager) => {
       // 1. Get most recent price changes for today
       const latestPriceChanges = await this.getLatestPriceChanges(manager);
@@ -53,6 +64,9 @@ export class PriceUpdatesProcessor extends WorkerHost {
 
       // 5. Send notifications in batches
       await this.sendNotificationsInBatches(userMap);
+      this.logger.log(
+        `✅ Completed job ${job.id}, sent notifications to ${userMap.size} users`,
+      );
     });
   }
 
@@ -126,6 +140,7 @@ export class PriceUpdatesProcessor extends WorkerHost {
 
     for (let i = 0; i < users.length; i += this.BATCH_SIZE) {
       const batch = users.slice(i, i + this.BATCH_SIZE);
+
       const notificationPromises = batch.map((user) =>
         this.sendUserNotification(user),
       );

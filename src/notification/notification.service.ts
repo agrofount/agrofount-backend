@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
@@ -27,13 +28,13 @@ import { TermiiConfig } from '../config/termii.config';
 import { lastValueFrom } from 'rxjs';
 import { OrderEntity } from '../order/entities/order.entity';
 import { TeamsService } from './services/teams.service';
-import { AdminEntity } from '../admins/entities/admin.entity';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { ProductLikeService } from 'src/product-like/product-like.service';
+import { Cache, CACHE_MANAGER } from '@nestjs/cache-manager';
 
 @Injectable()
 export class NotificationService {
+  private readonly logger = new Logger(NotificationService.name);
   constructor(
     @InjectRepository(MessageEntity)
     private readonly messageRepo: Repository<MessageEntity>,
@@ -41,8 +42,8 @@ export class NotificationService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly teamsService: TeamsService,
-    private readonly productLikesService: ProductLikeService, // inject likes service
     @InjectQueue('price-updates') private readonly queue: Queue,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   async create(dto: CreateNotificationDto) {
@@ -52,7 +53,23 @@ export class NotificationService {
   }
 
   async enqueueNotifications() {
-    await this.queue.add('send-price-updates', {}, { removeOnComplete: true });
+    const today = new Date().toISOString().split('T')[0]; // e.g. "2025-08-20"
+    const jobId = `price-updates-${today}`;
+
+    const cacheKey = `notifications:${jobId}`;
+    let cachedData = await this.cacheManager.get<string>(cacheKey);
+
+    if (cachedData) {
+      this.logger.log('Job already enqueued today, skipping...');
+      return;
+    }
+
+    await this.queue.add(
+      jobId,
+      { triggeredAt: new Date().toISOString() },
+      { removeOnComplete: true, attempts: 3 },
+    );
+    await this.cacheManager.set(cacheKey, JSON.stringify(jobId));
   }
 
   async findAll(

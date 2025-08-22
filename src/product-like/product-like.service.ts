@@ -19,7 +19,6 @@ export class ProductLikeService {
     @InjectRepository(ProductLocationEntity)
     private readonly productRepo: Repository<ProductLocationEntity>,
     private readonly dataSource: DataSource,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   async like(productLocationId: string, userId: string) {
