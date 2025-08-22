@@ -6,13 +6,13 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { ProductLocationEntity } from './entities/product-location.entity';
-import { ProductLike } from './entities/product-likes.entity';
 import { UserEntity } from '../user/entities/user.entity';
 import { Cache, CACHE_MANAGER } from '@nestjs/cache-manager';
+import { ProductLike } from './entities/product-like.entity';
+import { ProductLocationEntity } from 'src/product-location/entities/product-location.entity';
 
 @Injectable()
-export class ProductLikesService {
+export class ProductLikeService {
   constructor(
     @InjectRepository(ProductLike)
     private readonly likeRepo: Repository<ProductLike>,

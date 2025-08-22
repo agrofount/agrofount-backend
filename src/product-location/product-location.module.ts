@@ -10,9 +10,6 @@ import { PriceHistoryEntity } from './entities/product-location-price-history';
 import { ProductLocationNotificationEntity } from './entities/product-location-notification.entity';
 import { NotificationModule } from '../notification/notification.module';
 import { SEOEntity } from './entities/product-location-seo';
-import { ProductLike } from './entities/product-likes.entity';
-import { ProductLikesController } from './product-location-like.controller';
-import { ProductLikesService } from './product-location-like.service';
 
 @Module({
   imports: [
@@ -21,15 +18,14 @@ import { ProductLikesService } from './product-location-like.service';
       PriceHistoryEntity,
       ProductLocationNotificationEntity,
       SEOEntity,
-      ProductLike,
     ]),
     ProductModule,
     CountryModule,
     StateModule,
     NotificationModule,
   ],
-  controllers: [ProductLocationController, ProductLikesController],
-  providers: [ProductLocationService, ProductLikesService],
+  controllers: [ProductLocationController],
+  providers: [ProductLocationService],
   exports: [ProductLocationService],
 })
 export class ProductLocationModule {}

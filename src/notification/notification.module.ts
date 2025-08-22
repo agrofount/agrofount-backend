@@ -10,6 +10,7 @@ import { TeamsService } from './services/teams.service';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PriceUpdatesProcessor } from './notification.processor';
+import { ProductLikeModule } from '../product-like/product-like.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { PriceUpdatesProcessor } from './notification.processor';
         },
       }),
     }),
+    ProductLikeModule, // Import ProductLikeModule to use ProductLike entity
   ],
   controllers: [NotificationController],
   providers: [NotificationService, TeamsService, PriceUpdatesProcessor],

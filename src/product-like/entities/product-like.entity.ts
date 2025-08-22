@@ -6,8 +6,8 @@ import {
   Unique,
   Index,
 } from 'typeorm';
-import { ProductLocationEntity } from './product-location.entity';
-import { UserEntity } from 'src/user/entities/user.entity';
+import { UserEntity } from '../../user/entities/user.entity';
+import { ProductLocationEntity } from '../../product-location/entities/product-location.entity';
 
 @Entity('product_likes')
 @Unique(['user', 'productLocation'])

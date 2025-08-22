@@ -27,10 +27,10 @@ import { TermiiConfig } from '../config/termii.config';
 import { lastValueFrom } from 'rxjs';
 import { OrderEntity } from '../order/entities/order.entity';
 import { TeamsService } from './services/teams.service';
-import { ProductLikesService } from '../product-location/product-location-like.service';
 import { AdminEntity } from '../admins/entities/admin.entity';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { ProductLikeService } from 'src/product-like/product-like.service';
 
 @Injectable()
 export class NotificationService {
@@ -41,7 +41,7 @@ export class NotificationService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly teamsService: TeamsService,
-    private readonly productLikesService: ProductLikesService, // inject likes service
+    private readonly productLikesService: ProductLikeService, // inject likes service
     @InjectQueue('price-updates') private readonly queue: Queue,
   ) {}
 

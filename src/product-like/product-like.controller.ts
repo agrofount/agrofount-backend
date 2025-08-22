@@ -9,16 +9,16 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
-import { ProductLikesService } from './product-location-like.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserEntity } from 'src/user/entities/user.entity';
+import { ProductLikeService } from './product-like.service';
 
 @Controller('likes')
 @ApiTags('Product Likes')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
-export class ProductLikesController {
-  constructor(private readonly likesService: ProductLikesService) {}
+export class ProductLikeController {
+  constructor(private readonly likesService: ProductLikeService) {}
 
   @Post(':productLocationId/like')
   async like(

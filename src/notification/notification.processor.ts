@@ -1,12 +1,12 @@
 // price-updates.processor.ts
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { DataSource, In } from 'typeorm';
-import { ProductLike } from '../product-location/entities/product-likes.entity';
 import { PriceHistoryEntity } from '../product-location/entities/product-location-price-history';
 import { NotificationService } from './notification.service';
 import { MessageTypes, NotificationChannels } from './types/notification.type';
 import { Logger } from '@nestjs/common';
 import { UserNotificationData } from './interfaces/notifications.interface';
+import { ProductLike } from '../product-like/entities/product-like.entity';
 @Processor('price-updates')
 export class PriceUpdatesProcessor extends WorkerHost {
   private readonly BATCH_SIZE = 100;
