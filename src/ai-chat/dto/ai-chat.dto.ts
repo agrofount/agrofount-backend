@@ -81,6 +81,7 @@ export class ChatResponseDto {
       options: ['Less than 1 day', '1-3 days', 'More than 3 days'],
       products: null,
       timestamp: '2023-08-20T12:34:56.789Z',
+      type: 'products',
     },
   })
   metadata: {
@@ -89,5 +90,6 @@ export class ChatResponseDto {
     options?: string[];
     products?: any[];
     timestamp: string;
+    type: string;
   };
 }
