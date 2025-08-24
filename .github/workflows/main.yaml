@@ -1,0 +1,25 @@
+name: Build and Deploy App
+on:
+  push:
+    branches:
+      - dev
+      - main
+
+jobs:
+  deploy-dev:
+    if: github.ref == 'refs/heads/dev'
+    uses: ./.github/workflows/template.yaml
+    with:
+      environment: dev
+      service: agrofount-service-dev
+      task-def: ecs/dev/task-definition.json
+      container-name: agrofount-port
+
+  deploy-prod:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/template.yaml
+    with:
+      environment: prod
+      service: agrofount-service-prod
+      task-def: ecs/prod/task-definition.json
+      container-name: agrofount-port-prod

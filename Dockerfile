@@ -1,23 +1,45 @@
-# Use an official Node.js runtime as the base image
-FROM node:20-alpine
+# -------------------------------
+# Stage 1: Build
+# -------------------------------
+FROM node:20-alpine AS builder
 
-# Set the working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Install build tools
+RUN apk add --no-cache python3 make g++
+
+# Copy dependency files
 COPY package*.json ./
 
-# Install dependencies
-RUN apk add --no-cache python3 make g++ && npm install --omit=dev
+# Install ALL dependencies (including devDeps for build)
+RUN npm install
 
-# Copy the rest of the application code
+# Copy the rest of the source code
 COPY . .
 
 # Build the NestJS app
 RUN npm run build
 
-# Expose the port your app runs on
+# -------------------------------
+# Stage 2: Production
+# -------------------------------
+FROM node:20-alpine AS production
+
+WORKDIR /app
+
+# Copy only package files first
+COPY package*.json ./
+
+# Install only production dependencies
+RUN npm install --omit=dev
+
+# Copy built app from builder stage
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+
+# Expose app port
 EXPOSE 3000
 
-# Start the application
+# Start the app
 CMD ["npm", "run", "start:prod"]
