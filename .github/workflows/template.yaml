@@ -1,9 +1,20 @@
-name: Build, Test, and Deploy NestJS App
+name: Reusable ECS Deploy Workflow
+
 on:
-  push:
-    branches:
-      - main
-      - cicd-pipeline
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      service:
+        required: true
+        type: string
+      task-def:
+        required: true
+        type: string
+      container-name:
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -12,13 +23,10 @@ permissions:
 env:
   AWS_REGION: "eu-west-2"
   ECR_REPOSITORY: "agrofount-backend-v2"
-  ECS_SERVICE: "agrofount-service-dev"
   ECS_CLUSTER: "agrofount"
-  ECS_TASK_DEFINITION: "ecs/task-definition.json"
-  CONTAINER_NAME: "agrofount-port"
-                    
+
 jobs:
-  build-and-test:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -32,27 +40,17 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # - name: Run tests
-      #   run: npm test
-
       - name: Build the application
         run: npm run build
 
-  build-and-push-docker:
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
- 
-      - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: "arn:aws:iam::864899834894:role/github-cicd-pipeline"
           role-session-name: samplerolesession
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Log in to AWS ECR
+      - name: Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
@@ -68,16 +66,16 @@ jobs:
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@c804dfbdd57f713b6c079302a4c01db7017a36fc
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-definition: ${{ env.ECS_TASK_DEFINITION }}
-          container-name: ${{ env.CONTAINER_NAME }}
+          task-definition: ${{ inputs.task-def }}
+          container-name: ${{ inputs.container-name }}
           image: ${{ steps.build-image.outputs.image }}
 
       - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@df9643053eda01f169e64a0e60233aacca83799a
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
+          service: ${{ inputs.service }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
