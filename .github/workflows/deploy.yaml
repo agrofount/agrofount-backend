@@ -14,7 +14,7 @@ env:
   ECR_REPOSITORY: "agrofount-backend-v2"
   ECS_SERVICE: "agrofount-service-dev"
   ECS_CLUSTER: "agrofount"
-  ECS_TASK_DEFINITION: "agrofount"
+  ECS_TASK_DEFINITION: "ecs/task-definition.json"
   CONTAINER_NAME: "agrofount-port"
                     
 jobs:

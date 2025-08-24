@@ -1,0 +1,94 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:eu-west-2:864899834894:task-definition/agrofount:6",
+    "containerDefinitions": [
+        {
+            "name": "agrofount-port",
+            "image": "864899834894.dkr.ecr.eu-west-2.amazonaws.com/agrofount-backend-v2:latest-2.8",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "name": "agrofount-port-80-tcp",
+                    "containerPort": 3000,
+                    "hostPort": 0,
+                    "protocol": "tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "essential": true,
+            "environment": [],
+            "environmentFiles": [
+                {
+                    "value": "arn:aws:s3:::agrofount-store-864899834891/application-dev-environment-variables/secrets.env",
+                    "type": "s3"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "ulimits": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/agrofount",
+                    "awslogs-create-group": "true",
+                    "awslogs-region": "eu-west-2",
+                    "awslogs-stream-prefix": "ecs"
+                },
+                "secretOptions": []
+            },
+            "systemControls": []
+        }
+    ],
+    "family": "agrofount",
+    "taskRoleArn": "arn:aws:iam::864899834894:role/agrofount-ecs-task-role",
+    "executionRoleArn": "arn:aws:iam::864899834894:role/agrofount-ecs-task-execution-role",
+    "networkMode": "bridge",
+    "revision": 6,
+    "volumes": [],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+        },
+        {
+            "name": "ecs.capability.execution-role-awslogs"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+        },
+        {
+            "name": "ecs.capability.env-files.s3"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.task-iam-role"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.29"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2"
+    ],
+    "requiresCompatibilities": [
+        "EC2"
+    ],
+    "cpu": "512",
+    "memory": "1024",
+    "runtimePlatform": {
+        "cpuArchitecture": "X86_64",
+        "operatingSystemFamily": "LINUX"
+    },
+    "registeredAt": "2025-08-24T08:02:53.758Z",
+    "registeredBy": "arn:aws:iam::864899834894:root",
+    "enableFaultInjection": false,
+    "tags": []
+}
