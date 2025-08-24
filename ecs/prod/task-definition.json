@@ -1,0 +1,55 @@
+{
+    "family": "agrofount-prod",
+    "containerDefinitions": [
+        {
+            "name": "agrofount-port-prod",
+            "image": "864899834894.dkr.ecr.eu-west-2.amazonaws.com/agrofount-backend-v2:latest-2.9",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "name": "agrofount-port-prod",
+                    "containerPort": 3000,
+                    "hostPort": 0,
+                    "protocol": "tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "essential": true,
+            "environment": [],
+            "environmentFiles": [
+                {
+                    "value": "arn:aws:s3:::agrofount-store-864899834891/application-prod-environment-variables/secrets.env",
+                    "type": "s3"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "ulimits": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/agrofount-prod",
+                    "awslogs-create-group": "true",
+                    "awslogs-region": "eu-west-2",
+                    "awslogs-stream-prefix": "ecs"
+                },
+                "secretOptions": []
+            },
+            "systemControls": []
+        }
+    ],
+    "taskRoleArn": "arn:aws:iam::864899834894:role/agrofount-ecs-task-role",
+    "executionRoleArn": "arn:aws:iam::864899834894:role/agrofount-ecs-task-execution-role",
+    "networkMode": "bridge",
+    "volumes": [],
+    "placementConstraints": [],
+    "requiresCompatibilities": [
+        "EC2"
+    ],
+    "cpu": "512",
+    "memory": "1024",
+    "runtimePlatform": {
+        "cpuArchitecture": "X86_64",
+        "operatingSystemFamily": "LINUX"
+    }
+}
