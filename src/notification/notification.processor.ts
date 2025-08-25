@@ -165,18 +165,29 @@ export class PriceUpdatesProcessor extends WorkerHost {
   }
 
   private async sendEmailNotification(user: UserNotificationData) {
+    const updatesHtml = user.updates
+      .map(
+        (u) => `
+      <p>
+        <strong>${u.product}</strong><br/>
+        Old Price: ₦${u.oldPrice} → 
+        New Price: <span style="color:${
+          Number(u.percentageChange) > 0 ? 'red' : 'green'
+        };">
+          ₦${u.newPrice}
+        </span><br/>
+        Change: ${this.formatPercentageChange(parseFloat(u.percentageChange))}
+      </p>
+    `,
+      )
+      .join('');
     await this.notificationService.sendNotification(
       NotificationChannels.EMAIL,
       { email: user.email },
       MessageTypes.PRICE_UPDATE_NOTIFICATION,
       {
         firstName: user.name,
-        updates: user.updates.map((u) => ({
-          product: u.product,
-          oldPrice: `₦${u.oldPrice}`,
-          newPrice: `₦${u.newPrice}`,
-          percent: this.formatPercentageChange(parseFloat(u.percentageChange)),
-        })),
+        updatesHtml,
       },
     );
   }

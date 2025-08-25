@@ -38,8 +38,6 @@ import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
 import { createKeyv, Keyv } from '@keyv/redis';
 import { CacheableMemory } from 'cacheable';
-import { BullModule } from '@nestjs/bullmq';
-import { ProductLikeModule } from './product-like/product-like.module';
 
 @Module({
   imports: [
@@ -98,7 +96,6 @@ import { ProductLikeModule } from './product-like/product-like.module';
     VoucherModule,
     AiChatModule,
     DisbursementModule,
-    ProductLikeModule,
   ],
   controllers: [AppController],
   providers: [AppService],
