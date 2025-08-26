@@ -16,7 +16,7 @@ jobs:
     with:
       environment: dev
       service: agrofount-service-dev
-      task-def: ecs/dev/task-definition.json
+      task-def: ./ecs/dev/task-definition.json
       container-name: agrofount-port
 
   deploy-prod:
@@ -25,5 +25,5 @@ jobs:
     with:
       environment: prod
       service: agrofount-service-prod
-      task-def: ecs/prod/task-definition.json
+      task-def: ./ecs/prod/task-definition.json
       container-name: agrofount-port-prod
