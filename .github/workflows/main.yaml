@@ -24,6 +24,6 @@ jobs:
     uses: ./.github/workflows/template.yaml
     with:
       environment: prod
-      service: agrofount-service-prod
+      service: agrofounts-service-prod
       task-def: ./ecs/prod/task-definition.json
       container-name: agrofount-port-prod
