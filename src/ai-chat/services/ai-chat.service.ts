@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { UserService } from '../user/user.service';
-import { AdminsService } from '../admins/admins.service';
-import { ProductLocationService } from '../product-location/product-location.service';
+import { UserService } from '../../user/user.service';
+import { AdminsService } from '../../admins/admins.service';
+import { ProductLocationService } from '../../product-location/product-location.service';
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -11,6 +11,7 @@ import {
   RecognizeTextCommand,
 } from '@aws-sdk/client-lex-runtime-v2';
 import {
+  DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
@@ -24,6 +25,11 @@ import {
   ProductSubCategory,
 } from 'src/product/types/product.enum';
 import { ConfigService } from '@nestjs/config';
+import { LangChainLlmService } from './langchain-llm/langchain-llm.service';
+import { LangChainMemoryService } from './langchain-memory/langchain-memory.service';
+import { LangChainKendraService } from './langchain-kendra/langchain-kendra.service';
+import { PromptTemplatesService } from './prompt-templates/prompt-templates.service';
+import { RagContextService } from './rag-context/rag-context.service';
 
 @Injectable()
 export class AiChatService {
@@ -33,17 +39,16 @@ export class AiChatService {
 
   private readonly logger = new Logger(AiChatService.name);
 
-  private validTransitions = {
-    GREETING: ['IDENTIFY_ANIMAL'],
-    IDENTIFY_ANIMAL: ['COLLECT_SYMPTOMS'],
-    // ... other valid transitions
-  };
-
   constructor(
     private readonly productLocationService: ProductLocationService,
+    private readonly langchainLlmService: LangChainLlmService,
+    private readonly langchainMemoryService: LangChainMemoryService,
+    private readonly langchainKendraService: LangChainKendraService,
+    private readonly promptTemplatesService: PromptTemplatesService,
+    private readonly ragContextService: RagContextService,
+    private readonly configService: ConfigService,
     private readonly userService: UserService,
     private readonly adminsService: AdminsService,
-    private readonly configService: ConfigService,
   ) {
     this.lexClient = new LexRuntimeV2Client({ region: process.env.AWS_REGION });
     this.bedrockClient = new BedrockRuntimeClient({
@@ -63,104 +68,14 @@ export class AiChatService {
    * Stores and retrieves session context from DynamoDB.
    */
   async processUserMessage(userId: string, message: string): Promise<any> {
-    // 1. Retrieve session context from DynamoDB
-    const sessionId = userId;
-    let sessionData = await this.getSessionData(sessionId);
-    if (!sessionData) {
-      sessionData = {
-        sessionId,
-        previousMessages: [],
-        createdAt: new Date().toISOString(),
-      };
-    }
-
-    // 2. Use AWS Lex to get intent and slots
-    let lexResponse;
     try {
-      lexResponse = await this.lexClient.send(
-        new RecognizeTextCommand({
-          botId: process.env.LEX_BOT_ID,
-          botAliasId: process.env.LEX_BOT_ALIAS_ID,
-          localeId: process.env.LEX_LOCALE_ID || 'en_US',
-          sessionId,
-          text: message,
-        }),
-      );
-    } catch (err) {
-      this.logger.error('Lex error: ' + err.message);
-      return {
-        type: 'ERROR',
-        message: 'Sorry, I could not process your request.',
-      };
+      return await this.handleConversation(userId, message);
+    } catch (error) {
+      this.logger.error('Error in processUserMessage:', error);
+      return await this.handleRagFallbackResponse(userId, message, {
+        sessionId: userId,
+      });
     }
-
-    // 3. Update session context with Lex slots
-    sessionData.previousMessages = [
-      ...(sessionData.previousMessages || []),
-      { user: message, lex: lexResponse },
-    ].slice(-5);
-    await this.saveSessionData(sessionId, sessionData);
-
-    // 4. Use Bedrock for expert vet response
-    let bedrockText = '';
-    try {
-      const prompt = `You are an expert livestock veterinary assistant for a Nigerian agri-marketplace. The user said: "${message}". Lex intent: ${
-        lexResponse.sessionState?.intent?.name || 'Unknown'
-      }. Slots: ${JSON.stringify(
-        lexResponse.sessionState?.intent?.slots || {},
-      )}. Provide a helpful, concise, and actionable response. If relevant, suggest products.`;
-
-      const bedrockRes = await this.bedrockClient.send(
-        new InvokeModelCommand({
-          modelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
-          contentType: 'application/json',
-          accept: 'application/json',
-          body: JSON.stringify({
-            anthropic_version: 'bedrock-2023-05-31',
-            max_tokens: 500,
-            temperature: 0.5,
-            messages: [
-              {
-                role: 'user',
-                content: [{ type: 'text', text: prompt }],
-              },
-            ],
-          }),
-        }),
-      );
-      const bodyString = Buffer.from(bedrockRes.body).toString('utf-8');
-      const parsed = JSON.parse(bodyString);
-
-      // Claude's text output is nested in content[0].text
-      return parsed.content?.[0]?.text || '';
-    } catch (err) {
-      this.logger.error('Bedrock error: ' + err.message);
-      bedrockText = "I'm having trouble generating a response right now.";
-    }
-
-    // 5. Product recommendation (if intent is product-related)
-    let recommended = [];
-    if (
-      lexResponse.sessionState?.intent?.name?.toLowerCase().includes('product')
-    ) {
-      recommended = await this.recommendProducts(message);
-    }
-
-    // 6. Save updated session
-    await this.saveSessionData(sessionId, sessionData);
-
-    // 7. Return response
-    if (recommended.length > 0) {
-      return {
-        type: 'product_recommendation',
-        message: bedrockText + '\n\nHere are some products that may help you:',
-        products: recommended,
-      };
-    }
-    return {
-      type: 'ai_response',
-      message: bedrockText,
-    };
   }
 
   async handleConversation(sessionId: string, message: string) {
@@ -176,6 +91,7 @@ export class AiChatService {
         sessionData = {
           currentState: 'GREETING',
           animalType: null,
+          subCategory: null,
           symptoms: [],
           previousMessages: [],
           createdAt: new Date().toISOString(),
@@ -186,9 +102,9 @@ export class AiChatService {
       // Update message history (last 5 messages)
       const updatedMessages = [
         ...(sessionData.previousMessages || []),
-        { text: message, timestamp: new Date().toISOString() },
+        { role: 'user', text: message, timestamp: new Date().toISOString() },
       ];
-      sessionData.previousMessages = updatedMessages.slice(-5);
+      sessionData.previousMessages = updatedMessages.slice(-10);
 
       // Process based on current state
       let response;
@@ -251,11 +167,27 @@ export class AiChatService {
           response = this.handleFallbackState(sessionId, sessionData);
       }
 
-      // Save updated session data if response contains updates
+      // Save to LangChain memory
+      if (response.message) {
+        await this.langchainMemoryService.saveConversation(
+          sessionId,
+          message,
+          response.message,
+        );
+      }
+
+      // Update session data if needed
       // if (response.updatedSessionData) {
       //   await this.saveSessionData(sessionId, {
       //     ...sessionData,
       //     ...response.updatedSessionData,
+      //     previousMessages: sessionData.previousMessages, // Keep messages
+      //   });
+      // } else {
+      //   // Still save the updated messages
+      //   await this.saveSessionData(sessionId, {
+      //     ...sessionData,
+      //     previousMessages: sessionData.previousMessages,
       //   });
       // }
 
@@ -266,12 +198,7 @@ export class AiChatService {
       };
     } catch (error) {
       this.logger.error(`Conversation error: ${error.message}`, error.stack);
-      return {
-        type: 'ERROR',
-        message: 'Sorry, we encountered an error. Please try again.',
-        options: ['Restart conversation', 'Contact support'],
-        sessionId,
-      };
+      return await this.handleErrorResponse(sessionId, error);
     }
   }
 
@@ -280,16 +207,19 @@ export class AiChatService {
     message: string,
     sessionData: any,
   ) {
-    await this.saveSessionData(sessionId, {
+    const updatedSession = {
       ...sessionData,
       currentState: 'IDENTIFY_ANIMAL',
-    });
+    };
+
+    await this.saveSessionData(sessionId, updatedSession);
 
     return {
       type: 'QUESTION',
       message:
         'Thank you for using the Livestock Veterinary Assistant. What type of animal are we discussing today?',
       options: Object.keys(AISubcategoryMap),
+      updatedSessionData: updatedSession, // Return the updated session
     };
   }
 
@@ -442,9 +372,9 @@ export class AiChatService {
   ) {
     const diagnosis = sessionData.diagnosis;
     const animalType = sessionData.animalType;
-
+    const lower = message.toLowerCase();
     switch (true) {
-      case message.includes('Explain'):
+      case lower.includes('explain'):
         return {
           type: 'SIMPLIFIED_DIAGNOSIS',
           message: await this.simplifyDiagnosis(diagnosis),
@@ -455,14 +385,14 @@ export class AiChatService {
           ],
         };
 
-      case message.includes('Recommend'):
+      case lower.includes('recommend'):
         return this.handleProductRecommendation(
           sessionId,
           diagnosis,
           sessionData,
         );
 
-      case message.includes('Prevent'):
+      case lower.includes('prevent'):
         return {
           type: 'PREVENTION_TIPS',
           message: await this.generatePreventionTips(diagnosis, animalType),
@@ -473,10 +403,10 @@ export class AiChatService {
           ],
         };
 
-      case message.includes('different symptoms'):
+      case lower.includes('different symptoms'):
         return this.restartSymptomCollection(sessionId, sessionData);
 
-      case message.includes('human vet'):
+      case lower.includes('human vet'):
         return this.connectToVeterinarian(sessionData);
 
       default:
@@ -523,7 +453,8 @@ export class AiChatService {
       );
 
       // Decode and parse
-      const parsed = JSON.parse(new TextDecoder().decode(response.body));
+      const bodyString = Buffer.from(response.body).toString('utf-8');
+      const parsed = JSON.parse(bodyString);
 
       // Claude 3 response format: completion text is in `content[0].text`
       return parsed.content?.[0]?.text ?? '';
@@ -768,16 +699,151 @@ export class AiChatService {
   }
 
   private async generateDiagnosis(sessionData: any): Promise<string> {
-    const prompt = `As a veterinary expert, provide:
-    1. Likely diagnosis for ${
-      sessionData.animalType
-    } showing: ${sessionData.symptoms?.map((s) => s.description).join(', ')}
-    2. Recommended immediate actions
-    3. When to seek in-person vet care
-    4. Preventive measures
-    
-    ask if the user wants products that can help with the solution.
-    Use markdown formatting with bullet points. Keep response under 300 words.`;
+    const symptomDescription = sessionData.symptoms
+      ?.map((s) => s.description)
+      .join(', ');
+
+    // Retrieve documents using LangChain
+    const retrievalQuery = `Symptoms for ${sessionData.animalType} (${sessionData.subCategory}): ${symptomDescription}. Diagnosis and treatment advice for Nigerian farmers.`;
+
+    const documents = await this.langchainKendraService.retrieveDocuments(
+      retrievalQuery,
+      process.env.KENDRA_KNOWLEDGE_INDEX_ID,
+    );
+
+    const ragContext =
+      documents.length > 0
+        ? this.formatDocumentsWithMetadata(documents)
+        : 'No specific documentation found. Rely on general veterinary knowledge.';
+
+    // Get real-time context
+    const realTimeContext =
+      await this.ragContextService.enrichWithRealTimeContext(
+        sessionData,
+        sessionData.sessionId,
+      );
+
+    // Use LangChain for structured response generation
+    const prompt = await this.promptTemplatesService.renderTemplate(
+      'diagnosis',
+      {
+        context: ragContext,
+        real_time_context: realTimeContext,
+        animal_type: sessionData.animalType,
+        subcategory: sessionData.subCategory,
+        symptoms: symptomDescription,
+      },
+    );
+
+    try {
+      const conversationHistory =
+        await this.langchainMemoryService.getConversationHistory(
+          sessionData.sessionId,
+        );
+
+      const response = await this.langchainLlmService.generateResponse(
+        prompt,
+        undefined, // system message is already in the template
+        conversationHistory,
+      );
+
+      // Save to memory
+      await this.langchainMemoryService.saveConversation(
+        sessionData.sessionId,
+        `Animal: ${sessionData.animalType}, Symptoms: ${symptomDescription}`,
+        response,
+      );
+
+      return response;
+    } catch (error) {
+      this.logger.error('LangChain diagnosis generation error:', error);
+      // Fallback to original method
+      return await this.fallbackGenerateDiagnosis(
+        sessionData,
+        ragContext,
+        realTimeContext,
+      );
+    }
+  }
+
+  async endSession(sessionId: string): Promise<void> {
+    try {
+      await this.langchainMemoryService.clearSessionMemory(sessionId);
+      // Also clean up DynamoDB session if needed
+      await this.deleteSessionData(sessionId);
+    } catch (error) {
+      this.logger.error('Session cleanup error:', error);
+    }
+  }
+
+  private formatDocumentsWithMetadata(documents: any[]): string {
+    if (!documents || documents.length === 0) {
+      return 'No relevant documentation found.';
+    }
+
+    return documents
+      .map((doc, index) => {
+        const source =
+          doc.metadata?.Title ||
+          doc.metadata?.DocumentTitle ||
+          doc.metadata?.source ||
+          'Trusted Source';
+
+        const confidence = doc.metadata?.confidence
+          ? `(Confidence: ${(doc.metadata.confidence * 100).toFixed(0)}%)`
+          : '';
+
+        const date = doc.metadata?.CreatedDate
+          ? new Date(doc.metadata.CreatedDate).toLocaleDateString()
+          : doc.metadata?.LastUpdated
+          ? new Date(doc.metadata.LastUpdated).toLocaleDateString()
+          : '';
+
+        const content = doc.pageContent || doc.content || '';
+        const truncatedContent =
+          content.length > 800 ? content.substring(0, 800) + '...' : content;
+
+        return `[${index + 1}. Source: ${source} ${confidence} ${date}]
+          ${truncatedContent}
+          ---`;
+      })
+      .join('\n\n');
+  }
+
+  private async fallbackGenerateDiagnosis(
+    sessionData: any,
+    ragContext: string,
+    realTimeContext: string,
+  ): Promise<string> {
+    // Fallback to the original Bedrock implementation if LangChain fails
+    const symptomDescription = sessionData.symptoms
+      ?.map((s) => s.description)
+      .join(', ');
+
+    const prompt = `
+      You are an expert veterinary assistant for Nigerian farmers. Use the following context from trusted sources to inform your response.
+
+      <trusted_knowledge_context>
+      ${ragContext}
+      </trusted_knowledge_context>
+
+      <real_time_context>
+      ${realTimeContext}
+      </real_time_context>
+
+      <conversation_context>
+      Animal: ${sessionData.animalType} (${sessionData.subCategory})
+      Symptoms: ${symptomDescription}
+      </conversation_context>
+
+      Based on ALL the context above and your expertise, provide:
+      1. Likely diagnosis (consider Nigerian agricultural context)
+      2. Immediate recommended actions (practical for Nigerian farmers)
+      3. When to seek in-person veterinary care
+      4. Preventive measures specific to the current season and region
+
+      Use clear, simple language with bullet points. Keep response under 400 words.
+      `;
 
     try {
       const modelId = 'anthropic.claude-3-sonnet-20240229-v1:0';
@@ -791,6 +857,7 @@ export class AiChatService {
             content: [{ type: 'text', text: prompt }],
           },
         ],
+        temperature: 0.3,
       };
 
       const command = new InvokeModelCommand({
@@ -801,15 +868,209 @@ export class AiChatService {
       });
 
       const response = await this.bedrockClient.send(command);
-
       const bodyString = Buffer.from(response.body).toString('utf-8');
       const parsed = JSON.parse(bodyString);
 
-      // Claude's text output is nested in content[0].text
       return parsed.content?.[0]?.text || '';
     } catch (error) {
-      console.error('Bedrock error:', error);
+      this.logger.error('Fallback diagnosis generation also failed:', error);
       return "I'm having trouble generating a diagnosis right now. Please try again later or contact a veterinarian directly.";
+    }
+  }
+
+  private async superFallbackResponse(message: string): Promise<any> {
+    // Ultimate fallback when everything else fails
+    this.logger.warn('Using super fallback response');
+
+    const simpleResponses = {
+      greeting:
+        "Hello! I'm here to help with your livestock and agricultural questions. What can I assist you with today?",
+      symptoms:
+        "Please describe the symptoms you're observing in your animals. For example: fever, loss of appetite, coughing, etc.",
+      products:
+        'I can help you find agricultural products. What type of product are you looking for?',
+      emergency:
+        'For urgent veterinary issues, please contact a local veterinarian immediately. You can also call our support hotline at 0800-AGRO-HELP.',
+      default:
+        "I apologize, I'm having technical difficulties right now. Please try again in a moment or contact our support team for immediate assistance.",
+    };
+
+    const lowerMessage = message.toLowerCase();
+
+    if (/(hello|hi|hey|start|begin)/i.test(lowerMessage)) {
+      return {
+        type: 'ai_response',
+        message: simpleResponses.greeting,
+        isFallback: true,
+      };
+    }
+
+    if (/(symptom|sick|ill|disease|not well)/i.test(lowerMessage)) {
+      return {
+        type: 'ai_response',
+        message: simpleResponses.symptoms,
+        isFallback: true,
+      };
+    }
+
+    if (/(product|buy|purchase|feed|medicine|drug)/i.test(lowerMessage)) {
+      return {
+        type: 'ai_response',
+        message: simpleResponses.products,
+        isFallback: true,
+      };
+    }
+
+    if (/(emergency|urgent|dying|critical|help now)/i.test(lowerMessage)) {
+      return {
+        type: 'ai_response',
+        message: simpleResponses.emergency,
+        isFallback: true,
+      };
+    }
+
+    return {
+      type: 'ai_response',
+      message: simpleResponses.default,
+      isFallback: true,
+    };
+  }
+
+  private async deleteSessionData(sessionId: string): Promise<void> {
+    try {
+      await this.ddbClient.send(
+        new DeleteItemCommand({
+          TableName: process.env.DYNAMODB_TABLE_NAME,
+          Key: marshall({ sessionId }),
+        }),
+      );
+      this.logger.log(`Deleted session data for: ${sessionId}`);
+    } catch (error) {
+      this.logger.error('Error deleting session data:', error);
+    }
+  }
+
+  private handleErrorResponse(sessionId: string, error: any): any {
+    this.logger.error(
+      `Error handling conversation for session ${sessionId}:`,
+      error,
+    );
+
+    return {
+      type: 'ERROR',
+      message:
+        'Sorry, we encountered an unexpected error. Our team has been notified.',
+      options: ['Try again', 'Contact support', 'Start over'],
+      sessionId,
+      timestamp: new Date().toISOString(),
+      errorId: this.generateErrorId(),
+    };
+  }
+
+  private generateErrorId(): string {
+    return `err_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  private async handleRagFallbackResponse(
+    userId: string,
+    message: string,
+    sessionData: any,
+  ): Promise<any> {
+    try {
+      // Try to use Lex first as fallback
+      let lexResponse;
+      try {
+        lexResponse = await this.lexClient.send(
+          new RecognizeTextCommand({
+            botId: process.env.LEX_BOT_ID,
+            botAliasId: process.env.LEX_BOT_ALIAS_ID,
+            localeId: process.env.LEX_LOCALE_ID || 'en_US',
+            sessionId: userId,
+            text: message,
+          }),
+        );
+      } catch (lexError) {
+        this.logger.warn('Lex fallback also failed:', lexError);
+        // Continue without Lex
+        const documents = await this.langchainKendraService.retrieveDocuments(
+          `General question: ${message}. For Nigerian agriculture and livestock.`,
+          process.env.KENDRA_KNOWLEDGE_INDEX_ID,
+        );
+
+        const ragContext =
+          documents.length > 0
+            ? this.formatDocumentsWithMetadata(documents)
+            : 'No specific documentation found.';
+
+        const prompt = await this.promptTemplatesService.renderTemplate(
+          'general_qa',
+          {
+            context: ragContext,
+            question: message,
+          },
+        );
+
+        const conversationHistory =
+          await this.langchainMemoryService.getConversationHistory(
+            sessionData.sessionId,
+          );
+
+        const response = await this.langchainLlmService.generateResponse(
+          prompt,
+          undefined,
+          conversationHistory,
+        );
+
+        await this.langchainMemoryService.saveConversation(
+          sessionData.sessionId,
+          message,
+          response,
+        );
+
+        return {
+          type: 'ai_response',
+          message: response,
+          isRagEnhanced: true,
+          hasContext: documents.length > 0,
+        };
+      }
+
+      // Simple response based on message content
+      const lowerMessage = message.toLowerCase();
+
+      if (/(hello|hi|hey)/i.test(lowerMessage)) {
+        return {
+          type: 'ai_response',
+          message:
+            'Hello! I`m here to help with your agricultural questions. How can I assist you today?',
+          isFallback: true,
+        };
+      }
+
+      if (/(symptom|sick|ill)/i.test(lowerMessage)) {
+        return {
+          type: 'QUESTION',
+          message:
+            'I can help with animal health issues. What type of animal are we discussing?',
+          options: Object.keys(AISubcategoryMap),
+          isFallback: true,
+        };
+      }
+
+      return {
+        type: 'ai_response',
+        message:
+          "I apologize, I'm experiencing technical difficulties. Please try again or contact our support team.",
+        isFallback: true,
+      };
+    } catch (error) {
+      this.logger.error('RAG fallback error:', error);
+      return {
+        type: 'ERROR',
+        message:
+          "Sorry, we're experiencing technical issues. Please try again later.",
+        isFallback: true,
+      };
     }
   }
 
@@ -1212,4 +1473,13 @@ export class AiChatService {
 
     return groupedSymptoms;
   }
+
+  // TODO
+  // AI Product Recommendation Engine 🛒 – The system suggests the best feeds, drugs, or equipment tailored to a farmer’s livestock type, age, health condition, and budget.
+
+  // AI Credit Assessment 💳 – Uses farm history, purchase behavior, and alternative data to evaluate eligibility for credit facilities in real time.
+
+  // AI Price Prediction & Advisory 📈 – Analyzes market and historical price data to advise farmers on when and what to buy for maximum cost savings.
+
+  // AI Fraud & Mismanagement Detection 🔍 – Flags unusual buying/usage patterns that may indicate mismanagement or theft in farm operations.
 }

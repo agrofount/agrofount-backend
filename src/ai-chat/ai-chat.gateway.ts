@@ -6,7 +6,7 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { AiChatService } from './ai-chat.service';
+import { AiChatService } from './services/ai-chat.service';
 
 @WebSocketGateway({ namespace: '/ai-chat', cors: true })
 export class AiChatGateway {
