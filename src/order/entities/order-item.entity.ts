@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
 import { OrderEntity } from './order.entity';
+import { ProductSubCategoryType } from 'src/product/types/product.enum';
 
 @Entity('order_items')
 export class OrderItemEntity {
@@ -41,6 +42,13 @@ export class OrderItemEntity {
 
   @Column({ type: 'json', nullable: true })
   images: string[];
+
+  @Column({
+    // type: 'enum',
+    enum: ProductSubCategoryType,
+    default: ProductSubCategoryType.LIVESTOCK,
+  })
+  primaryCategory: ProductSubCategoryType;
 
   @Column({ nullable: true })
   subCategory: string;
