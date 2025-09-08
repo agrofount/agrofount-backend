@@ -177,7 +177,13 @@ export class OrderService {
     try {
       // Define pagination options
       const paginationOptions: PaginateConfig<OrderEntity> = {
-        sortableColumns: ['id', 'status', 'paymentMethod', 'createdAt'],
+        sortableColumns: [
+          'id',
+          'status',
+          'paymentMethod',
+          'createdAt',
+          'totalPrice',
+        ],
         nullSort: 'last',
         searchableColumns: ['status', 'paymentMethod'],
         defaultSortBy: [['createdAt', 'DESC']],
