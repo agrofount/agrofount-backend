@@ -65,7 +65,6 @@ import { CacheableMemory } from 'cacheable';
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => {
         const redisUrl = configService.get<string>('REDIS_URL');
-        console.log('Redis URL:', redisUrl);
         return {
           stores: [
             new Keyv({
