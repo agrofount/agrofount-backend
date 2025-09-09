@@ -176,21 +176,6 @@ export class AiChatService {
         );
       }
 
-      // Update session data if needed
-      // if (response.updatedSessionData) {
-      //   await this.saveSessionData(sessionId, {
-      //     ...sessionData,
-      //     ...response.updatedSessionData,
-      //     previousMessages: sessionData.previousMessages, // Keep messages
-      //   });
-      // } else {
-      //   // Still save the updated messages
-      //   await this.saveSessionData(sessionId, {
-      //     ...sessionData,
-      //     previousMessages: sessionData.previousMessages,
-      //   });
-      // }
-
       return {
         ...response,
         sessionId,
@@ -778,9 +763,13 @@ export class AiChatService {
 
   private formatDocumentsWithMetadata(documents: any[]): string {
     if (!documents || documents.length === 0) {
+      this.logger.warn('No documents found for RAG context.');
       return 'No relevant documentation found.';
     }
 
+    this.logger.log(
+      `Formatting ${documents.length} documents for RAG context.`,
+    );
     return documents
       .map((doc, index) => {
         const source =

@@ -29,6 +29,7 @@ export class LangChainMemoryService {
     aiResponse: string,
   ): Promise<void> {
     try {
+      this.logger.log(`Saving conversation for session: ${sessionId}`);
       const memory = await this.getSessionMemory(sessionId);
 
       await memory.chatHistory.addMessage(new HumanMessage(userMessage));
@@ -48,6 +49,9 @@ export class LangChainMemoryService {
   async getConversationHistory(
     sessionId: string,
   ): Promise<Array<HumanMessage | AIMessage>> {
+    this.logger.log(
+      `Retrieving conversation history for session: ${sessionId}`,
+    );
     try {
       const memory = await this.getSessionMemory(sessionId);
       return await memory.chatHistory.getMessages();

@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AddToCartDto } from './dto/create-cart.dto';
@@ -12,12 +13,15 @@ import { ProductLocationService } from '../product-location/product-location.ser
 
 @Injectable()
 export class CartService {
+  private readonly logger = new Logger(CartService.name);
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly productLocationService: ProductLocationService,
   ) {}
 
   async addToCart(userId: string, dto: AddToCartDto) {
+    this.logger.log(`Adding item to cart for user: ${userId}`);
+    this.logger.debug(`this is the redis url: ${process.env.REDIS_URL}`);
     try {
       const { itemId, selectedUOMUnit, quantity } = dto;
 
