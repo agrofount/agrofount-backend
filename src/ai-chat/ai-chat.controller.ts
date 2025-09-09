@@ -7,7 +7,7 @@ import {
   HttpException,
   Headers,
 } from '@nestjs/common';
-import { AiChatService } from './ai-chat.service';
+import { AiChatService } from './services/ai-chat.service';
 import {
   AiChatMessageDto,
   AiChatResponseDto,
