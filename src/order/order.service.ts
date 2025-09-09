@@ -185,7 +185,7 @@ export class OrderService {
           'totalPrice',
         ],
         nullSort: 'last',
-        searchableColumns: ['status', 'paymentMethod'],
+        searchableColumns: ['status', 'paymentMethod', 'user.username'],
         defaultSortBy: [['createdAt', 'DESC']],
         filterableColumns: {
           category: [FilterOperator.EQ],
