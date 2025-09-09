@@ -44,6 +44,7 @@ export class LangChainLlmService {
     systemMessage?: string,
     conversationHistory: Array<HumanMessage | AIMessage> = [],
   ): Promise<string> {
+    this.logger.log(`Generating response for prompt: ${prompt}`);
     try {
       const messages = [];
 

@@ -18,6 +18,7 @@ export class RagContextService {
     sessionData: any,
     userId: string,
   ): Promise<string> {
+    this.logger.log('Enriching context with real-time data');
     const contextPieces: string[] = [];
 
     try {
