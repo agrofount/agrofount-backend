@@ -15,7 +15,7 @@ import { WebhookGuard } from './guards/webhook.guard';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
-import { Paginated, PaginateQuery } from 'nestjs-paginate';
+import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { PaymentEntity } from './entities/payment.entity';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
@@ -44,7 +44,7 @@ export class PaymentController {
   @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
   @ApiTags('Payment')
   @RequiredPermissions('read_payments')
-  findAll(@Query() query: PaginateQuery): Promise<Paginated<PaymentEntity>> {
+  findAll(@Paginate() query: PaginateQuery): Promise<Paginated<PaymentEntity>> {
     return this.paymentService.findAll(query);
   }
 

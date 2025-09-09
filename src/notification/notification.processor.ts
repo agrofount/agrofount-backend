@@ -71,20 +71,23 @@ export class PriceUpdatesProcessor extends WorkerHost {
   }
 
   private async getLatestPriceChanges(manager: any) {
-    // Use subquery for better performance with DISTINCT ON
-    const subQuery = manager
-      .createQueryBuilder(PriceHistoryEntity, 'ph_sub')
-      .select('ph_sub.productId, MAX(ph_sub.createdAt) as max_created_at')
-      .groupBy('ph_sub.productId');
+    try {
+      this.logger.log('🟡 Getting latest price changes...');
+      const result = await manager
+        .createQueryBuilder(PriceHistoryEntity, 'ph')
+        .distinctOn(['ph.productLocationId'])
+        .orderBy('ph.productLocationId', 'ASC')
+        .addOrderBy('ph.changedAt', 'DESC')
+        .leftJoinAndSelect('ph.productLocation', 'productLocation')
+        .where('ph.productLocation IS NOT NULL')
+        .getMany();
 
-    return manager
-      .createQueryBuilder(PriceHistoryEntity, 'ph')
-      .innerJoin(
-        `(${subQuery.getQuery()})`,
-        'latest',
-        'ph.productId = latest.productId AND ph.createdAt = latest.max_created_at',
-      )
-      .getMany();
+      this.logger.log(`🟡 Found ${result.length} price changes`);
+      return result;
+    } catch (error) {
+      this.logger.error('❌ Error in getLatestPriceChanges:', error);
+      throw error;
+    }
   }
 
   private createUserNotificationMap(
@@ -119,6 +122,7 @@ export class PriceUpdatesProcessor extends WorkerHost {
         product: like.productLocation.product.name,
         oldPrice: change.oldPrice,
         newPrice: change.newPrice,
+        productSlug: like.productLocation.productSlug,
         percentageChange: percentageChange.toFixed(2),
       });
     }
@@ -168,16 +172,34 @@ export class PriceUpdatesProcessor extends WorkerHost {
     const updatesHtml = user.updates
       .map(
         (u) => `
-      <p>
-        <strong>${u.product}</strong><br/>
-        Old Price: ₦${u.oldPrice} → 
-        New Price: <span style="color:${
-          Number(u.percentageChange) > 0 ? 'red' : 'green'
-        };">
-          ₦${u.newPrice}
-        </span><br/>
-        Change: ${this.formatPercentageChange(parseFloat(u.percentageChange))}
-      </p>
+      <div class="product-card">
+        <a href="${process.env.FRONTEND_URL}/product/${u.productSlug}" 
+           class="product-name" 
+           target="_blank">
+            <strong>${u.product}</strong>
+        </a>
+        
+        <div class="price-container">
+            <span class="old-price">
+                <span class="currency">Old Price: ₦</span>${this.formatCurrency(
+                  u.oldPrice,
+                )}
+            </span>
+            <span class="arrow">→</span>
+            <span class="new-price">
+                New Price: <span style="color:${
+                  Number(u.percentageChange) > 0 ? 'red' : 'green'
+                };">₦ ${this.formatCurrency(u.newPrice)}</span>
+            </span>
+        </div>
+        
+        <div class="change-badge ${
+          Number(u.percentageChange) > 0 ? 'increase-badge' : 'decrease-badge'
+        }">
+            ${Number(u.percentageChange) > 0 ? '📈' : '📉'} 
+            ${this.formatPercentageChange(parseFloat(u.percentageChange))}
+        </div><br />
+    </div>
     `,
       )
       .join('');
@@ -220,5 +242,12 @@ export class PriceUpdatesProcessor extends WorkerHost {
     return percentage > 0
       ? `+${percentage.toFixed(2)}%`
       : `${percentage.toFixed(2)}%`;
+  }
+
+  private formatCurrency(amount: number): string {
+    return new Intl.NumberFormat('en-NG', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
   }
 }

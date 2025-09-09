@@ -68,6 +68,8 @@ export class PaymentService {
           'email',
           'reference',
           'amount',
+          'amountPaid',
+          'paymentStatus',
           'createdAt',
         ],
         nullSort: 'last',
