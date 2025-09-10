@@ -79,14 +79,19 @@ export class CartService {
       };
 
       // Update the user's cart in Redis
-      await this.cacheManager.set(cacheKey, JSON.stringify(cartData));
+      const setRes = await this.cacheManager.set(
+        cacheKey,
+        JSON.stringify(cartData),
+      );
+
+      console.log('this is the set response: ', setRes);
 
       // Increment the added to cart count in the product location
       await this.productLocationService.incrementAddedToCart(itemId);
 
       return cartData;
     } catch (error) {
-      console.log('error while addinf to cart: ', error);
+      console.log('error while adding to cart: ', error);
       return { success: false, message: error.message };
     }
   }
