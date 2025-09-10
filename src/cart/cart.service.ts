@@ -29,6 +29,7 @@ export class CartService {
       const uom = productLocation.uom.find(
         (item) => item.unit === selectedUOMUnit,
       );
+
       if (!uom) {
         throw new BadRequestException('Unit of Measure not found');
       }
@@ -46,22 +47,39 @@ export class CartService {
       const totalPrice = quantity * unitPrice;
 
       const cacheKey = `cart:${userId}`;
-      const cachedData = (await this.cacheManager.get(cacheKey)) || '{}';
-      const cartData = cachedData ? JSON.parse(cachedData as string) : {};
-      console.log('this is the cache key: ', cacheKey);
+
+      // FIXED: Proper cache data retrieval
+      let cartData: any = {};
+
+      try {
+        const cachedData = await this.cacheManager.get(cacheKey);
+        console.log('Raw cached data:', cachedData);
+
+        if (typeof cachedData === 'string') {
+          cartData = JSON.parse(cachedData);
+        } else if (typeof cachedData === 'object' && cachedData !== null) {
+          cartData = cachedData;
+        }
+      } catch (error) {
+        console.log('Error parsing cache, starting with empty cart:', error);
+        cartData = {};
+      }
+
       console.log('Current cart data:', cartData);
 
-      // Initialize itemId in cart if undefined
-      cartData[itemId] = cartData[itemId] || {};
+      // Initialize cart structure
+      if (!cartData[itemId]) {
+        cartData[itemId] = {};
+      }
 
-      // Initialize selectedUOMUnit in cart if undefined
-      cartData[itemId][selectedUOMUnit] = cartData[itemId][selectedUOMUnit] || {
-        quantity: 0,
-        total: 0,
-        priceDetails: {},
-      };
+      if (!cartData[itemId][selectedUOMUnit]) {
+        cartData[itemId][selectedUOMUnit] = {
+          quantity: 0,
+          total: 0,
+          priceDetails: {},
+        };
+      }
 
-      // Increment or initialize size count
       // Update cart item
       cartData[itemId][selectedUOMUnit] = {
         quantity,
@@ -78,21 +96,18 @@ export class CartService {
         },
       };
 
-      // Update the user's cart in Redis
-      const setRes = await this.cacheManager.set(
-        cacheKey,
-        JSON.stringify(cartData),
-      );
+      // FIXED: Set cache with proper TTL
+      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
 
-      console.log('this is the set response: ', setRes);
+      console.log('Cart updated successfully');
 
-      // Increment the added to cart count in the product location
+      // Increment the added to cart count
       await this.productLocationService.incrementAddedToCart(itemId);
 
       return cartData;
     } catch (error) {
-      console.log('error while adding to cart: ', error);
-      return { success: false, message: error.message };
+      console.log('Error while adding to cart: ', error);
+      throw error; // Re-throw to let NestJS handle the error
     }
   }
 
