@@ -48,6 +48,8 @@ export class CartService {
       const cacheKey = `cart:${userId}`;
       const cachedData = (await this.cacheManager.get(cacheKey)) || '{}';
       const cartData = cachedData ? JSON.parse(cachedData as string) : {};
+      console.log('this is the cache key: ', cacheKey);
+      console.log('Current cart data:', cartData);
 
       // Initialize itemId in cart if undefined
       cartData[itemId] = cartData[itemId] || {};
@@ -84,7 +86,7 @@ export class CartService {
 
       return cartData;
     } catch (error) {
-      console.log('this is the error: ', error);
+      console.log('error while addinf to cart: ', error);
       return { success: false, message: error.message };
     }
   }
