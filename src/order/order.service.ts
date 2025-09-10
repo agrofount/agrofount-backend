@@ -77,8 +77,7 @@ export class OrderService {
       }
 
       const cacheKey = `cart:${user.id}`;
-      const cachedData: any = await this.cacheManager.get(cacheKey);
-      const cartData = cachedData ? JSON.parse(cachedData as string) : {};
+      const cartData: any = await this.cacheManager.get(cacheKey);
 
       this.logger.log(`Creating order for user: ${user.id}`);
       this.logger.debug(`Cart data: ${JSON.stringify(cartData)}`);
