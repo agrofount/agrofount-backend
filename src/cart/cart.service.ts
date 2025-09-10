@@ -20,6 +20,7 @@ export class CartService {
   ) {}
 
   async addToCart(userId: string, dto: AddToCartDto) {
+    console.log('this is the redis url', process.env.REDIS_URL);
     try {
       const { itemId, selectedUOMUnit, quantity } = dto;
 
