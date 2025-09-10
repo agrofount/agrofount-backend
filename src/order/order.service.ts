@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -39,6 +40,7 @@ import { ProductLocationService } from '../product-location/product-location.ser
 
 @Injectable()
 export class OrderService {
+  private readonly logger = new Logger(OrderService.name);
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @InjectRepository(OrderEntity)
@@ -77,6 +79,9 @@ export class OrderService {
       const cacheKey = `cart:${user.id}`;
       const cachedData: any = await this.cacheManager.get(cacheKey);
       const cartData = cachedData ? JSON.parse(cachedData as string) : {};
+
+      this.logger.log(`Creating order for user: ${user.id}`);
+      this.logger.debug(`Cart data: ${JSON.stringify(cartData)}`);
 
       if (!cartData || Object.keys(cartData).length === 0) {
         throw new BadRequestException('No cart found');
