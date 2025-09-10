@@ -97,9 +97,13 @@ export class CartService {
       };
 
       // FIXED: Set cache with proper TTL
-      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
+      const setRes = await this.cacheManager.set(
+        cacheKey,
+        cartData,
+        24 * 60 * 60 * 1000,
+      ); // 24 hours TTL
 
-      console.log('Cart updated successfully');
+      console.log('Cart updated successfully', setRes);
 
       // Increment the added to cart count
       await this.productLocationService.incrementAddedToCart(itemId);
