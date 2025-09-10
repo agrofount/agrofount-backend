@@ -23,12 +23,16 @@ import { ProductLikeModule } from '../product-like/product-like.module';
       name: 'price-updates',
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get('REDIS_HOST'),
-          port: config.get('REDIS_PORT'),
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const redisUrl = config.get('REDIS_URL');
+        return {
+          connection: {
+            // host: config.get('REDIS_HOST'),
+            // port: config.get('REDIS_PORT'),
+            url: redisUrl,
+          },
+        };
+      },
     }),
     ProductLikeModule, // Import ProductLikeModule to use ProductLike entity
   ],
