@@ -191,7 +191,7 @@ export class CartService {
       }
 
       // Save updated cart
-      await this.cacheManager.set(cacheKey, JSON.stringify(cartData));
+      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
 
       return {
         success: true,
@@ -209,15 +209,15 @@ export class CartService {
   async getCart(userId: string) {
     try {
       const cacheKey = `cart:${userId}`;
-      const cachedData = (await this.cacheManager.get(cacheKey)) || '{}';
-      const cartData = cachedData ? JSON.parse(cachedData as string) : {};
-      if (!cartData) {
+      const cachedData = await this.cacheManager.get<string>(cacheKey);
+
+      if (!cachedData) {
         throw new NotFoundException('Cart not found');
       }
 
-      return { items: cartData };
+      return { items: cachedData };
     } catch (error) {
-      console.log('this is the error: ', error);
+      console.error('Error fetching cart:', error);
       return { success: false, message: error.message };
     }
   }
@@ -240,15 +240,20 @@ export class CartService {
       }
 
       const cacheKey = `cart:${userId}`;
-      const cachedData = (await this.cacheManager.get(cacheKey)) || '{}';
-      const cartData = cachedData ? JSON.parse(cachedData as string) : {};
+
+      const cartData = await this.cacheManager.get(cacheKey);
 
       // Ensure cart structure is correctly initialized
-      cartData[itemId] = cartData[itemId] || {};
+      if (!cartData[itemId]) {
+        cartData[itemId] = {};
+      }
 
       if (quantity === 0) {
         // Delete the item from the cart if quantity is zero
-        delete cartData[itemId][selectedUOMUnit];
+        if (cartData[itemId][selectedUOMUnit]) {
+          delete cartData[itemId][selectedUOMUnit];
+        }
+
         // If no more UOM units for the item, delete the item
         if (Object.keys(cartData[itemId]).length === 0) {
           delete cartData[itemId];
@@ -285,21 +290,18 @@ export class CartService {
         };
       }
 
-      // Update the user's cart in Redis
-      await this.cacheManager.set(cacheKey, JSON.stringify(cartData));
+      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
 
-      // Respond to the client
       return cartData;
     } catch (error) {
-      console.log('this is the error: ', error);
-      return { success: false, message: error.message };
+      console.error('Error in cart update:', error);
+      throw error; // Re-throw to let NestJS handle the error properly
     }
   }
 
   async clear(id: string) {
     const cacheKey = `cart:${id}`;
-    const cachedData: any = await this.cacheManager.get(cacheKey);
-    const cartData = cachedData ? JSON.parse(cachedData as string) : {};
+    const cartData: any = await this.cacheManager.get(cacheKey);
 
     if (!cartData || Object.keys(cartData).length === 0) {
       throw new BadRequestException('No cart found');
