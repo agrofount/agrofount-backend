@@ -68,12 +68,7 @@ import { CacheableMemory } from 'cacheable';
       useFactory: async (configService: ConfigService) => {
         const redisUrl = configService.get<string>('REDIS_URL');
         return {
-          stores: [
-            new Keyv({
-              store: new CacheableMemory({ ttl: 60000, lruSize: 5000 }),
-            }),
-            new KeyvRedis(redisUrl),
-          ],
+          stores: [new KeyvRedis(redisUrl)],
         };
       },
       isGlobal: true,
