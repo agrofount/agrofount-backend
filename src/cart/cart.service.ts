@@ -20,7 +20,6 @@ export class CartService {
   ) {}
 
   async addToCart(userId: string, dto: AddToCartDto) {
-    console.log('this is the redis url', process.env.REDIS_URL);
     try {
       const { itemId, selectedUOMUnit, quantity } = dto;
 
@@ -54,8 +53,6 @@ export class CartService {
 
       try {
         const cachedData = await this.cacheManager.get(cacheKey);
-        console.log('Raw cached data:', cachedData);
-
         if (typeof cachedData === 'string') {
           cartData = JSON.parse(cachedData);
         } else if (typeof cachedData === 'object' && cachedData !== null) {
@@ -65,8 +62,6 @@ export class CartService {
         console.log('Error parsing cache, starting with empty cart:', error);
         cartData = {};
       }
-
-      console.log('Current cart data:', cartData);
 
       // Initialize cart structure
       if (!cartData[itemId]) {
@@ -98,13 +93,7 @@ export class CartService {
       };
 
       // FIXED: Set cache with proper TTL
-      const setRes = await this.cacheManager.set(
-        cacheKey,
-        cartData,
-        24 * 60 * 60 * 1000,
-      ); // 24 hours TTL
-
-      console.log('Cart updated successfully', setRes);
+      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
 
       // Increment the added to cart count
       await this.productLocationService.incrementAddedToCart(itemId);

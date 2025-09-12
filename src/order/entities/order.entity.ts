@@ -33,6 +33,12 @@ export interface orderItemInterface {
   name: string;
   quantity: number;
   price: number;
+  uom?: {
+    id: number;
+    unit: string;
+    platformPrice: number;
+    vendorPrice: number;
+  }[];
 }
 
 @Entity('orders')
@@ -104,6 +110,9 @@ export class OrderEntity {
   metadata: {
     vtpDetails: any; // Store VTP metadata
   };
+
+  @Column({ nullable: true })
+  updatedById: string;
 
   @CreateDateColumn()
   createdAt: Date;
