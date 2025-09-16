@@ -99,6 +99,42 @@ export class RegisterUserDto {
   @IsOptional()
   referralCode?: string;
 
+  @ApiProperty({
+    description: 'Country of the user',
+    example: 'Nigeria',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  country: string;
+
+  @ApiProperty({
+    description: 'State of the user',
+    example: 'Lagos',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  state: string;
+
+  @ApiProperty({
+    description: 'City of the user',
+    example: 'Ikeja',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  city: string;
+
+  @ApiProperty({
+    description: 'Gender of the user',
+    example: 'male',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  gender: string;
+
   updatedBy?: string;
   roles?: RoleEntity[];
 }
