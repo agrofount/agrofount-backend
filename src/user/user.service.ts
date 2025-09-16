@@ -28,6 +28,7 @@ import {
   LocationDto,
 } from './dto/create-profile.dto';
 import { UpdateLivestockFarmerDto } from './dto/update-profile.dto';
+import { UpdateBasicUserDetailDto } from './dto/UpdateBasicUserDetail.dto';
 
 @Injectable()
 export class UserService {
@@ -145,6 +146,47 @@ export class UserService {
         relations: ['user', 'locations', 'contacts', 'breeds'],
       });
     });
+  }
+
+  async updateBasicUserDetail(
+    dto: UpdateBasicUserDetailDto,
+    user: UserEntity,
+  ): Promise<UserEntity> {
+    const { firstname, lastname, phone, email, address, username, gender } =
+      dto;
+
+    // Check for email uniqueness
+    if (email && email !== user.email) {
+      const existingEmailUser = await this.userRepo.findOne({
+        where: { email },
+      });
+      if (existingEmailUser && existingEmailUser.id !== user.id) {
+        throw new BadRequestException('A user with this email already exists.');
+      }
+    }
+
+    // Check for phone uniqueness
+    if (phone && phone !== user.phone) {
+      const existingPhoneUser = await this.userRepo.findOne({
+        where: { phone },
+      });
+      if (existingPhoneUser && existingPhoneUser.id !== user.id) {
+        throw new BadRequestException(
+          'A user with this phone number already exists.',
+        );
+      }
+    }
+
+    // Update user details
+    if (firstname !== undefined) user.firstname = firstname;
+    if (lastname !== undefined) user.lastname = lastname;
+    if (phone !== undefined) user.phone = phone;
+    if (email !== undefined) user.email = email;
+    if (address !== undefined) user.address = address;
+    if (username !== undefined) user.username = username;
+    if (gender !== undefined) user.gender = gender;
+
+    return this.userRepo.save(user);
   }
 
   async findAll(query: PaginateQuery): Promise<Paginated<UserEntity>> {

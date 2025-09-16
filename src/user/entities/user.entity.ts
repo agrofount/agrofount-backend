@@ -94,6 +94,18 @@ export class UserEntity {
   @Column({ nullable: true })
   referredBy: string; // userId of the referrer
 
+  @Column({ nullable: true, default: 'Nigeria' })
+  country: string;
+
+  @Column({ nullable: true })
+  state: string;
+
+  @Column({ nullable: true })
+  city: string;
+
+  @Column({ nullable: true })
+  gender: string;
+
   @CreateDateColumn()
   createdAt: Date;
 
