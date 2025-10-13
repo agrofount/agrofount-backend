@@ -70,6 +70,18 @@ export class OrderEntity {
   @Column('json', { default: [] })
   items: orderItemInterface[];
 
+  @Column({ nullable: true })
+  fullName: string;
+
+  @Column({ default: false })
+  isPickup: boolean;
+
+  @Column({ nullable: true })
+  pickupDate: Date;
+
+  @Column({ nullable: true })
+  pickupTime: Date;
+
   @Column('json')
   address: addressInterface;
 
