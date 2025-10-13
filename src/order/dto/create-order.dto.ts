@@ -136,4 +136,12 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   voucherCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Phone number associated with the order',
+    example: '+1234567890',
+  })
+  @IsString()
+  @IsOptional()
+  phoneNumber?: string;
 }

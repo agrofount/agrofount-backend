@@ -71,6 +71,7 @@ export class OrderService {
         items,
         isPickup,
         voucherCode,
+        phoneNumber,
       } = dto;
 
       if (!Object.values(PaymentMethod).includes(paymentMethod)) {
@@ -107,6 +108,7 @@ export class OrderService {
         paymentChannel,
         address,
         subTotal,
+        phoneNumber,
         vat,
         deliveryFee,
         code: this.generateOrderCode(),

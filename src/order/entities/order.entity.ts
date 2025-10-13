@@ -85,6 +85,9 @@ export class OrderEntity {
   @Column({ type: 'enum', enum: PaymentChannel, nullable: true })
   paymentChannel: PaymentChannel;
 
+  @Column({ nullable: true })
+  phoneNumber: string;
+
   @OneToMany(() => ShipmentEntity, (shipment) => shipment.order)
   shipments: ShipmentEntity[];
 
