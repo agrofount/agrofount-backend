@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsDateString,
   IsBoolean,
+  IsNotEmpty,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -69,6 +70,11 @@ class AddressDto {
 }
 
 export class CreateOrderDto {
+  @ApiProperty({ description: 'user full name', example: 'John Doe  ' })
+  @IsString()
+  @IsNotEmpty()
+  fullName: string;
+
   @ApiProperty({ description: 'Total price of the order', example: 39.98 })
   @IsNumber()
   totalPrice: number;
