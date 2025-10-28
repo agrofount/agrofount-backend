@@ -37,5 +37,5 @@ export const PRODUCT_LOCATION_PAGINATION_CONFIG: PaginateConfig<ProductLocationE
       isDraft: [FilterOperator.EQ],
       bestSeller: [FilterOperator.EQ],
     },
-    relations: ['product', 'reviews', 'state', 'country'],
+    relations: ['product', 'state', 'country'],
   };
