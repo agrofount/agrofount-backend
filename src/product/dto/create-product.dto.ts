@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, IsNotEmpty, IsString } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsNotEmpty, IsString } from 'class-validator';
 import { AnimalCategory, ProductSubCategoryType } from '../types/product.enum';
 
 export class CreateProductDto {
@@ -45,6 +45,7 @@ export class CreateProductDto {
     example: ['image1.jpg', 'image2.jpg'],
   })
   @IsArray()
+  @ArrayMaxSize(3, { message: 'Cannot have more than 3 images' })
   @IsString({ each: true })
   images: string[];
 }

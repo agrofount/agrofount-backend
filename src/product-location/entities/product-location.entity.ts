@@ -74,19 +74,15 @@ export class ProductLocationEntity {
   @Column({ nullable: true }) // Add the googleTag column
   googleTag: string;
 
-  @ManyToOne(() => CountryEntity, (country) => country.productLocations, {
-    onDelete: 'CASCADE',
-  })
+  @ManyToOne(() => CountryEntity, (country) => country.productLocations, {})
   country: CountryEntity;
 
   @ManyToOne(() => StateEntity, (state) => state.productLocations, {
-    onDelete: 'CASCADE',
     eager: true,
   })
   state: StateEntity;
 
   @ManyToOne(() => ProductEntity, (product) => product.productLocations, {
-    onDelete: 'CASCADE',
     eager: true,
   })
   product: ProductEntity;
@@ -100,6 +96,10 @@ export class ProductLocationEntity {
   @OneToMany(
     () => PriceHistoryEntity,
     (priceHistory) => priceHistory.productLocation,
+    {
+      onDelete: 'CASCADE',
+      eager: true,
+    },
   )
   priceHistory: PriceHistoryEntity[];
 

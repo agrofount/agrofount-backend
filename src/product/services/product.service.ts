@@ -83,9 +83,20 @@ export class ProductService {
   }
 
   async update(id: string, updateProductDto: UpdateProductDto) {
-    const product = await this.findOne(id);
+    // Merge existing entity and update DTO
+    const product = await this.productRepository.preload({
+      id,
+      ...updateProductDto,
+    });
 
-    Object.assign(product, updateProductDto);
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
+
+    // Replace images explicitly (avoid partial merges)
+    if (updateProductDto.images) {
+      product.images = [...updateProductDto.images];
+    }
 
     return this.productRepository.save(product);
   }
