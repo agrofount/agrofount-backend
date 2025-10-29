@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AddToCartDto } from './dto/create-cart.dto';
@@ -12,6 +13,7 @@ import { ProductLocationService } from '../product-location/product-location.ser
 
 @Injectable()
 export class CartService {
+  private readonly logger = new Logger(CartService.name);
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly productLocationService: ProductLocationService,
@@ -27,6 +29,7 @@ export class CartService {
       const uom = productLocation.uom.find(
         (item) => item.unit === selectedUOMUnit,
       );
+
       if (!uom) {
         throw new BadRequestException('Unit of Measure not found');
       }
@@ -44,20 +47,35 @@ export class CartService {
       const totalPrice = quantity * unitPrice;
 
       const cacheKey = `cart:${userId}`;
-      const cachedData = (await this.cacheManager.get(cacheKey)) || '{}';
-      const cartData = cachedData ? JSON.parse(cachedData as string) : {};
 
-      // Initialize itemId in cart if undefined
-      cartData[itemId] = cartData[itemId] || {};
+      // FIXED: Proper cache data retrieval
+      let cartData: any = {};
 
-      // Initialize selectedUOMUnit in cart if undefined
-      cartData[itemId][selectedUOMUnit] = cartData[itemId][selectedUOMUnit] || {
-        quantity: 0,
-        total: 0,
-        priceDetails: {},
-      };
+      try {
+        const cachedData = await this.cacheManager.get(cacheKey);
+        if (typeof cachedData === 'string') {
+          cartData = JSON.parse(cachedData);
+        } else if (typeof cachedData === 'object' && cachedData !== null) {
+          cartData = cachedData;
+        }
+      } catch (error) {
+        console.log('Error parsing cache, starting with empty cart:', error);
+        cartData = {};
+      }
 
-      // Increment or initialize size count
+      // Initialize cart structure
+      if (!cartData[itemId]) {
+        cartData[itemId] = {};
+      }
+
+      if (!cartData[itemId][selectedUOMUnit]) {
+        cartData[itemId][selectedUOMUnit] = {
+          quantity: 0,
+          total: 0,
+          priceDetails: {},
+        };
+      }
+
       // Update cart item
       cartData[itemId][selectedUOMUnit] = {
         quantity,
@@ -74,16 +92,16 @@ export class CartService {
         },
       };
 
-      // Update the user's cart in Redis
-      await this.cacheManager.set(cacheKey, JSON.stringify(cartData));
+      // FIXED: Set cache with proper TTL
+      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
 
-      // Increment the added to cart count in the product location
+      // Increment the added to cart count
       await this.productLocationService.incrementAddedToCart(itemId);
 
       return cartData;
     } catch (error) {
-      console.log('this is the error: ', error);
-      return { success: false, message: error.message };
+      console.log('Error while adding to cart: ', error);
+      throw error; // Re-throw to let NestJS handle the error
     }
   }
 
@@ -162,7 +180,7 @@ export class CartService {
       }
 
       // Save updated cart
-      await this.cacheManager.set(cacheKey, JSON.stringify(cartData));
+      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
 
       return {
         success: true,
@@ -180,15 +198,15 @@ export class CartService {
   async getCart(userId: string) {
     try {
       const cacheKey = `cart:${userId}`;
-      const cachedData = (await this.cacheManager.get(cacheKey)) || '{}';
-      const cartData = cachedData ? JSON.parse(cachedData as string) : {};
-      if (!cartData) {
+      const cachedData = await this.cacheManager.get<string>(cacheKey);
+
+      if (!cachedData) {
         throw new NotFoundException('Cart not found');
       }
 
-      return { items: cartData };
+      return { items: cachedData };
     } catch (error) {
-      console.log('this is the error: ', error);
+      console.error('Error fetching cart:', error);
       return { success: false, message: error.message };
     }
   }
@@ -211,15 +229,20 @@ export class CartService {
       }
 
       const cacheKey = `cart:${userId}`;
-      const cachedData = (await this.cacheManager.get(cacheKey)) || '{}';
-      const cartData = cachedData ? JSON.parse(cachedData as string) : {};
+
+      const cartData = await this.cacheManager.get(cacheKey);
 
       // Ensure cart structure is correctly initialized
-      cartData[itemId] = cartData[itemId] || {};
+      if (!cartData[itemId]) {
+        cartData[itemId] = {};
+      }
 
       if (quantity === 0) {
         // Delete the item from the cart if quantity is zero
-        delete cartData[itemId][selectedUOMUnit];
+        if (cartData[itemId][selectedUOMUnit]) {
+          delete cartData[itemId][selectedUOMUnit];
+        }
+
         // If no more UOM units for the item, delete the item
         if (Object.keys(cartData[itemId]).length === 0) {
           delete cartData[itemId];
@@ -256,21 +279,18 @@ export class CartService {
         };
       }
 
-      // Update the user's cart in Redis
-      await this.cacheManager.set(cacheKey, JSON.stringify(cartData));
+      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
 
-      // Respond to the client
       return cartData;
     } catch (error) {
-      console.log('this is the error: ', error);
-      return { success: false, message: error.message };
+      console.error('Error in cart update:', error);
+      throw error; // Re-throw to let NestJS handle the error properly
     }
   }
 
   async clear(id: string) {
     const cacheKey = `cart:${id}`;
-    const cachedData: any = await this.cacheManager.get(cacheKey);
-    const cartData = cachedData ? JSON.parse(cachedData as string) : {};
+    const cartData: any = await this.cacheManager.get(cacheKey);
 
     if (!cartData || Object.keys(cartData).length === 0) {
       throw new BadRequestException('No cart found');

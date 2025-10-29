@@ -28,7 +28,6 @@ export const setupTriggers = async (dataSource: DataSource) => {
   // }
 
   const files = fs.readdirSync(triggersDir);
-  console.log(`Files found in directory:`, files);
 
   const triggerFiles = files.filter((file) => file.endsWith('.sql'));
 

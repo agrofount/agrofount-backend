@@ -7,6 +7,7 @@ export interface UserNotificationData {
 
 export interface ProductUpdate {
   product: string;
+  productSlug: string;
   oldPrice: number;
   newPrice: number;
   percentageChange: string;

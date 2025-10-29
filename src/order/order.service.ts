@@ -37,7 +37,7 @@ import { VoucherService } from '../voucher/voucher.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationChannels } from '../notification/types/notification.type';
 import { ProductLocationService } from '../product-location/product-location.service';
-import { CreateOrderItemDto } from './dto/create-order-item.dto';
+import { UpdateOrderItemDto } from './dto/update-order-item.dto';
 
 @Injectable()
 export class OrderService {
@@ -82,8 +82,7 @@ export class OrderService {
       }
 
       const cacheKey = `cart:${user.id}`;
-      const cachedData: any = await this.cacheManager.get(cacheKey);
-      const cartData = cachedData ? JSON.parse(cachedData as string) : {};
+      const cartData: any = await this.cacheManager.get(cacheKey);
 
       if (!cartData || Object.keys(cartData).length === 0) {
         throw new BadRequestException('No cart found');
@@ -309,9 +308,15 @@ export class OrderService {
     try {
       // Define pagination options
       const paginationOptions: PaginateConfig<OrderEntity> = {
-        sortableColumns: ['id', 'status', 'paymentMethod', 'createdAt'],
+        sortableColumns: [
+          'id',
+          'status',
+          'paymentMethod',
+          'createdAt',
+          'totalPrice',
+        ],
         nullSort: 'last',
-        searchableColumns: ['status', 'paymentMethod'],
+        searchableColumns: ['status', 'paymentMethod', 'user.username'],
         defaultSortBy: [['createdAt', 'DESC']],
         filterableColumns: {
           category: [FilterOperator.EQ],
@@ -551,6 +556,42 @@ export class OrderService {
       validatedItems.push(item);
     }
     return validatedItems;
+  }
+
+  async updateOrderItem(
+    orderId: string,
+    user: AdminEntity,
+    dto: UpdateOrderItemDto,
+  ): Promise<OrderEntity> {
+    const { orderItemId, uomId, newVendorPrice } = dto;
+
+    // Fetch the order
+    const order = await this.findOne(orderId);
+
+    // Rebuild items array with updated UOM price
+    let found = false;
+    order.items = order.items.map((item) => {
+      if (item.id === orderItemId) {
+        const updatedUoms = item.uom?.map((u) => {
+          if (u.id === uomId) {
+            found = true;
+            return { ...u, vendorPrice: newVendorPrice };
+          }
+          return u;
+        });
+
+        if (!found)
+          throw new NotFoundException('UoM not found for the order item');
+
+        return { ...item, uom: updatedUoms };
+      }
+      return item;
+    });
+
+    order.updatedById = user.id;
+
+    await this.orderRepository.save(order);
+    return this.findOne(orderId);
   }
 
   // Helper method to extract VTP details for metadata

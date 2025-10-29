@@ -23,6 +23,7 @@ import { AdminEntity } from '../admins/entities/admin.entity';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
+import { UpdateOrderItemDto } from './dto/update-order-item.dto';
 
 @Controller('order')
 @UseGuards(JwtAuthGuard)
@@ -95,5 +96,19 @@ export class OrderController {
     @CurrentUser() user: UserEntity | AdminEntity,
   ) {
     return this.orderService.cancelOrder(id, user);
+  }
+
+  @Patch(':id/items/:itemId')
+  @ApiOperation({ summary: 'Fulfill order item' })
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_orders')
+  updateOrderItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @CurrentUser() user: AdminEntity,
+    @Body() dto: UpdateOrderItemDto,
+  ) {
+    dto.orderItemId = itemId;
+    return this.orderService.updateOrderItem(id, user, dto);
   }
 }

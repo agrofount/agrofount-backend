@@ -30,6 +30,7 @@ import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { CreateLivestockFarmerDto } from './dto/create-profile.dto';
 import { UpdateLivestockFarmerDto } from './dto/update-profile.dto';
+import { UpdateBasicUserDetailDto } from './dto/UpdateBasicUserDetail.dto';
 
 @Controller('user')
 @ApiBearerAuth()
@@ -82,6 +83,21 @@ export class UserController {
     @CurrentUser() user: UserEntity,
   ) {
     return this.userService.createProfile(createLivestockFarmerDto, user);
+  }
+
+  @Put('profile')
+  @ApiResponse({
+    status: 201,
+    description: 'Update basic user details successfully',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input data' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBody({ type: UpdateBasicUserDetailDto })
+  async updateBasicUserDetail(
+    @Body() dto: UpdateBasicUserDetailDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.userService.updateBasicUserDetail(dto, user);
   }
 
   @Put('profile/:id')

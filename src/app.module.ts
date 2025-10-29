@@ -36,7 +36,8 @@ import termiiConfig from './config/termii.config';
 import { AiChatModule } from './ai-chat/ai-chat.module';
 import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
-import { createKeyv, Keyv } from '@keyv/redis';
+import KeyvRedis from '@keyv/redis';
+import { Keyv } from 'keyv';
 import { CacheableMemory } from 'cacheable';
 
 @Module({
@@ -62,16 +63,12 @@ import { CacheableMemory } from 'cacheable';
     CartModule,
     UploadModule,
     CacheModule.registerAsync({
+      imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => {
         const redisUrl = configService.get<string>('REDIS_URL');
         return {
-          stores: [
-            new Keyv({
-              store: new CacheableMemory({ ttl: 60000, lruSize: 5000 }),
-            }),
-            createKeyv(redisUrl),
-          ],
+          stores: [new KeyvRedis(redisUrl)],
         };
       },
       isGlobal: true,
