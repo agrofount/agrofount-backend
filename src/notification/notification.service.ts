@@ -19,6 +19,7 @@ import {
   EmailTemplateIds,
   MessageRecipient,
   MessageTypes,
+  NotificationChannels,
   NotificationTypes,
 } from './types/notification.type';
 import { CreateNotificationDto } from './dto/create-notification.dto';
@@ -149,6 +150,150 @@ export class NotificationService {
     return results;
   }
 
+  async sendOrderUpdateNotification(
+    order: OrderEntity,
+    message: string,
+    channels: NotificationTypes[],
+  ): Promise<any> {
+    const results = [];
+
+    for (const channel of channels) {
+      const recipient = {
+        email: order.user.email,
+        phoneNumber: order.user.phone,
+        userId: order.user.id,
+      };
+
+      // initialize params to avoid using before assignment
+      let params: Record<string, any> = {};
+
+      if (channel === NotificationChannels.EMAIL) {
+        // Calculate totals
+        const subtotal =
+          order.items?.reduce((sum, item) => {
+            const price = item.price ?? 0;
+            const quantity = item.quantity ?? 1;
+            return sum + price * quantity;
+          }, 0) || 0;
+
+        const total = order.totalPrice ?? subtotal;
+
+        const addedItemsHtml = `
+        <div style="max-width: 600px; margin: 0 auto; font-family: Arial, sans-serif;">
+          <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+            <thead>
+              <tr style="background-color: #f8f9fa;">
+                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Product</th>
+                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Price</th>
+                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">Quantity</th>
+                <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(order.items || [])
+                .map((item: any) => {
+                  const productName =
+                    typeof item.name === 'string'
+                      ? item.name
+                      : item.name || 'Product';
+                  const price = item.price ?? 0;
+                  const quantity = item.quantity ?? 1;
+                  const itemTotal = price * quantity;
+                  const imageUrl =
+                    item.product?.images[0]?.url ||
+                    item.image ||
+                    'https://via.placeholder.com/60x60?text=No+Image';
+
+                  return `
+                    <tr style="border-bottom: 1px solid #dee2e6;">
+                      <td style="padding: 6px; vertical-align: middle;">
+                        <div style="display: flex; align-items: center;">
+                          <img src="${imageUrl}" 
+                               alt="${productName}" 
+                               style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px; margin-right: 12px;">
+                          <span style="font-weight: 500;">${productName}</span>
+                        </div>
+                      </td>
+                      <td style="padding: 6px; vertical-align: middle;">₦${price.toLocaleString()}</td>
+                      <td style="padding: 6px; text-align: center; vertical-align: middle;">${quantity}</td>
+                      <td style="padding: 6px; text-align: right; vertical-align: middle;">₦${itemTotal.toLocaleString()}</td>
+                    </tr>
+                  `;
+                })
+                .join('')}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="3" style="padding: 12px; text-align: right; border-top: 2px solid #dee2e6; font-weight: bold;">Subtotal:</td>
+                <td style="padding: 12px; text-align: right; border-top: 2px solid #dee2e6; font-weight: bold;">₦${subtotal.toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td colspan="3" style="padding: 12px; text-align: right; font-weight: bold;">Total:</td>
+                <td style="padding: 12px; text-align: right; font-weight: bold; font-size: 1.1em; color: #2c5aa0;">₦${total.toLocaleString()}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      `;
+
+        params = {
+          ...params,
+          firstName: order.fullName,
+          updatesHtml: addedItemsHtml,
+          orderCode: order.code,
+          updateMessage: message,
+          totalItems: order.items?.length || 0,
+          subtotal: subtotal,
+          total: total,
+        };
+      } else if (channel === NotificationChannels.SMS) {
+        const itemCount = order.items?.length || 0;
+        const itemText = itemCount === 1 ? 'item' : 'items';
+
+        // Calculate totals for SMS
+        const subtotal =
+          order.items?.reduce((sum, item) => {
+            const price = item.price ?? 0;
+            const quantity = item.quantity ?? 1;
+            return sum + price * quantity;
+          }, 0) || 0;
+
+        const total = order.totalPrice ?? subtotal;
+
+        params = {
+          ...params,
+          message: `Your order ${
+            order.code
+          } has been updated successfully. ${itemCount} ${itemText} added. Subtotal: ₦${subtotal.toLocaleString()}, Total: ₦${total.toLocaleString()}. ${message}`,
+        };
+      }
+
+      params = { ...params, order };
+
+      try {
+        const result = await this.sendNotification(
+          channel,
+          recipient,
+          MessageTypes.ORDER_UPDATED_NOTIFICATION,
+          params,
+        );
+        results.push({ channel, success: true, result });
+      } catch (error) {
+        this.logger.error(
+          `Failed to send notification via ${channel}:`,
+          error?.message || error,
+        );
+        results.push({
+          channel,
+          success: false,
+          error: error?.message || String(error),
+        });
+      }
+    }
+
+    return results;
+  }
+
   sendNotification(
     type: NotificationTypes,
     recipient: MessageRecipient,
@@ -176,6 +321,12 @@ export class NotificationService {
     params: Record<string, any>,
     messageType: MessageTypes,
   ): Promise<void> {
+    if (!recipient.email) {
+      throw new BadGatewayException(
+        'Recipient email is required for email notifications',
+      );
+    }
+
     // Implementation for sending email
     console.log(
       `Sending email to ${recipient.email} for message type ${messageType}`,
@@ -201,6 +352,12 @@ export class NotificationService {
     params: Record<string, any> = {},
   ) {
     const { sender_id } = this.configService.get<TermiiConfig>('termii');
+
+    if (!recipient) {
+      throw new BadGatewayException(
+        'Recipient is required for SMS notifications',
+      );
+    }
 
     // Determine the message content based on the message type
     switch (messageType) {
@@ -259,6 +416,23 @@ export class NotificationService {
 
         return paymentSmsRes;
 
+      case MessageTypes.ORDER_UPDATED_NOTIFICATION:
+        const orderUpdateMessage = `Your order with code ${params.order?.code} has been updated.`;
+        const orderUpdateSmsRes = await this.sendSmsMessage(
+          orderUpdateMessage,
+          recipient,
+        );
+
+        // Optionally log or save the message to the database
+        await this.create({
+          messageType,
+          userId: params.userId,
+          sender: sender_id,
+          message: orderUpdateMessage,
+        });
+
+        return orderUpdateSmsRes;
+
       default:
         throw new Error(`Unsupported SMS message type: ${messageType}`);
     }
@@ -278,6 +452,7 @@ export class NotificationService {
         from: sender_id,
         channel: 'dnd',
         message_text: message,
+        sms: message,
       };
 
       const response = await lastValueFrom(

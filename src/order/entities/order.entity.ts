@@ -115,6 +115,9 @@ export class OrderEntity {
   @Column('decimal', { precision: 10, scale: 2, nullable: true })
   originalSubTotal: number;
 
+  @Column('boolean', { default: false })
+  updatedByAdmin: boolean;
+
   @Column('json', { nullable: true })
   metadata: {
     vtpDetails: any; // Store VTP metadata

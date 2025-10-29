@@ -11,7 +11,7 @@ import {
   Patch,
 } from '@nestjs/common';
 import { OrderService } from './order.service';
-import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { ApiBearerAuth, ApiBody, ApiOperation } from '@nestjs/swagger';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
@@ -66,6 +66,14 @@ export class OrderController {
   @UseGuards(JwtAuthGuard, AdminAuthGuard)
   update(@Param('id') id: string, @Body() updateOrderDto: UpdateOrderDto) {
     return this.orderService.update(id, updateOrderDto);
+  }
+
+  @Post(':id/items')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_orders')
+  @ApiOperation({ summary: 'Add items to an existing order' })
+  addItems(@Param('id') id: string, @Body() dto: OrderItemDto[]) {
+    return this.orderService.addItems(id, dto);
   }
 
   @Patch(':id/recieved')

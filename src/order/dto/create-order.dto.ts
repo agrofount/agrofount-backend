@@ -13,7 +13,7 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentChannel, PaymentMethod } from '../../payment/enum/payment.enum';
 
-class OrderItemDto {
+export class OrderItemDto {
   @ApiProperty({ description: 'ID of the product', example: '1234567890' })
   @IsString()
   id: string;

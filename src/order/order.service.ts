@@ -4,9 +4,10 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { Cache, CACHE_MANAGER } from '@nestjs/cache-manager';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -36,9 +37,11 @@ import { VoucherService } from '../voucher/voucher.service';
 import { NotificationService } from '../notification/notification.service';
 import { NotificationChannels } from '../notification/types/notification.type';
 import { ProductLocationService } from '../product-location/product-location.service';
+import { CreateOrderItemDto } from './dto/create-order-item.dto';
 
 @Injectable()
 export class OrderService {
+  private logger = new Logger(OrderService.name);
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @InjectRepository(OrderEntity)
@@ -177,6 +180,126 @@ export class OrderService {
       console.error(`Error creating order for user ${user.id}:`, error);
       throw error;
     }
+  }
+
+  async addItems(id: string, dto: OrderItemDto[]) {
+    const order = await this.findOne(id);
+
+    const validatedItems = await this.validateItems(dto);
+    // Ensure items array exists
+    order.items = order.items || [];
+
+    // Enrich each validated item with full productLocation properties
+    const enrichedItems = [];
+    for (const it of validatedItems) {
+      // it.id is expected to be the productLocation id
+      const productLocation = await this.productLocationService.findById(it.id);
+      const uom = productLocation.uom.find(
+        (item) => item.platformPrice === it.price,
+      );
+      if (!uom) {
+        throw new BadRequestException('Unit of Measure not found');
+      }
+
+      // Find matching VTP tier based on quantity
+      let matchedVtp = null;
+      if (uom.vtp && uom.vtp.length > 0) {
+        matchedVtp = uom.vtp.find(
+          (vtp) => it.quantity >= vtp.minVolume && it.quantity <= vtp.maxVolume,
+        );
+      }
+
+      const enriched = {
+        addToCartCount: productLocation.addToCartCount || 0,
+        availableDates: productLocation.availableDates || [],
+        bestSeller: !!productLocation.bestSeller,
+        createdAt: productLocation.createdAt ?? null,
+        createdById: productLocation.createdById ?? null,
+        deletedAt: productLocation.deletedAt ?? null,
+        googleTag: productLocation.googleTag ?? null,
+        id: productLocation.id,
+        isAvailable: productLocation.isAvailable ?? true,
+        isDraft: productLocation.isDraft ?? false,
+        likesCount: productLocation.likesCount ?? 0,
+        name: productLocation.product?.name,
+        popularityScore: productLocation.popularityScore ?? 0,
+        price: Number(it.price ?? productLocation.price ?? 0),
+        product: productLocation.product ?? null,
+        productSlug:
+          productLocation.productSlug ?? productLocation.product?.slug,
+        purchaseCount: productLocation.purchaseCount ?? null,
+        quantity: Number(it.quantity || 1),
+        seo: productLocation.seo ?? null,
+        state: productLocation.state ?? null,
+        unit: matchedVtp?.unit ?? null,
+        uom: productLocation.uom ?? [],
+        updatedAt: productLocation.updatedAt ?? null,
+        updatedById: productLocation.updatedById ?? null,
+        viewPriority: productLocation.viewPriority ?? 0,
+        views: productLocation.views ?? 0,
+      } as any;
+
+      enrichedItems.push(enriched);
+    }
+
+    // Add enriched items
+    order.items.push(...enrichedItems);
+    order.updatedByAdmin = true;
+
+    // Recalculate subtotal, vat, delivery fee and totalPrice
+    const { delivery_charge, vat_charge } = OrderSettings;
+
+    const subTotal = order.items.reduce((sum, it) => {
+      const qty = Number(it.quantity) || 0;
+      const price = Number(it.price) || 0;
+      return sum + price * qty;
+    }, 0);
+
+    const deliveryFee = order.isPickup
+      ? 0
+      : (subTotal * (delivery_charge || 0)) / 100;
+    const vat = (subTotal * (vat_charge || 0)) / 100;
+    const discountAmount = Number(order.discountAmount || 0);
+
+    const totalPrice = parseFloat(
+      (subTotal + deliveryFee + vat - discountAmount).toFixed(2),
+    );
+
+    order.subTotal = parseFloat(subTotal.toFixed(2));
+    order.deliveryFee = parseFloat(deliveryFee.toFixed(2));
+    order.vat = parseFloat(vat.toFixed(2));
+    order.totalPrice = totalPrice;
+
+    const updatedOrder = await this.orderRepository.save(order);
+
+    if (updatedOrder) {
+      const message = 'Order items have been updated by an admin.';
+
+      // Notify internal team/channel
+      this.notificationService.sendOrderUpdateNotification(
+        updatedOrder,
+        message,
+        [NotificationChannels.TEAMS_NOTIFICATION],
+      );
+
+      // Also notify the customer via email/SMS if available
+      try {
+        this.notificationService.sendOrderUpdateNotification(
+          updatedOrder,
+          `Dear customer, ${message} Order reference: ${
+            updatedOrder.code || updatedOrder.id
+          }`,
+          [NotificationChannels.EMAIL, NotificationChannels.SMS],
+        );
+      } catch (err) {
+        this.logger.warn(
+          'Failed to send customer notification for order update',
+          err?.message || err,
+        );
+      }
+    }
+
+    return plainToInstance(OrderEntity, updatedOrder);
   }
 
   async findAll(
@@ -416,6 +539,18 @@ export class OrderService {
       .getRawOne();
 
     return parseFloat(result.totalSales) || 0;
+  }
+
+  private async validateItems(items: OrderItemDto[]) {
+    const validatedItems: OrderItemDto[] = [];
+    for (const item of items) {
+      await this.productLocationService.findById(item.id);
+
+      // Additional availability checks can be added here
+
+      validatedItems.push(item);
+    }
+    return validatedItems;
   }
 
   // Helper method to extract VTP details for metadata
