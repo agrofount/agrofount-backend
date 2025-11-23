@@ -68,4 +68,9 @@ export const permissions = [
     resource: 'notifications',
     actions: ['create', 'send_price_update'],
   },
+
+  {
+    resource: 'carts',
+    actions: ['manage'],
+  },
 ];
