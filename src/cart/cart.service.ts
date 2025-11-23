@@ -8,8 +8,9 @@ import {
 } from '@nestjs/common';
 import { AddToCartDto } from './dto/create-cart.dto';
 import { UpdateCartDto } from './dto/update-cart.dto';
-import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { ProductLocationService } from '../product-location/product-location.service';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class CartService {
@@ -208,6 +209,31 @@ export class CartService {
     } catch (error) {
       console.error('Error fetching cart:', error);
       return { success: false, message: error.message };
+    }
+  }
+
+  async getAllCarts() {
+    try {
+      const redisClient = (this.cacheManager as any).store.getClient();
+
+      // Use Redis SCAN for better performance with large datasets
+      const keys = await redisClient.keys('cart:*');
+
+      // Use pipeline for better performance
+      const pipeline = redisClient.pipeline();
+      keys.forEach((key) => pipeline.get(key));
+      const results = await pipeline.exec();
+
+      const carts = results
+        .map(([err, result]) =>
+          err ? null : typeof result === 'string' ? JSON.parse(result) : result,
+        )
+        .filter((cart) => cart !== null);
+
+      return { items: carts };
+    } catch (error) {
+      console.error('Error fetching all carts:', error);
+      throw new InternalServerErrorException('Failed to fetch all carts');
     }
   }
 

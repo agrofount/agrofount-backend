@@ -16,6 +16,9 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { UserEntity } from '../user/entities/user.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
+import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
 
 @ApiTags('Cart')
 @Controller('cart')
@@ -38,6 +41,18 @@ export class CartController {
     return {
       success: true,
       message: 'Item added to cart',
+      cart: cartData,
+    };
+  }
+
+  @Get('all')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('manage_carts')
+  async getAllCarts(@CurrentUser() user: UserEntity) {
+    const cartData = await this.cartService.getAllCarts();
+    return {
+      success: true,
+      message: 'Fetch cart successfully',
       cart: cartData,
     };
   }

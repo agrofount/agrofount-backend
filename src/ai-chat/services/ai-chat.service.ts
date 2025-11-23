@@ -644,7 +644,15 @@ export class AiChatService {
       fish: ['fish', 'tilapia', 'catfish', 'salmon', 'aquaculture'],
       pig: ['pig', 'swine', 'hog', 'boar', 'piglet'],
       cattle: ['cow', 'cattle', 'bull', 'ox', 'calf', 'dairy', 'beef'],
-      small_ruminant: ['sheep', 'goat', 'lamb', 'ram', 'doe', 'buck'],
+      small_ruminant: [
+        'sheep',
+        'goat',
+        'lamb',
+        'ram',
+        'doe',
+        'buck',
+        'small_ruminant',
+      ],
       rabbit: ['rabbit', 'bunny'],
       snail: ['snail'],
       apiculture: ['bee', 'honeybee', 'apiculture'],
@@ -1118,15 +1126,20 @@ export class AiChatService {
 
   private async getSessionData(sessionId: string) {
     try {
-      const response = await this.ddbClient.send(
-        new GetItemCommand({
-          TableName: process.env.DYNAMODB_TABLE_NAME,
-          Key: { sessionId: { S: sessionId } },
-        }),
-      );
+      const command = new GetItemCommand({
+        TableName: process.env.DYNAMODB_TABLE_NAME,
+        Key: { sessionId: { S: sessionId } },
+      });
+
+      const response = await this.ddbClient.send(command);
       return response.Item ? unmarshall(response.Item) : null;
     } catch (error) {
-      console.error('DynamoDB get error:', error);
+      console.error('DynamoDB get error details:', {
+        name: error.name,
+        message: error.message,
+        sessionId: sessionId,
+        tableName: process.env.DYNAMODB_TABLE_NAME,
+      });
       return null;
     }
   }
