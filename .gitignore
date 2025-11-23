@@ -5,6 +5,7 @@
 /certificate
 /kubernetes_temp
 /kubernetes
+/docker
 
 # Logs
 logs

@@ -418,7 +418,7 @@ export class AiChatService {
 
       const response = await this.bedrockClient.send(
         new InvokeModelCommand({
-          modelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
+          modelId: 'deepseek.v3-v1:0',
           contentType: 'application/json',
           accept: 'application/json',
           body: JSON.stringify({
@@ -474,7 +474,7 @@ export class AiChatService {
 
       const response = await this.bedrockClient.send(
         new InvokeModelCommand({
-          modelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
+          modelId: 'deepseek.v3-v1:0',
           contentType: 'application/json',
           accept: 'application/json',
           body: JSON.stringify({
@@ -843,7 +843,7 @@ export class AiChatService {
       `;
 
     try {
-      const modelId = 'anthropic.claude-3-sonnet-20240229-v1:0';
+      const modelId = 'deepseek.v3-v1:0';
 
       const payload = {
         anthropic_version: 'bedrock-2023-05-31',
