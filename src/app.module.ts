@@ -37,8 +37,6 @@ import { AiChatModule } from './ai-chat/ai-chat.module';
 import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
 import KeyvRedis from '@keyv/redis';
-import { Keyv } from 'keyv';
-import { CacheableMemory } from 'cacheable';
 
 @Module({
   imports: [

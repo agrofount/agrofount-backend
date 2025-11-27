@@ -27,6 +27,15 @@ export enum AnimalCategory {
   RUMINANTS = 'ruminants',
   PIG = 'pig',
   PETS = 'pets',
+  CATTLE = 'cattle',
+  FISH = 'fish',
+  SMALL_RUMINANT = 'small_ruminant',
+  RABBIT = 'rabbit',
+  SNAIL = 'snail',
+  APICULTURE = 'apiculture',
+  GRASSCUTTER = 'grasscutter',
+  DOG = 'dog',
+  CAT = 'cat',
 }
 
 // ======================
@@ -68,6 +77,15 @@ export const AnimalSubCategories: AnimalSubCategoryMap = {
   ],
   [AnimalCategory.PIG]: ['Piglet', 'Grower Pig', 'Sow', 'Boar', 'Fattener'],
   [AnimalCategory.PETS]: ['Dog', 'Cat', 'Bird', 'Rabbit'],
+  [AnimalCategory.CATTLE]: ['Dairy', 'Beef', 'Calf'],
+  [AnimalCategory.FISH]: ['Tilapia', 'Catfish', 'Carp', 'Trout', 'Salmon'],
+  [AnimalCategory.SMALL_RUMINANT]: ['Sheep', 'Goat', 'Lamb', 'Kid'],
+  [AnimalCategory.RABBIT]: ['Meat Rabbit', 'Pet Rabbit'],
+  [AnimalCategory.SNAIL]: ['Edible Snail', 'Pet Snail'],
+  [AnimalCategory.APICULTURE]: ['Honey Bee', 'Queen Bee', 'Drone Bee'],
+  [AnimalCategory.GRASSCUTTER]: ['Meat Grasscutter', 'Pet Grasscutter'],
+  [AnimalCategory.DOG]: ['Puppy', 'Adult Dog', 'Senior Dog'],
+  [AnimalCategory.CAT]: ['Kitten', 'Adult Cat', 'Senior Cat'],
 };
 
 // ======================
