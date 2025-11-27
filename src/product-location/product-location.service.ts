@@ -442,4 +442,364 @@ export class ProductLocationService {
 
     return query.getMany();
   }
+
+  // In ProductLocationService
+  async findProductsByDiagnosis(criteria: {
+    diagnosis: string;
+    animalType: string;
+    subCategory: string;
+    symptoms: string[];
+    searchQuery: string;
+  }): Promise<any[]> {
+    // Implementation to query your database based on diagnosis
+    // This should search product names, descriptions, categories, tags
+    // that match the diagnosis and symptoms
+    const mainTerms = this.extractMainTerms(criteria.diagnosis);
+
+    if (!mainTerms || mainTerms.trim() === '') {
+      return [];
+    }
+
+    // Convert animalType to match your AnimalCategory enum
+    const animalCategory = this.mapToAnimalCategory(criteria.animalType);
+
+    // Split main terms for individual searching
+    const searchTerms = mainTerms.split(' ');
+
+    // Build query on ProductLocationEntity with product relations
+    const queryBuilder = this.productLocationRepo
+      .createQueryBuilder('productLocation')
+      .leftJoinAndSelect('productLocation.product', 'product')
+      .leftJoinAndSelect('productLocation.state', 'state')
+      .leftJoinAndSelect('productLocation.country', 'country')
+      .where('product.category = :animalCategory', { animalCategory })
+      .andWhere('productLocation.isAvailable = :isAvailable', {
+        isAvailable: true,
+      })
+      .andWhere('productLocation.isDraft = :isDraft', { isDraft: false });
+
+    // Add search conditions for each term on the product fields
+    const orConditions = searchTerms.map(
+      (term) =>
+        `(product.name ILIKE :term OR 
+        product.description ILIKE :term OR 
+        product.subCategory ILIKE :term OR
+        product.brand ILIKE :term)`,
+    );
+
+    if (orConditions.length > 0) {
+      queryBuilder.andWhere(`(${orConditions.join(' OR ')})`);
+
+      // Add parameters for each term
+      searchTerms.forEach((term) => {
+        queryBuilder.setParameter('term', `%${term}%`);
+      });
+    }
+
+    return await queryBuilder
+      .orderBy('productLocation.popularityScore', 'DESC')
+      .addOrderBy('productLocation.viewPriority', 'DESC')
+      .addOrderBy('productLocation.bestSeller', 'DESC')
+      .limit(8)
+      .getMany();
+  }
+
+  async findProductsBySymptoms(
+    symptoms: string[],
+    animalType: string,
+  ): Promise<any[]> {
+    try {
+      if (!symptoms || symptoms.length === 0) {
+        return [];
+      }
+
+      // Convert animalType to match your AnimalCategory enum
+      const animalCategory = this.mapToAnimalCategory(animalType);
+
+      const queryBuilder = this.productLocationRepo
+        .createQueryBuilder('productLocation')
+        .leftJoinAndSelect('productLocation.product', 'product')
+        .leftJoinAndSelect('productLocation.state', 'state')
+        .leftJoinAndSelect('productLocation.country', 'country')
+        .where('product.category = :animalCategory', { animalCategory })
+        .andWhere('productLocation.isAvailable = :isAvailable', {
+          isAvailable: true,
+        })
+        .andWhere('productLocation.isDraft = :isDraft', { isDraft: false });
+
+      // Build OR conditions for each symptom on product fields
+      const orConditions = symptoms.map(
+        (symptom) =>
+          `(product.name ILIKE :symptom OR 
+        product.description ILIKE :symptom OR 
+        product.subCategory ILIKE :symptom OR
+        product.brand ILIKE :symptom)`,
+      );
+
+      if (orConditions.length > 0) {
+        queryBuilder.andWhere(`(${orConditions.join(' OR ')})`);
+
+        // Add parameters for each symptom
+        symptoms.forEach((symptom) => {
+          queryBuilder.setParameter('symptom', `%${symptom}%`);
+        });
+      }
+
+      return await queryBuilder
+        .orderBy('productLocation.popularityScore', 'DESC')
+        .addOrderBy('productLocation.viewPriority', 'DESC')
+        .addOrderBy('productLocation.bestSeller', 'DESC')
+        .limit(6)
+        .getMany();
+    } catch (error) {
+      this.logger.error('Error finding products by symptoms:', error);
+      return [];
+    }
+  }
+
+  private extractMainTerms(diagnosis: string): string {
+    if (!diagnosis) return '';
+
+    // Convert to lowercase for consistent matching
+    const lowerDiagnosis = diagnosis.toLowerCase();
+
+    // Remove common stop words and focus on key terms
+    const stopWords = new Set([
+      'the',
+      'a',
+      'an',
+      'and',
+      'or',
+      'but',
+      'in',
+      'on',
+      'at',
+      'to',
+      'for',
+      'of',
+      'with',
+      'by',
+      'from',
+      'up',
+      'about',
+      'into',
+      'through',
+      'during',
+      'before',
+      'after',
+      'above',
+      'below',
+      'between',
+      'among',
+      'is',
+      'are',
+      'was',
+      'were',
+      'be',
+      'been',
+      'being',
+      'have',
+      'has',
+      'had',
+      'do',
+      'does',
+      'did',
+      'will',
+      'would',
+      'could',
+      'should',
+      'may',
+      'might',
+      'must',
+      'this',
+      'that',
+      'these',
+      'those',
+      'i',
+      'you',
+      'he',
+      'she',
+      'it',
+      'we',
+      'they',
+      'your',
+      'their',
+      'our',
+      'my',
+      'his',
+      'her',
+      'its',
+      'what',
+      'which',
+      'who',
+      'whom',
+      'whose',
+      'when',
+      'where',
+      'why',
+      'how',
+      'all',
+      'any',
+      'both',
+      'each',
+      'few',
+      'more',
+      'most',
+      'other',
+      'some',
+      'such',
+      'no',
+      'nor',
+      'not',
+      'only',
+      'own',
+      'same',
+      'so',
+      'than',
+      'too',
+      'very',
+      'can',
+      'just',
+    ]);
+
+    // Extract meaningful terms from diagnosis
+    const words = lowerDiagnosis
+      .replace(/[^\w\s]/g, ' ') // Remove punctuation
+      .split(/\s+/) // Split by whitespace
+      .filter(
+        (word) =>
+          word.length > 2 && // Remove short words
+          !stopWords.has(word) && // Remove stop words
+          !/^\d+$/.test(word), // Remove pure numbers
+      );
+
+    // Prioritize medical and treatment terms
+    const priorityTerms = this.getPriorityTerms();
+    const prioritizedWords = words.sort((a, b) => {
+      const aPriority = priorityTerms.has(a) ? 1 : 0;
+      const bPriority = priorityTerms.has(b) ? 1 : 0;
+      return bPriority - aPriority;
+    });
+
+    // Take top 3-5 most relevant terms
+    const mainTerms = prioritizedWords.slice(0, 5);
+
+    return mainTerms.join(' ');
+  }
+
+  private getPriorityTerms(): Set<string> {
+    return new Set([
+      // Medical conditions
+      'infection',
+      'bacterial',
+      'viral',
+      'parasitic',
+      'fungal',
+      'disease',
+      'deficiency',
+      'nutritional',
+      'vitamin',
+      'mineral',
+      'protein',
+      'respiratory',
+      'digestive',
+      'gastrointestinal',
+      'skin',
+      'dermal',
+      'fever',
+      'diarrhea',
+      'cough',
+      'lameness',
+      'weakness',
+      'lethargy',
+      'inflammation',
+      'pain',
+      'swelling',
+      'lesion',
+      'wound',
+      'ulcer',
+
+      // Treatments and solutions
+      'antibiotic',
+      'antimicrobial',
+      'antifungal',
+      'antiparasitic',
+      'dewormer',
+      'vaccine',
+      'vaccination',
+      'vitamin',
+      'mineral',
+      'supplement',
+      'additive',
+      'treatment',
+      'therapy',
+      'medication',
+      'drug',
+      'prevention',
+      'preventive',
+      'recovery',
+      'boost',
+      'strengthen',
+      'support',
+      'aid',
+      'relief',
+
+      // Animal-specific terms
+      'poultry',
+      'chicken',
+      'broiler',
+      'layer',
+      'cattle',
+      'cow',
+      'bull',
+      'calf',
+      'sheep',
+      'goat',
+      'pig',
+      'swine',
+      'fish',
+      'tilapia',
+      'catfish',
+
+      // Symptom-related
+      'symptom',
+      'sign',
+      'condition',
+      'issue',
+      'problem',
+      'sickness',
+      'illness',
+    ]);
+  }
+
+  // Helper method to map animal type strings to AnimalCategory enum
+  private mapToAnimalCategory(animalType: string): AnimalCategory {
+    const mapping: { [key: string]: AnimalCategory } = {
+      poultry: AnimalCategory.POULTRY,
+      chicken: AnimalCategory.POULTRY,
+      bird: AnimalCategory.POULTRY,
+      cattle: AnimalCategory.CATTLE,
+      cow: AnimalCategory.CATTLE,
+      bull: AnimalCategory.CATTLE,
+      calf: AnimalCategory.CATTLE,
+      fish: AnimalCategory.FISH,
+      tilapia: AnimalCategory.FISH,
+      catfish: AnimalCategory.FISH,
+      pig: AnimalCategory.PIG,
+      swine: AnimalCategory.PIG,
+      hog: AnimalCategory.PIG,
+      small_ruminant: AnimalCategory.SMALL_RUMINANT,
+      sheep: AnimalCategory.SMALL_RUMINANT,
+      goat: AnimalCategory.SMALL_RUMINANT,
+      rabbit: AnimalCategory.RABBIT,
+      snail: AnimalCategory.SNAIL,
+      apiculture: AnimalCategory.APICULTURE,
+      bee: AnimalCategory.APICULTURE,
+      grasscutter: AnimalCategory.GRASSCUTTER,
+      dog: AnimalCategory.DOG,
+      cat: AnimalCategory.CAT,
+    };
+
+    return mapping[animalType.toLowerCase()] || AnimalCategory.POULTRY;
+  }
 }
