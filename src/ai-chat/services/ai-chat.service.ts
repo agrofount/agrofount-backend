@@ -1381,6 +1381,7 @@ PREVENTION:
       id: pl.id,
       productId: pl.product?.id,
       name: pl.product?.name,
+      productSlug: pl.productSlug,
       description: pl.product?.description,
       category: pl.product?.category,
       subCategory: pl.product?.subCategory,
@@ -1419,6 +1420,7 @@ PREVENTION:
       id: productLocation.id,
       productId: productLocation.product?.id,
       name: productLocation.product?.name,
+      productSlug: productLocation.productSlug,
       description:
         productLocation.product?.description || 'No description available',
       category: productLocation.product?.category,
