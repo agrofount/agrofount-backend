@@ -25,9 +25,9 @@ export const pgConfig: DataSourceOptions = {
   schema: process.env.DB_SCHEMA,
   synchronize: Boolean(process.env.DB_SYNCHRONIZE),
   logging: process.env.DB_LOGGING === 'true',
-  ssl: {
-    rejectUnauthorized: false, // Allow self-signed certificates
-  },
+  // ssl: {
+  //   rejectUnauthorized: false, // Allow self-signed certificates
+  // },
 };
 
 export default registerAs('database', () => pgConfig);

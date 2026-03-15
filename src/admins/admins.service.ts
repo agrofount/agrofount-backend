@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { CreateAdminDto } from './dto/create-admin.dto';
+import { InviteAdminDto } from './dto/create-admin.dto';
 import { UpdateAdminDto } from './dto/update-admin.dto';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
@@ -41,7 +41,7 @@ export class AdminsService {
     private readonly notificationService: NotificationService,
   ) {}
 
-  create(createAdminDto: CreateAdminDto) {
+  create(createAdminDto: InviteAdminDto) {
     return 'This action adds a new admin';
   }
 
@@ -111,12 +111,17 @@ export class AdminsService {
     return admin;
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} admin`;
+  async remove(id: string) {
+    const admin = await this.adminRepo.findOneBy({ id });
+    if (!admin) {
+      throw new NotFoundException(`Admin with id ${id} not found`);
+    }
+
+    await this.adminRepo.softRemove(admin);
   }
 
   async register(
-    dto: RegisterUserDto,
+    dto: InviteAdminDto,
     user: AdminEntity,
   ): Promise<Partial<AdminEntity>> {
     try {
@@ -179,7 +184,7 @@ export class AdminsService {
       );
 
       return plainToInstance(AdminEntity, admin);
-    } catch (error) {
+    } catch (error: any) {
       Logger.error(error.message);
       throw new BadRequestException(error.message);
     }

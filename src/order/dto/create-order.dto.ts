@@ -150,4 +150,8 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   phoneNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }

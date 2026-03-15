@@ -291,10 +291,12 @@ export class AiChatService {
     sessionData: any,
   ) {
     try {
+      const lowerMessage = message.toLowerCase().trim();
+
       // Handle request for more symptoms
       if (
-        message.toLowerCase().includes('more symptoms') ||
-        message.toLowerCase().includes('other symptoms')
+        lowerMessage.includes('more symptoms') ||
+        lowerMessage.includes('other symptoms')
       ) {
         return this.showAdditionalSymptoms(sessionId, sessionData);
       }
@@ -307,6 +309,15 @@ export class AiChatService {
       // Handle symptom selection from list
       if (this.isSymptomSelection(message, sessionData)) {
         return this.processSelectedSymptom(sessionId, message, sessionData);
+      }
+
+      // Handle comma-separated symptoms
+      if (message.includes(',')) {
+        return await this.processMultipleSymptoms(
+          sessionId,
+          message,
+          sessionData,
+        );
       }
 
       // Add new symptom (free text or selected from list)
@@ -324,6 +335,92 @@ export class AiChatService {
       );
       return this.getErrorResponse(sessionId, sessionData);
     }
+  }
+
+  private async processMultipleSymptoms(
+    sessionId: string,
+    message: string,
+    sessionData: any,
+  ) {
+    const symptoms = message
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    if (symptoms.length === 0) {
+      return {
+        type: 'ERROR',
+        message: 'Please enter valid symptoms separated by commas.',
+        options: ['Try again', 'See symptom options'],
+        updatedSessionData: sessionData,
+      };
+    }
+
+    const currentSymptoms = Array.isArray(sessionData.symptoms)
+      ? sessionData.symptoms.filter((s) => s && s.description)
+      : [];
+
+    const newSymptoms = symptoms
+      .filter(
+        (symptom) =>
+          !currentSymptoms.some(
+            (existing) =>
+              existing.description.toLowerCase() === symptom.toLowerCase(),
+          ),
+      )
+      .map((symptom) => ({
+        description: symptom,
+        timestamp: new Date().toISOString(),
+        type: 'multiple',
+      }));
+
+    if (newSymptoms.length === 0) {
+      return {
+        type: 'MESSAGE',
+        message: 'All the symptoms you entered are already selected.',
+        options: ['Add different symptoms', 'Proceed to diagnosis'],
+        updatedSessionData: sessionData,
+      };
+    }
+
+    const updatedSession = {
+      ...sessionData,
+      symptoms: [...currentSymptoms, ...newSymptoms],
+    };
+
+    await this.saveSessionData(sessionId, updatedSession);
+
+    return {
+      type: 'SYMPTOMS_ADDED',
+      message: `Added ${newSymptoms.length} symptom(s): ${newSymptoms
+        .map((s) => s.description)
+        .join(', ')}`,
+      options: [
+        'Add more symptoms',
+        'See current symptoms',
+        'Proceed to diagnosis',
+      ],
+      symptomCount: updatedSession.symptoms.length,
+      updatedSessionData: updatedSession,
+    };
+  }
+
+  private async clearSymptoms(sessionId: string, sessionData: any) {
+    const updatedSession = {
+      ...sessionData,
+      symptoms: [],
+      currentOptions: undefined,
+    };
+
+    await this.saveSessionData(sessionId, updatedSession);
+
+    return {
+      type: 'SYMPTOMS_CLEARED',
+      message:
+        "All symptoms have been cleared. Please describe the symptoms you're observing.",
+      options: this.getAvailableSymptoms(updatedSession).slice(0, 5),
+      updatedSessionData: updatedSession,
+    };
   }
 
   private async handleDiagnosis(

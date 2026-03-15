@@ -28,6 +28,7 @@ import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
+import { InviteAdminDto } from './dto/create-admin.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -39,10 +40,10 @@ export class AdminsController {
   @UseGuards(JwtAuthGuard, AdminAuthGuard)
   @ApiOperation({ summary: 'User registration' })
   @ApiBody({
-    type: RegisterUserDto,
+    type: InviteAdminDto,
     description: 'Json structure for user Registration',
   })
-  async create(@Body() dto: RegisterUserDto, @CurrentUser() user: AdminEntity) {
+  async create(@Body() dto: InviteAdminDto, @CurrentUser() user: AdminEntity) {
     await this.adminsService.register(dto, user);
     return {
       success: true,
@@ -100,6 +101,6 @@ export class AdminsController {
   @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
   @RequiredPermissions('delete_admins')
   remove(@Param('id') id: string) {
-    return this.adminsService.remove(+id);
+    return this.adminsService.remove(id);
   }
 }
