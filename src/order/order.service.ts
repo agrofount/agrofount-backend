@@ -75,7 +75,16 @@ export class OrderService {
         fullName,
         pickupDate,
         pickupTime,
+        idempotencyKey,
       } = dto;
+
+      const indenpotencyCheck = await this.checkIdempotency(
+        idempotencyKey,
+        user,
+      );
+      if (indenpotencyCheck) {
+        return indenpotencyCheck;
+      }
 
       if (!Object.values(PaymentMethod).includes(paymentMethod)) {
         throw new BadRequestException('Invalid payment method');
@@ -134,6 +143,7 @@ export class OrderService {
       const createdOrder = await this.orderRepository.save(orderEntity);
 
       if (createdOrder) {
+        await this.setIndempotencyKey(idempotencyKey, user, createdOrder.id);
         this.notificationService.sendOrderNotification(createdOrder, [
           NotificationChannels.TEAMS_NOTIFICATION,
         ]);
@@ -634,5 +644,51 @@ export class OrderService {
         // Additional availability checks can be added here
       }
     }
+  }
+
+  private async checkIdempotency(
+    idempotencyKey: string,
+    user: UserEntity,
+  ): Promise<any> {
+    if (!idempotencyKey) {
+      return null; // No idempotency key provided
+    }
+
+    const idempotencyCacheKey = `order:idempotency:${user.id}:${idempotencyKey}`;
+    const existingOrderId = await this.cacheManager.get(idempotencyCacheKey);
+
+    if (existingOrderId) {
+      this.logger.log(
+        `Idempotent order creation detected for user ${user.id} with key ${idempotencyKey}`,
+      );
+      const existingOrder = await this.findOne(existingOrderId as string);
+      return {
+        order: plainToInstance(OrderEntity, existingOrder),
+        payment: null,
+      };
+    }
+
+    return null; // No existing order found
+  }
+
+  private async setIndempotencyKey(
+    idempotencyKey: string,
+    user: UserEntity,
+    orderId: string,
+  ) {
+    if (!idempotencyKey) {
+      return; // No idempotency key provided
+    }
+
+    const idempotencyCacheKey = `order:idempotency:${user.id}:${idempotencyKey}`;
+    await this.cacheManager.set(
+      idempotencyCacheKey,
+      orderId,
+      24 * 60 * 60 * 1000,
+    ); // 24 hours TTL
+
+    this.logger.log(
+      `Set idempotency key for user ${user.id} with key ${idempotencyKey} to order ${orderId}`,
+    );
   }
 }

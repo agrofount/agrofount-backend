@@ -206,7 +206,7 @@ export class CartService {
       }
 
       return { items: cachedData };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching cart:', error);
       return { success: false, message: error.message };
     }
