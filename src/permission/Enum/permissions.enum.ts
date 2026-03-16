@@ -534,7 +534,7 @@ function getDefaultActionsForResource(resource) {
       ];
 
     default:
-      // Default CRUD for most resources
+      // Default CRUD for most resource
       return [ACTIONS.CREATE, ACTIONS.READ, ACTIONS.UPDATE, ACTIONS.DELETE];
   }
 }
