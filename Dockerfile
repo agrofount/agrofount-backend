@@ -1,64 +1,44 @@
 # -------------------------------
 # Stage 1: Build
 # -------------------------------
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Install build tools (minimal set)
-RUN apk add --no-cache python3 make g++ && \
-    npm config set cache /tmp/.npm
+# Install build tools + sharp deps
+RUN apt-get update && apt-get install -y \
+  python3 \
+  make \
+  g++ \
+  libvips-dev \
+  && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files
 COPY package*.json ./
 
-# Install dependencies with optimizations
-RUN npm ci --include=dev --prefer-offline --no-audit --no-fund && \
-    npm cache clean --force
+RUN npm install
 
-# Copy source code
 COPY . .
 
-# Build the application
-RUN npm run build && \
-    npm prune --omit=dev && \
-    npm cache clean --force
+RUN npm run build
 
 # -------------------------------
 # Stage 2: Production
 # -------------------------------
-FROM node:20-alpine AS production
+FROM node:20-slim AS production
 
 WORKDIR /app
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nestjs -u 1001
+RUN apt-get update && apt-get install -y libvips-dev \
+  && rm -rf /var/lib/apt/lists/*
 
-# Set npm cache to tmp (will be cleaned up)
-RUN npm config set cache /tmp/.npm
-
-# Copy package files
 COPY package*.json ./
 
-# Install only production dependencies
-RUN npm ci --omit=dev --prefer-offline --no-audit --no-fund && \
-    npm cache clean --force && \
-    rm -rf /tmp/.npm
+RUN npm install --omit=dev
 
-# Copy built application from builder
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
 
-# Change ownership and switch to non-root user
-RUN chown -R nestjs:nodejs /app
-USER nestjs
-
-# Expose port
 EXPOSE 3000
 
-# Add health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
-
-# Start application
-CMD ["node", "dist/main.js"]
+CMD ["npm", "run", "start:prod"]
