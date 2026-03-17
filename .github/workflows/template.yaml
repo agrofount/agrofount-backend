@@ -64,6 +64,23 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+      # Add debugging steps
+      - name: Test image locally
+        run: |
+          docker run -d -p 3000:3000 --name test-container ${{ steps.build-image.outputs.image }}
+          sleep 10
+          docker logs test-container
+          curl -f http://localhost:3000/health || echo "Health check failed"
+          docker stop test-container
+          docker rm test-container
+
+      - name: Check ECS service events
+        run: |
+          aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ inputs.service }} \
+            --query 'services[0].events[0:5]'
+
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
