@@ -1,17 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class ResetPasswordDto {
   @ApiPropertyOptional({
-    description: 'The phone number of the user.',
-    example: 'hasuiqywhiquwh9q8wq8wq',
+    description: 'Opaque challenge ID for phone-based password reset.',
+    example: '2db7ad18-0f0b-4d71-9461-4a03cb06d389',
   })
   @IsString()
   @IsOptional()
-  pinId: string;
+  challengeId?: string;
 
   @ApiProperty({
-    description: 'The phone number of the user.',
+    description: 'Email reset token or phone OTP.',
     example: '782893',
   })
   @IsString()
@@ -25,14 +25,6 @@ export class ResetPasswordDto {
   })
   @IsString()
   @IsNotEmpty()
+  @MinLength(12)
   newPassword: string;
-
-  @ApiPropertyOptional({
-    description: 'The phone number of the user.',
-    example: '+1234567890',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  phone: string;
 }

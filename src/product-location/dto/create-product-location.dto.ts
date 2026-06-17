@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -54,6 +55,12 @@ export class UomDto {
   @IsOptional()
   @IsInt()
   moq?: number;
+
+  @ApiPropertyOptional({ description: 'Available stock for this unit' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  stockQuantity?: number;
 }
 
 export class CreateProductLocationDto {

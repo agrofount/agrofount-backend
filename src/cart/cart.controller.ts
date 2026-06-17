@@ -3,11 +3,11 @@ import {
   Get,
   Post,
   Body,
-  Param,
   Delete,
   Put,
   UseGuards,
   Logger,
+  Query,
 } from '@nestjs/common';
 import { CartService } from './cart.service';
 import { AddToCartDto, SyncCartDto } from './dto/create-cart.dto';
@@ -16,9 +16,9 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { UserEntity } from '../user/entities/user.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
-import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
+import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 
 @ApiTags('Cart')
 @Controller('cart')
@@ -48,8 +48,11 @@ export class CartController {
   @Get('all')
   @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
   @RequiredPermissions('manage_carts')
-  async getAllCarts(@CurrentUser() user: UserEntity) {
-    const cartData = await this.cartService.getAllCarts();
+  async getAllCarts(
+    @Query('cursor') cursor = '0',
+    @Query('limit') limit = '25',
+  ) {
+    const cartData = await this.cartService.getAllCarts(cursor, Number(limit));
     return {
       success: true,
       message: 'Fetch cart successfully',

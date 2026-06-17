@@ -2,79 +2,92 @@ import {
   BadRequestException,
   Body,
   Controller,
-  ParseFilePipe,
+  Delete,
+  Get,
+  Param,
+  ParseUUIDPipe,
   Post,
   UploadedFiles,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { UploadService } from './upload.service';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { UserEntity } from '../user/entities/user.entity';
+import { CurrentUser } from '../utils/decorators/current-user.decorator';
+import { UploadPurposeDto } from './dto/upload-purpose.dto';
 import { UploadGateway } from './upload.gateway';
-import { Server } from 'socket.io';
+import { UploadService } from './upload.service';
 
 @ApiTags('Upload')
+@ApiBearerAuth()
 @Controller('upload')
+@UseGuards(JwtAuthGuard)
 export class UploadController {
   constructor(
     private readonly uploadService: UploadService,
     private readonly uploadGateway: UploadGateway,
   ) {}
 
-  @Post('/')
-  @UseInterceptors(FilesInterceptor('files'))
+  @Post()
+  @UseInterceptors(
+    FilesInterceptor('files', 3, {
+      limits: { fileSize: 5 * 1024 * 1024, files: 3, fields: 5 },
+    }),
+  )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
+      required: ['files', 'purpose'],
       properties: {
         files: {
           type: 'array',
-          items: {
-            type: 'string',
-            format: 'binary',
-          },
+          maxItems: 3,
+          items: { type: 'string', format: 'binary' },
         },
-        clientId: {
+        purpose: {
           type: 'string',
-          description: 'Client ID for WebSocket communication',
+          enum: ['profile', 'product', 'review', 'other'],
         },
       },
     },
   })
   async uploadFiles(
-    @UploadedFiles(
-      new ParseFilePipe({
-        validators: [
-          //   new MaxFileSizeValidator({ maxSize: 1000 }),
-          //   new FileTypeValidator({ fileType: 'image/jpeg' }),
-        ],
-      }),
-    )
-    files: Express.Multer.File[],
-    @Body('clientId') clientId: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body() dto: UploadPurposeDto,
+    @CurrentUser() user: UserEntity,
   ) {
-    if (!files || files.length === 0) {
-      throw new BadRequestException('No files uploaded');
-    }
-
-    const server: Server = this.uploadGateway.getServer();
-
-    const responses = await Promise.all(
-      files.map((file) =>
-        this.uploadService.upload(
+    if (!files?.length) throw new BadRequestException('No files uploaded');
+    const responses = [];
+    for (const file of files) {
+      responses.push(
+        await this.uploadService.upload(
+          user.id,
+          dto.purpose,
           file.originalname,
           file.buffer,
-          clientId,
-          server,
+          this.uploadGateway.getServer(),
         ),
-      ),
-    );
+      );
+    }
+    return { success: true, uploads: responses };
+  }
 
-    return {
-      success: true,
-      message: 'Upload successful',
-      images: responses,
-    };
+  @Get(':id/url')
+  getDownloadUrl(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.uploadService.getDownloadUrl(user.id, id);
+  }
+
+  @Delete(':id')
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.uploadService.remove(user.id, id);
   }
 }

@@ -1,5 +1,4 @@
-import { Delete } from '@nestjs/common';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { AdminEntity } from '../../admins/entities/admin.entity';
 import {
   Entity,
   PrimaryGeneratedColumn,

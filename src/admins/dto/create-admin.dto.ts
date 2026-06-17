@@ -1,18 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
-  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  IsArray,
+  ArrayNotEmpty,
+  MinLength,
   ValidateIf,
 } from 'class-validator';
-import { RoleEntity } from '../../role/entities/role.entity';
 import { IsMatch } from '../../utils/validators/match.validator';
 
 export class InviteAdminDto {
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: 'The firstname of the user.',
     example: 'Adigun',
   })
@@ -61,28 +62,28 @@ export class InviteAdminDto {
     example: 'P@ssw0rd123',
     required: true,
   })
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @MinLength(12)
   password: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: "The user's password.",
     example: 'P@ssw0rd123',
     required: true,
   })
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @IsMatch('password')
   confirmPassword: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: 'Role IDs associated with the user.',
     example: ['a3f1c2d4-5678-4e9b-8a2c-123456789abc'], // Example of valid UUIDs
   })
+  @IsArray()
+  @ArrayNotEmpty()
   @IsUUID('4', { each: true }) // Ensure each value is a valid UUID (version 4)
-  @IsOptional()
   @IsString({ each: true })
   roleIds: string[];
-
-  updatedBy?: string;
-  roles?: RoleEntity[];
 }

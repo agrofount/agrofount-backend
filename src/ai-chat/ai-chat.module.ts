@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { UserModule } from '../user/user.module';
 import { AdminsModule } from '../admins/admins.module';
 import { AiChatController } from './ai-chat.controller';
-import { ProductLocationModule } from 'src/product-location/product-location.module';
+import { ProductLocationModule } from '../product-location/product-location.module';
 import { AiChatGateway } from './ai-chat.gateway';
 import { AiChatService } from './services/ai-chat.service';
 import { LangChainKendraService } from './services/langchain-kendra/langchain-kendra.service';

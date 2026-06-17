@@ -1,10 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import {
-  IsArray,
-  IsNotEmpty,
-  IsString,
-} from 'class-validator';
+import { IsArray, IsNotEmpty, IsString } from 'class-validator';
 
 export class AddSEODto {
   @ApiProperty({

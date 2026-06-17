@@ -16,10 +16,10 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 import { RoleEntity } from './entities/role.entity';
 import { Paginated, PaginateQuery } from 'nestjs-paginate';
-import { CurrentUser } from 'src/utils/decorators/current-user.decorator';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
-import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
-import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
+import { CurrentUser } from '../utils/decorators/current-user.decorator';
+import { AdminEntity } from '../admins/entities/admin.entity';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminAuthGuard } from '../auth/guards/admin.guard';
 
 @Controller('role')
 @UseGuards(RolesGuard)
@@ -28,41 +28,43 @@ export class RoleController {
   constructor(private readonly roleService: RoleService) {}
 
   @Post('/')
-  // @RequiredPermissions('create_role')
-  createRole(@Body() dto: CreateRoleDto) {
-    return this.roleService.createRole(dto);
+  @RequiredPermissions('create_roles')
+  createRole(@Body() dto: CreateRoleDto, @CurrentUser() user: AdminEntity) {
+    return this.roleService.createRole(dto, user);
   }
 
   @Get('/')
-  // @RequiredPermissions('get_role')
+  @RequiredPermissions('read_roles')
   getRoles(@Query() query: PaginateQuery): Promise<Paginated<RoleEntity>> {
     return this.roleService.getRoles(query);
   }
 
   @Get('/permissions')
-  // @RequiredPermissions('get_permission')
+  @RequiredPermissions('read_permissions')
   getPermissions() {
     return this.roleService.getPermissions();
   }
 
   @Get(':id')
+  @RequiredPermissions('read_roles')
   findOne(@Param('id') id: string) {
     return this.roleService.findOne(id);
   }
 
   @Put(':id')
-  // @RequiredPermissions('update_role')
+  @RequiredPermissions('update_roles')
   update(
     @Param('id') id: string,
     @Body() updateRoleDto: UpdateRoleDto,
     @CurrentUser() user: AdminEntity,
   ) {
     updateRoleDto.updatedBy = user.id;
-    return this.roleService.update(id, updateRoleDto);
+    return this.roleService.update(id, updateRoleDto, user);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.roleService.remove(+id);
+  @RequiredPermissions('delete_roles')
+  remove(@Param('id') id: string, @CurrentUser() user: AdminEntity) {
+    return this.roleService.remove(id, user);
   }
 }

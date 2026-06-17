@@ -41,6 +41,7 @@ export const RESOURCES = {
   FAQS: 'faqs',
   TESTIMONIALS: 'testimonials',
   BANNERS: 'banners',
+  CAREERS: 'careers',
 
   // Communication
   NOTIFICATIONS: 'notifications',

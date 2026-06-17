@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { UserEntity } from './entities/user.entity';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   FilterOperator,
@@ -14,8 +14,6 @@ import {
   Paginated,
   PaginateQuery,
 } from 'nestjs-paginate';
-import { RegisterUserDto } from '../auth/dto/create-user.dto';
-import { UserResponseDto } from './dto/user.response.dto';
 import { plainToInstance } from 'class-transformer';
 import { LivestockFarmerProfile } from './entities/profile.entity';
 import { FarmLocation } from './entities/location.entity';
@@ -152,36 +150,11 @@ export class UserService {
     dto: UpdateBasicUserDetailDto,
     user: UserEntity,
   ): Promise<UserEntity> {
-    const { firstname, lastname, phone, email, address, username, gender } =
-      dto;
-
-    // Check for email uniqueness
-    if (email && email !== user.email) {
-      const existingEmailUser = await this.userRepo.findOne({
-        where: { email },
-      });
-      if (existingEmailUser && existingEmailUser.id !== user.id) {
-        throw new BadRequestException('A user with this email already exists.');
-      }
-    }
-
-    // Check for phone uniqueness
-    if (phone && phone !== user.phone) {
-      const existingPhoneUser = await this.userRepo.findOne({
-        where: { phone },
-      });
-      if (existingPhoneUser && existingPhoneUser.id !== user.id) {
-        throw new BadRequestException(
-          'A user with this phone number already exists.',
-        );
-      }
-    }
+    const { firstname, lastname, address, username, gender } = dto;
 
     // Update user details
     if (firstname !== undefined) user.firstname = firstname;
     if (lastname !== undefined) user.lastname = lastname;
-    if (phone !== undefined) user.phone = phone;
-    if (email !== undefined) user.email = email;
     if (address !== undefined) user.address = address;
     if (username !== undefined) user.username = username;
     if (gender !== undefined) user.gender = gender;
@@ -203,8 +176,8 @@ export class UserService {
         department: [FilterOperator.EQ],
         createdAt: [FilterOperator.GTE, FilterOperator.LTE],
       },
-      defaultLimit: Number.MAX_SAFE_INTEGER,
-      maxLimit: Number.MAX_SAFE_INTEGER,
+      defaultLimit: 25,
+      maxLimit: 100,
     };
 
     const result = await paginate(query, this.userRepo, paginationOptions);
@@ -247,7 +220,10 @@ export class UserService {
     });
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, actor: UserEntity): Promise<void> {
+    if (actor.id !== id) {
+      throw new UnauthorizedException('You can only delete your own account');
+    }
     const user = await this.userRepo.findOneBy({ id });
 
     if (!user) {

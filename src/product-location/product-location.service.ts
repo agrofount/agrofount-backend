@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -12,7 +11,7 @@ import {
 import { UpdateProductLocationDto } from './dto/update-product-location.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ProductLocationEntity } from './entities/product-location.entity';
-import { Not, Repository } from 'typeorm';
+import { DataSource, In, Not, Repository } from 'typeorm';
 import { ProductService } from '../product/services/product.service';
 import { CountryService } from '../country/country.service';
 import { StateService } from '../state/state.service';
@@ -27,7 +26,8 @@ import { NotificationService } from '../notification/notification.service';
 import { AddSEODto } from './dto/add-seo.dto';
 import { SEOEntity } from './entities/product-location-seo';
 import { Cron } from '@nestjs/schedule';
-import { AnimalCategory } from 'src/product/types/product.enum';
+import { AnimalCategory } from '../product/types/product.enum';
+import { InventoryService } from '../inventory/inventory.service';
 
 @Injectable()
 export class ProductLocationService {
@@ -44,6 +44,8 @@ export class ProductLocationService {
     private readonly countryService: CountryService,
     private readonly stateService: StateService,
     private readonly notificationService: NotificationService,
+    private readonly inventoryService: InventoryService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async addSEO(slug: string, dto: AddSEODto) {
@@ -73,7 +75,7 @@ export class ProductLocationService {
   }
 
   async updateSEO(productLocation: ProductLocationEntity, dto: AddSEODto) {
-    let seo = await this.seoRepo.findOneBy({
+    const seo = await this.seoRepo.findOneBy({
       id: productLocation.seo.id,
     });
 
@@ -91,7 +93,7 @@ export class ProductLocationService {
   }
 
   async create(dto: CreateProductLocationDto) {
-    const { productId, stateId, countryId, price, uom, moq, createdById } = dto;
+    const { productId, stateId, countryId, price, uom, createdById } = dto;
 
     const product = await this.productService.findOne(productId);
     const country = await this.countryService.findOne(countryId);
@@ -106,7 +108,13 @@ export class ProductLocationService {
       createdById,
     });
 
-    return this.productLocationRepo.save(productLocation);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager
+        .getRepository(ProductLocationEntity)
+        .save(productLocation);
+      await this.inventoryService.syncProductUnits(saved.id, uom, manager);
+      return saved;
+    });
   }
 
   async findAll(
@@ -118,43 +126,32 @@ export class ProductLocationService {
   }
 
   async findAllForAI(): Promise<ProductLocationEntity[]> {
-    return this.productLocationRepo.find();
+    return this.productLocationRepo.find({ take: 1000 });
   }
 
   async findOne(slug: string) {
-    try {
-      const productLocation = await this.productLocationRepo.findOneBy({
-        productSlug: slug,
-      });
-
-      if (!productLocation) {
-        throw new NotFoundException(`Product location ${slug} not found`);
-      }
-
-      this.incrementViews(productLocation.id);
-
-      return productLocation;
-    } catch (error) {
-      console.error('Error parsing custom filters:', error);
-      throw new BadRequestException('Error getting product location');
+    const productLocation = await this.productLocationRepo.findOne({
+      where: { productSlug: slug },
+      relations: ['product', 'state', 'country', 'seo'],
+    });
+    if (!productLocation) {
+      throw new NotFoundException(`Product location ${slug} not found`);
     }
+    void this.incrementViews(productLocation.id).catch((error) =>
+      this.logger.warn('Failed to increment product views', error?.message),
+    );
+    return productLocation;
   }
 
   async findById(id: string) {
-    try {
-      const productLocation = await this.productLocationRepo.findOneBy({
-        id,
-      });
-
-      if (!productLocation) {
-        throw new NotFoundException(`Product location ${id} not found`);
-      }
-
-      return productLocation;
-    } catch (error) {
-      console.error('Error parsing custom filters:', error);
-      throw new BadRequestException('Error getting product location');
+    const productLocation = await this.productLocationRepo.findOne({
+      where: { id },
+      relations: ['product', 'state', 'country', 'seo'],
+    });
+    if (!productLocation) {
+      throw new NotFoundException(`Product location ${id} not found`);
     }
+    return productLocation;
   }
 
   async checkExistByCategory(category: AnimalCategory) {
@@ -227,7 +224,7 @@ export class ProductLocationService {
     );
 
     if (notification) {
-      this.notificationService.sendNotification(
+      await this.notificationService.sendNotification(
         NotificationChannels.EMAIL,
         { email },
         MessageTypes.PRODUCT_AVAILABLE_INTEREST_EMAIL,
@@ -250,14 +247,20 @@ export class ProductLocationService {
     productLocation = await this.productLocationRepo.save(productLocation);
 
     if (productLocation.isAvailable) {
-      this.sendProductAvailabilityNotifications(productLocation.id);
+      void this.sendProductAvailabilityNotifications(productLocation.id).catch(
+        (error) =>
+          this.logger.error(
+            'Failed to send product availability notifications',
+            error,
+          ),
+      );
     }
 
     return productLocation;
   }
 
   async handleOutOfStock(slug: string) {
-    let productLocation = await this.findOne(slug);
+    const productLocation = await this.findOne(slug);
     productLocation.isAvailable = !productLocation.isAvailable;
     return this.productLocationRepo.save(productLocation);
   }
@@ -309,23 +312,31 @@ export class ProductLocationService {
     );
   }
 
-  @Cron('45 * * * * *') // every hour
+  @Cron('0 0 * * * *', { waitForCompletion: true })
   async updatePopularityScores() {
-    const products = await this.productLocationRepo.find({
-      relations: ['reviews'],
-    });
-
-    for (const product of products) {
-      const positiveReviews = product.reviews.filter((r) => r.star >= 4).length;
-
-      product.popularityScore = Math.round(
-        (product.views || 0) * 1 +
-          (product.addToCartCount || 0) * 2 +
-          (product.purchaseCount || 0) * 5 +
-          positiveReviews * 3,
+    const lock = await this.dataSource.query(
+      `SELECT pg_try_advisory_lock(hashtext('product-popularity-refresh')) AS acquired`,
+    );
+    if (!lock[0]?.acquired) return;
+    try {
+      await this.dataSource.query(`
+        UPDATE "product_location" location
+        SET "popularityScore" = ROUND(
+          COALESCE(location.views, 0) +
+          COALESCE(location."addToCartCount", 0) * 2 +
+          COALESCE(location."purchaseCount", 0) * 5 +
+          COALESCE((
+            SELECT COUNT(*) * 3
+            FROM review
+            WHERE review."productLocationId" = location.id
+              AND review.star >= 4
+          ), 0)
+        )
+      `);
+    } finally {
+      await this.dataSource.query(
+        `SELECT pg_advisory_unlock(hashtext('product-popularity-refresh'))`,
       );
-
-      await this.productLocationRepo.save(product);
     }
   }
 
@@ -337,49 +348,62 @@ export class ProductLocationService {
     lifecycleStage?: string;
     limit?: number;
   }) {
-    const query = this.productLocationRepo
-      .createQueryBuilder('productLocation')
-      .leftJoinAndSelect('productLocation.product', 'product')
-      .where('productLocation.isAvailable = :isAvailable', {
+    const limit = Math.min(20, Math.max(1, filters.limit || 5));
+    const ranked = this.productLocationRepo
+      .createQueryBuilder('candidate')
+      .innerJoin('candidate.product', 'product')
+      .select('candidate.id', 'id')
+      .addSelect(
+        'ROW_NUMBER() OVER (PARTITION BY product.id ORDER BY candidate.price ASC, candidate.popularityScore DESC)',
+        'location_rank',
+      )
+      .addSelect(
+        'MAX(candidate.popularityScore) OVER (PARTITION BY product.id)',
+        'product_popularity',
+      )
+      .where('candidate.isAvailable = :isAvailable', {
         isAvailable: true,
-      });
+      })
+      .andWhere('candidate.isDraft = false');
 
     // Apply feed category filter
     if (filters.feedCategory) {
-      query.andWhere('product.category = :feedCategory', {
+      ranked.andWhere('product.category = :feedCategory', {
         feedCategory: filters.feedCategory,
       });
     }
+    const rows = await this.dataSource
+      .createQueryBuilder()
+      .select('ranked.id', 'id')
+      .from(`(${ranked.getQuery()})`, 'ranked')
+      .where('ranked.location_rank = 1')
+      .orderBy('ranked.product_popularity', 'DESC')
+      .limit(limit)
+      .setParameters(ranked.getParameters())
+      .getRawMany<{ id: string }>();
+    if (!rows.length) return [];
 
-    // Order by popularity and price
-    query
-      .orderBy('productLocation.popularityScore', 'DESC')
-      .addOrderBy('productLocation.price', 'ASC')
-      .limit(filters.limit || 5);
-
-    const products = await query.getMany();
-
-    // Get best location for each product
-    return Promise.all(
-      products.map(async (product) => {
-        const bestLocation = await this.productLocationRepo.findOne({
-          where: { product: { id: product.id } },
-          order: { price: 'ASC' },
-        });
-
-        return {
-          ...product,
-          bestLocation,
-          dosage: this.getRecommendedDosage(product, filters.animalType),
-        };
-      }),
-    );
+    const locations = await this.productLocationRepo.find({
+      where: { id: In(rows.map((row) => row.id)) },
+      relations: ['product', 'state', 'country'],
+    });
+    const byId = new Map(locations.map((location) => [location.id, location]));
+    return rows.map(({ id }) => {
+      const location = byId.get(id);
+      return {
+        ...location,
+        bestLocation: location,
+        dosage: this.getRecommendedDosage(location, filters.animalType),
+      };
+    });
   }
 
   private getRecommendedDosage(
     productLocation: ProductLocationEntity,
     animalType: string,
   ): string {
+    void productLocation;
+    void animalType;
     // Your logic to determine dosage based on product and animal type
     return 'Follow manufacturer instructions';
   }
@@ -480,19 +504,19 @@ export class ProductLocationService {
 
     // Add search conditions for each term on the product fields
     const orConditions = searchTerms.map(
-      (term) =>
-        `(product.name ILIKE :term OR 
-        product.description ILIKE :term OR 
-        product.subCategory ILIKE :term OR
-        product.brand ILIKE :term)`,
+      (_, index) =>
+        `(product.name ILIKE :term${index} OR
+        product.description ILIKE :term${index} OR
+        product.subCategory ILIKE :term${index} OR
+        product.brand ILIKE :term${index})`,
     );
 
     if (orConditions.length > 0) {
       queryBuilder.andWhere(`(${orConditions.join(' OR ')})`);
 
       // Add parameters for each term
-      searchTerms.forEach((term) => {
-        queryBuilder.setParameter('term', `%${term}%`);
+      searchTerms.forEach((term, index) => {
+        queryBuilder.setParameter(`term${index}`, `%${term}%`);
       });
     }
 
@@ -529,19 +553,19 @@ export class ProductLocationService {
 
       // Build OR conditions for each symptom on product fields
       const orConditions = symptoms.map(
-        (symptom) =>
-          `(product.name ILIKE :symptom OR 
-        product.description ILIKE :symptom OR 
-        product.subCategory ILIKE :symptom OR
-        product.brand ILIKE :symptom)`,
+        (_, index) =>
+          `(product.name ILIKE :symptom${index} OR
+        product.description ILIKE :symptom${index} OR
+        product.subCategory ILIKE :symptom${index} OR
+        product.brand ILIKE :symptom${index})`,
       );
 
       if (orConditions.length > 0) {
         queryBuilder.andWhere(`(${orConditions.join(' OR ')})`);
 
         // Add parameters for each symptom
-        symptoms.forEach((symptom) => {
-          queryBuilder.setParameter('symptom', `%${symptom}%`);
+        symptoms.forEach((symptom, index) => {
+          queryBuilder.setParameter(`symptom${index}`, `%${symptom}%`);
         });
       }
 

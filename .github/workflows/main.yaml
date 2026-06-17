@@ -3,7 +3,12 @@ on:
   push:
     branches:
       - dev
-      - main
+  workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: Deploy the current main commit to production
+        required: true
+        type: boolean
 
 permissions:
   id-token: write
@@ -20,7 +25,10 @@ jobs:
       container-name: agrofount-port
 
   deploy-prod:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.deploy_production
     uses: ./.github/workflows/template.yaml
     with:
       environment: prod

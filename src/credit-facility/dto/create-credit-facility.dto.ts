@@ -7,8 +7,9 @@ import {
   IsNotEmpty,
   IsIn,
   IsOptional,
+  Equals,
 } from 'class-validator';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { AdminEntity } from '../../admins/entities/admin.entity';
 
 export class CreditFacilityRequestDto {
   @ApiProperty({
@@ -16,6 +17,7 @@ export class CreditFacilityRequestDto {
     example: 300000,
   })
   @IsNumber()
+  @Min(1)
   requestedAmount: number;
 
   @ApiProperty({
@@ -40,6 +42,7 @@ export class CreditFacilityRequestDto {
     example: true,
   })
   @IsBoolean()
+  @Equals(true, { message: 'Credit terms must be accepted' })
   acceptTerms: boolean;
 }
 
@@ -49,7 +52,7 @@ export class ApproveCreditFacilityDto {
     example: 250_000,
   })
   @IsNumber()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   approvedAmount: number;
 
@@ -59,6 +62,10 @@ export class ApproveCreditFacilityDto {
   })
   @IsBoolean()
   approve: boolean;
+
+  @IsString()
+  @IsNotEmpty()
+  decisionReason: string;
 
   admin?: AdminEntity;
 }

@@ -48,6 +48,7 @@ export class ProductLocationEntity {
       discount: number;
     }[];
     moq?: number; // Minimum Order Quantity
+    stockQuantity?: number;
   }[]; // Unit of Measure
 
   @Column('int', { default: 2 })
@@ -77,14 +78,10 @@ export class ProductLocationEntity {
   @ManyToOne(() => CountryEntity, (country) => country.productLocations, {})
   country: CountryEntity;
 
-  @ManyToOne(() => StateEntity, (state) => state.productLocations, {
-    eager: true,
-  })
+  @ManyToOne(() => StateEntity, (state) => state.productLocations)
   state: StateEntity;
 
-  @ManyToOne(() => ProductEntity, (product) => product.productLocations, {
-    eager: true,
-  })
+  @ManyToOne(() => ProductEntity, (product) => product.productLocations)
   product: ProductEntity;
 
   @Column({ nullable: true })
@@ -96,14 +93,11 @@ export class ProductLocationEntity {
   @OneToMany(
     () => PriceHistoryEntity,
     (priceHistory) => priceHistory.productLocation,
-    {
-      onDelete: 'CASCADE',
-      eager: true,
-    },
+    { onDelete: 'CASCADE' },
   )
   priceHistory: PriceHistoryEntity[];
 
-  @OneToOne(() => SEOEntity, { nullable: true, eager: true })
+  @OneToOne(() => SEOEntity, { nullable: true })
   @JoinColumn()
   seo: SEOEntity;
 

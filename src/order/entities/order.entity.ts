@@ -8,6 +8,8 @@ import {
   OneToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
+  Index,
+  JoinColumn,
 } from 'typeorm';
 import { OrderStatus } from '../enums/order.enum';
 import {
@@ -33,6 +35,7 @@ export interface orderItemInterface {
   name: string;
   quantity: number;
   price: number;
+  unit: string;
   uom?: {
     id: number;
     unit: string;
@@ -42,15 +45,20 @@ export interface orderItemInterface {
 }
 
 @Entity('orders')
+@Index(['user', 'idempotencyKey'], { unique: true })
 export class OrderEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @ManyToOne(() => UserEntity, (user) => user.orders, {
-    onDelete: 'CASCADE',
-    eager: true,
+    onDelete: 'RESTRICT',
+    nullable: true,
   })
-  user: UserEntity;
+  @JoinColumn({ name: 'userId' })
+  user: UserEntity | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  userId: string | null;
 
   @Column({ unique: true })
   code: string;
@@ -108,6 +116,9 @@ export class OrderEntity {
 
   @Column({ nullable: true })
   voucherCode: string;
+
+  @Column({ nullable: true })
+  idempotencyKey: string;
 
   @Column('decimal', { precision: 10, scale: 2, default: 0 })
   discountAmount: number;

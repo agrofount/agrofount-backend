@@ -1,327 +1,282 @@
 import {
   BadRequestException,
-  Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  OnModuleDestroy,
 } from '@nestjs/common';
-import { AddToCartDto } from './dto/create-cart.dto';
+import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import Redis from 'ioredis';
+import { In, Repository } from 'typeorm';
+import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
+import { AddToCartDto, CartItemDto } from './dto/create-cart.dto';
 import { UpdateCartDto } from './dto/update-cart.dto';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { ProductLocationService } from '../product-location/product-location.service';
-import { Cache } from 'cache-manager';
+
+type StoredCart = Record<string, Record<string, { quantity: number }>>;
 
 @Injectable()
-export class CartService {
+export class CartService implements OnModuleDestroy {
   private readonly logger = new Logger(CartService.name);
+  private readonly redis: Redis;
+  private readonly ttlSeconds = 24 * 60 * 60;
+  private readonly maxCartLines = 100;
+
   constructor(
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
-    private readonly productLocationService: ProductLocationService,
-  ) {}
-
-  async addToCart(userId: string, dto: AddToCartDto) {
-    try {
-      const { itemId, selectedUOMUnit, quantity } = dto;
-
-      const productLocation = await this.productLocationService.findById(
-        itemId,
-      );
-      const uom = productLocation.uom.find(
-        (item) => item.unit === selectedUOMUnit,
-      );
-
-      if (!uom) {
-        throw new BadRequestException('Unit of Measure not found');
-      }
-
-      // Find matching VTP tier based on quantity
-      let matchedVtp = null;
-      if (uom.vtp && uom.vtp.length > 0) {
-        matchedVtp = uom.vtp.find(
-          (vtp) => quantity >= vtp.minVolume && quantity <= vtp.maxVolume,
-        );
-      }
-
-      // Calculate price based on VTP or platform price
-      const unitPrice = matchedVtp?.price || uom.platformPrice;
-      const totalPrice = quantity * unitPrice;
-
-      const cacheKey = `cart:${userId}`;
-
-      // FIXED: Proper cache data retrieval
-      let cartData: any = {};
-
-      try {
-        const cachedData = await this.cacheManager.get(cacheKey);
-        if (typeof cachedData === 'string') {
-          cartData = JSON.parse(cachedData);
-        } else if (typeof cachedData === 'object' && cachedData !== null) {
-          cartData = cachedData;
-        }
-      } catch (error) {
-        console.log('Error parsing cache, starting with empty cart:', error);
-        cartData = {};
-      }
-
-      // Initialize cart structure
-      if (!cartData[itemId]) {
-        cartData[itemId] = {};
-      }
-
-      if (!cartData[itemId][selectedUOMUnit]) {
-        cartData[itemId][selectedUOMUnit] = {
-          quantity: 0,
-          total: 0,
-          priceDetails: {},
-        };
-      }
-
-      // Update cart item
-      cartData[itemId][selectedUOMUnit] = {
-        quantity,
-        total: totalPrice,
-        platformPrice: uom.platformPrice,
-        actualUnitPrice: unitPrice,
-        productLocation,
-        priceDetails: {
-          isVolumeDiscount: !!matchedVtp,
-          originalUnitPrice: uom.platformPrice,
-          discountPercentage: matchedVtp?.discount || 0,
-          matchedVtp,
-          savings: matchedVtp ? (uom.platformPrice - unitPrice) * quantity : 0,
-        },
-      };
-
-      // FIXED: Set cache with proper TTL
-      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
-
-      // Increment the added to cart count
-      await this.productLocationService.incrementAddedToCart(itemId);
-
-      return cartData;
-    } catch (error) {
-      console.log('Error while adding to cart: ', error);
-      throw error; // Re-throw to let NestJS handle the error
-    }
+    configService: ConfigService,
+    @InjectRepository(ProductLocationEntity)
+    private readonly productLocationRepository: Repository<ProductLocationEntity>,
+  ) {
+    this.redis = new Redis(configService.getOrThrow<string>('REDIS_URL'), {
+      maxRetriesPerRequest: 2,
+      enableReadyCheck: true,
+    });
   }
 
-  async syncCart(userId: string, items: any[]) {
-    const cacheKey = `cart:${userId}`;
+  async onModuleDestroy(): Promise<void> {
+    await this.redis.quit();
+  }
 
-    try {
-      // Get existing cart or initialize empty one
-      const cartData: Record<string, any> = JSON.parse(
-        (await this.cacheManager.get(cacheKey)) || '{}',
+  async addToCart(userId: string, dto: AddToCartDto) {
+    await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
+    await this.mutate(userId, (cart) => {
+      cart[dto.itemId] ||= {};
+      cart[dto.itemId][dto.selectedUOMUnit] = { quantity: dto.quantity };
+      this.assertCartSize(cart);
+      return cart;
+    });
+    await this.incrementAddedToCart(dto.itemId);
+    return this.getCartData(userId);
+  }
+
+  async syncCart(userId: string, items: CartItemDto[]) {
+    const uniqueLines = new Set(
+      items.map((item) => `${item.itemId}:${item.selectedUOMUnit}`),
+    );
+    if (uniqueLines.size !== items.length) {
+      throw new BadRequestException(
+        'Cart contains duplicate item and unit pairs',
       );
-
-      // Create lookup set for incoming items (itemId + UOM as composite key)
-      const incomingItems = new Set(
-        items.map((item) => `${item.itemId}:${item.selectedUOMUnit}`),
-      );
-
-      // Step 1: Clean up cart - remove items not in incoming list
-      for (const itemId in cartData) {
-        for (const uom in cartData[itemId]) {
-          if (!incomingItems.has(`${itemId}:${uom}`)) {
-            delete cartData[itemId][uom];
-          }
-        }
-        // Remove item if no UOMs left
-        if (Object.keys(cartData[itemId]).length === 0) {
-          delete cartData[itemId];
-        }
-      }
-
-      // Step 2: Add/update incoming items
-      for (const item of items) {
-        const { itemId, selectedUOMUnit, quantity } = item;
-        const productLocation = await this.productLocationService.findById(
-          itemId,
-        );
-        const uom = productLocation.uom.find(
-          (unit) => unit.unit === selectedUOMUnit,
-        );
-
-        if (!uom) {
-          throw new BadRequestException('Unit of Measure not found');
-        }
-
-        // Find matching VTP tier
-        let matchedVtp = null;
-        if (uom.vtp && uom.vtp.length > 0) {
-          matchedVtp = uom.vtp.find(
-            (vtp) => quantity >= vtp.minVolume && quantity <= vtp.maxVolume,
-          );
-        }
-
-        // Calculate prices
-        const unitPrice = matchedVtp?.price || uom.platformPrice;
-        const totalPrice = quantity * unitPrice;
-        const originalPrice = quantity * uom.platformPrice;
-        const savings = matchedVtp ? originalPrice - totalPrice : 0;
-
-        // Update cart item with VTP details
-        cartData[itemId] = cartData[itemId] || {};
-        cartData[itemId][selectedUOMUnit] = {
-          quantity,
-          total: totalPrice,
-          platformPrice: uom.platformPrice,
-          actualUnitPrice: unitPrice,
-          productLocation,
-          priceDetails: {
-            isVolumeDiscount: !!matchedVtp,
-            originalUnitPrice: uom.platformPrice,
-            discountPercentage: matchedVtp?.discount || 0,
-            matchedVtp,
-            savings,
-          },
-        };
-        await this.productLocationService.incrementAddedToCart(itemId);
-      }
-
-      // Save updated cart
-      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
-
-      return {
-        success: true,
-        message: 'Cart synced successfully',
-        data: cartData,
-      };
-    } catch (error) {
-      console.error('Cart sync error:', error);
-      throw error instanceof BadRequestException
-        ? error
-        : new InternalServerErrorException('Failed to sync cart');
     }
+    if (items.length > this.maxCartLines) {
+      throw new BadRequestException(
+        `Cart cannot contain more than ${this.maxCartLines} lines`,
+      );
+    }
+
+    const products = await this.loadProducts(items.map((item) => item.itemId));
+    const next: StoredCart = {};
+    for (const item of items) {
+      this.assertUnit(products.get(item.itemId) || null, item.selectedUOMUnit);
+      next[item.itemId] ||= {};
+      next[item.itemId][item.selectedUOMUnit] = { quantity: item.quantity };
+    }
+
+    await this.redis.set(
+      this.key(userId),
+      JSON.stringify(next),
+      'EX',
+      this.ttlSeconds,
+    );
+    await Promise.all(
+      [...new Set(items.map((item) => item.itemId))].map((id) =>
+        this.incrementAddedToCart(id),
+      ),
+    );
+
+    return {
+      success: true,
+      message: 'Cart synced successfully',
+      data: await this.hydrate(next),
+    };
   }
 
   async getCart(userId: string) {
-    try {
-      const cacheKey = `cart:${userId}`;
-      const cachedData = await this.cacheManager.get<string>(cacheKey);
-
-      if (!cachedData) {
-        throw new NotFoundException('Cart not found');
-      }
-
-      return { items: cachedData };
-    } catch (error: any) {
-      console.error('Error fetching cart:', error);
-      return { success: false, message: error.message };
-    }
+    return { items: await this.getCartData(userId) };
   }
 
-  async getAllCarts() {
-    try {
-      const redisClient = (this.cacheManager as any).store.getClient();
+  async getCartData(userId: string): Promise<Record<string, any>> {
+    const cart = await this.read(userId);
+    if (this.lineCount(cart) === 0)
+      throw new NotFoundException('Cart not found');
+    return this.hydrate(cart);
+  }
 
-      // Use Redis SCAN for better performance with large datasets
-      const keys = await redisClient.keys('cart:*');
-
-      // Use pipeline for better performance
-      const pipeline = redisClient.pipeline();
-      keys.forEach((key) => pipeline.get(key));
-      const results = await pipeline.exec();
-
-      const carts = results
-        .map(([err, result]) =>
-          err ? null : typeof result === 'string' ? JSON.parse(result) : result,
-        )
-        .filter((cart) => cart !== null);
-
-      return { items: carts };
-    } catch (error) {
-      console.error('Error fetching all carts:', error);
-      throw new InternalServerErrorException('Failed to fetch all carts');
-    }
+  async getAllCarts(cursor = '0', limit = 25) {
+    const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
+    const [nextCursor, keys] = await this.redis.scan(
+      cursor,
+      'MATCH',
+      'cart:*',
+      'COUNT',
+      safeLimit,
+    );
+    const values = keys.length ? await this.redis.mget(keys) : [];
+    return {
+      items: keys.map((key, index) => ({
+        userId: key.slice('cart:'.length),
+        cart: this.parse(values[index]),
+      })),
+      nextCursor,
+    };
   }
 
   async update(userId: string, dto: UpdateCartDto) {
+    if (dto.quantity > 0) {
+      await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
+    }
+    await this.mutate(userId, (cart) => {
+      if (dto.quantity === 0) {
+        delete cart[dto.itemId]?.[dto.selectedUOMUnit];
+        if (cart[dto.itemId] && Object.keys(cart[dto.itemId]).length === 0) {
+          delete cart[dto.itemId];
+        }
+        return cart;
+      }
+      cart[dto.itemId] ||= {};
+      cart[dto.itemId][dto.selectedUOMUnit] = { quantity: dto.quantity };
+      this.assertCartSize(cart);
+      return cart;
+    });
+    return this.lineCount(await this.read(userId))
+      ? this.getCartData(userId)
+      : {};
+  }
+
+  async clear(userId: string) {
+    const deleted = await this.redis.del(this.key(userId));
+    if (!deleted) throw new BadRequestException('No cart found');
+    return { success: true };
+  }
+
+  private async mutate(
+    userId: string,
+    update: (cart: StoredCart) => StoredCart,
+  ): Promise<void> {
+    const key = this.key(userId);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await this.redis.watch(key);
+      const next = update(this.parse(await this.redis.get(key)));
+      const result = await this.redis
+        .multi()
+        .set(key, JSON.stringify(next), 'EX', this.ttlSeconds)
+        .exec();
+      if (result !== null) return;
+    }
+    throw new InternalServerErrorException(
+      'Cart was updated concurrently; please retry',
+    );
+  }
+
+  private async read(userId: string): Promise<StoredCart> {
+    return this.parse(await this.redis.get(this.key(userId)));
+  }
+
+  private parse(value: string | null): StoredCart {
+    if (!value) return {};
     try {
-      const { itemId, selectedUOMUnit, quantity } = dto;
-
-      const productLocation = await this.productLocationService.findById(
-        itemId,
-      );
-      const uom = productLocation.uom.find(
-        (item) => item.unit === selectedUOMUnit,
-      );
-
-      if (!uom) {
-        throw new BadRequestException(
-          `Unit of Measure ${selectedUOMUnit} not found for product ${itemId}`,
-        );
-      }
-
-      const cacheKey = `cart:${userId}`;
-
-      const cartData = await this.cacheManager.get(cacheKey);
-
-      // Ensure cart structure is correctly initialized
-      if (!cartData[itemId]) {
-        cartData[itemId] = {};
-      }
-
-      if (quantity === 0) {
-        // Delete the item from the cart if quantity is zero
-        if (cartData[itemId][selectedUOMUnit]) {
-          delete cartData[itemId][selectedUOMUnit];
-        }
-
-        // If no more UOM units for the item, delete the item
-        if (Object.keys(cartData[itemId]).length === 0) {
-          delete cartData[itemId];
-        }
-      } else {
-        // Find matching VTP tier based on quantity
-        let matchedVtp = null;
-        if (uom.vtp && uom.vtp.length > 0) {
-          matchedVtp = uom.vtp.find(
-            (vtp) => quantity >= vtp.minVolume && quantity <= vtp.maxVolume,
-          );
-        }
-
-        // Calculate prices
-        const unitPrice = matchedVtp?.price || uom.platformPrice;
-        const totalPrice = quantity * unitPrice;
-        const originalPrice = quantity * uom.platformPrice;
-        const savings = matchedVtp ? originalPrice - totalPrice : 0;
-
-        // Update the cart item with VTP details
-        cartData[itemId][selectedUOMUnit] = {
-          quantity,
-          total: totalPrice,
-          platformPrice: uom.platformPrice,
-          actualUnitPrice: unitPrice,
-          productLocation,
-          priceDetails: {
-            isVolumeDiscount: !!matchedVtp,
-            originalUnitPrice: uom.platformPrice,
-            discountPercentage: matchedVtp?.discount || 0,
-            matchedVtp,
-            savings,
-          },
-        };
-      }
-
-      await this.cacheManager.set(cacheKey, cartData, 24 * 60 * 60 * 1000); // 24 hours TTL
-
-      return cartData;
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : {};
     } catch (error) {
-      console.error('Error in cart update:', error);
-      throw error; // Re-throw to let NestJS handle the error properly
+      this.logger.error('Discarding malformed cart cache entry', error?.stack);
+      return {};
     }
   }
 
-  async clear(id: string) {
-    const cacheKey = `cart:${id}`;
-    const cartData: any = await this.cacheManager.get(cacheKey);
-
-    if (!cartData || Object.keys(cartData).length === 0) {
-      throw new BadRequestException('No cart found');
+  private async hydrate(cart: StoredCart): Promise<Record<string, any>> {
+    const products = await this.loadProducts(Object.keys(cart));
+    const hydrated: Record<string, any> = {};
+    for (const [itemId, units] of Object.entries(cart)) {
+      const productLocation = products.get(itemId);
+      if (
+        !productLocation ||
+        productLocation.isDraft ||
+        !productLocation.isAvailable
+      ) {
+        continue;
+      }
+      for (const [unit, stored] of Object.entries(units)) {
+        const uom = this.assertUnit(productLocation, unit);
+        const quantity = Number(stored.quantity);
+        const matchedVtp = uom.vtp?.find(
+          (tier) => quantity >= tier.minVolume && quantity <= tier.maxVolume,
+        );
+        const platformPrice = Number(uom.platformPrice);
+        const actualUnitPrice = Number(matchedVtp?.price ?? platformPrice);
+        hydrated[itemId] ||= {};
+        hydrated[itemId][unit] = {
+          quantity,
+          total: quantity * actualUnitPrice,
+          platformPrice,
+          actualUnitPrice,
+          productLocation,
+          priceDetails: {
+            isVolumeDiscount: Boolean(matchedVtp),
+            originalUnitPrice: platformPrice,
+            discountPercentage: matchedVtp?.discount || 0,
+            matchedVtp: matchedVtp || null,
+            savings: matchedVtp
+              ? (platformPrice - actualUnitPrice) * quantity
+              : 0,
+          },
+        };
+      }
     }
+    return hydrated;
+  }
 
-    return this.cacheManager.del(cacheKey);
+  private async loadProducts(ids: string[]) {
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) return new Map<string, ProductLocationEntity>();
+    const products = await this.productLocationRepository.find({
+      where: { id: In(uniqueIds) },
+      relations: ['product', 'state', 'country'],
+    });
+    return new Map(products.map((product) => [product.id, product]));
+  }
+
+  private async assertProductUnit(itemId: string, unit: string): Promise<void> {
+    const product = await this.productLocationRepository.findOne({
+      where: { id: itemId },
+    });
+    this.assertUnit(product, unit);
+    if (product.isDraft || !product.isAvailable) {
+      throw new BadRequestException('Product is not available');
+    }
+  }
+
+  private assertUnit(product: ProductLocationEntity | null, unit: string) {
+    if (!product) throw new NotFoundException('Product location not found');
+    const uom = product.uom.find((candidate) => candidate.unit === unit);
+    if (!uom) throw new BadRequestException('Unit of Measure not found');
+    return uom;
+  }
+
+  private assertCartSize(cart: StoredCart): void {
+    if (this.lineCount(cart) > this.maxCartLines) {
+      throw new BadRequestException(
+        `Cart cannot contain more than ${this.maxCartLines} lines`,
+      );
+    }
+  }
+
+  private lineCount(cart: StoredCart): number {
+    return Object.values(cart).reduce(
+      (total, units) => total + Object.keys(units).length,
+      0,
+    );
+  }
+
+  private async incrementAddedToCart(itemId: string): Promise<void> {
+    await this.productLocationRepository.increment(
+      { id: itemId },
+      'addToCartCount',
+      1,
+    );
+  }
+
+  private key(userId: string): string {
+    return `cart:${userId}`;
   }
 }

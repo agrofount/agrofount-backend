@@ -1,4 +1,4 @@
-import { Controller, Logger, Post } from '@nestjs/common';
+import { Controller, Logger } from '@nestjs/common';
 import { DisbursementService } from './disbursement.service';
 import { Cron } from '@nestjs/schedule';
 
@@ -8,7 +8,7 @@ export class DisbursementController {
 
   constructor(private readonly disbursementService: DisbursementService) {}
 
-  @Cron('0 2 * * *')
+  @Cron('0 2 * * *', { waitForCompletion: true })
   handleCron() {
     this.logger.debug('Processing pending disbursements...');
     return this.disbursementService.processPendingDisbursements();

@@ -34,6 +34,7 @@ export class LangChainKendraService {
     indexId: string,
     options: { topK?: number; filter?: any } = {},
   ): Promise<Document[]> {
+    void options;
     this.logger.log(`Retrieving documents from Kendra index: ${indexId}`);
     try {
       const retriever = await this.getRetriever(indexId);

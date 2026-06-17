@@ -6,9 +6,12 @@ import {
   Param,
   Delete,
   UseGuards,
-  Query,
   Put,
   Patch,
+  UploadedFiles,
+  UseInterceptors,
+  BadRequestException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { ProductLocationService } from './product-location.service';
 import {
@@ -16,11 +19,15 @@ import {
   CreateProductLocationNotificationDto,
 } from './dto/create-product-location.dto';
 import { UpdateProductLocationDto } from './dto/update-product-location.dto';
-import { Roles } from '../auth/decorator/role.decorator';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Role } from '../auth/enums/role.enum';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { UserEntity } from '../user/entities/user.entity';
 import {
@@ -33,10 +40,16 @@ import {
 import { ProductLocationEntity } from './entities/product-location.entity';
 import { ProductLocationResponseDto } from './dto/product-location.dto';
 import { PRODUCT_LOCATION_PAGINATION_CONFIG } from './config/pagination.config';
-import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
-import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
+import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { AdminEntity } from '../admins/entities/admin.entity';
 import { AddSEODto } from './dto/add-seo.dto';
+import { Throttle } from '@nestjs/throttler';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { SellerInterestService } from './seller-interest.service';
+import { CreateSellerInterestDto } from './dto/create-seller-interest.dto';
+import { SellerInterestEntity } from './entities/seller-interest.entity';
+import { SELLER_INTEREST_PAGINATION_CONFIG } from './config/seller-interest-pagination.config';
 
 @Controller('product-location')
 @ApiTags('Product Location')
@@ -44,7 +57,46 @@ import { AddSEODto } from './dto/add-seo.dto';
 export class ProductLocationController {
   constructor(
     private readonly productLocationService: ProductLocationService,
+    private readonly sellerInterestService: SellerInterestService,
   ) {}
+
+  @Post('seller-interest')
+  @Throttle({ default: { limit: 3, ttl: 24 * 60 * 60 * 1000 } })
+  @UseInterceptors(
+    FilesInterceptor('samples', 3, {
+      limits: { fileSize: 5 * 1024 * 1024, files: 3, fields: 20 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Register interest in becoming a seller' })
+  @ApiBody({
+    schema: {
+      allOf: [
+        { $ref: '#/components/schemas/CreateSellerInterestDto' },
+        {
+          type: 'object',
+          required: ['samples'],
+          properties: {
+            samples: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 3,
+              items: { type: 'string', format: 'binary' },
+            },
+          },
+        },
+      ],
+    },
+  })
+  createSellerInterest(
+    @Body() dto: CreateSellerInterestDto,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    if (!files?.length) {
+      throw new BadRequestException('At least one product sample is required');
+    }
+    return this.sellerInterestService.create(dto, files);
+  }
 
   @Post()
   @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
@@ -69,10 +121,34 @@ export class ProductLocationController {
     PRODUCT_LOCATION_PAGINATION_CONFIG,
   )
   @ApiPaginationQuery(PRODUCT_LOCATION_PAGINATION_CONFIG)
-  findAll(
+  async findAll(
     @Paginate() query: PaginateQuery,
   ): Promise<Paginated<ProductLocationEntity>> {
-    return this.productLocationService.findAll(query);
+    const result = await this.productLocationService.findAll(query);
+    return result;
+  }
+
+  @Get('seller-interests')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_productLocations')
+  @ApiOperation({ summary: 'List prospective seller submissions' })
+  @ApiOkPaginatedResponse(
+    SellerInterestEntity,
+    SELLER_INTEREST_PAGINATION_CONFIG,
+  )
+  @ApiPaginationQuery(SELLER_INTEREST_PAGINATION_CONFIG)
+  findSellerInterests(
+    @Paginate() query: PaginateQuery,
+  ): Promise<Paginated<SellerInterestEntity>> {
+    return this.sellerInterestService.findAll(query);
+  }
+
+  @Get('seller-interests/:id')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_productLocations')
+  @ApiOperation({ summary: 'Get a prospective seller submission' })
+  findSellerInterest(@Param('id', ParseUUIDPipe) id: string) {
+    return this.sellerInterestService.findOne(id);
   }
 
   @Get(':slug')
@@ -100,6 +176,7 @@ export class ProductLocationController {
   }
 
   @Post(':slug/notify')
+  @Throttle({ default: { limit: 3, ttl: 60 * 60 * 1000 } })
   @ApiOperation({ summary: 'Create notification for product' })
   @ApiBody({
     type: CreateProductLocationDto,

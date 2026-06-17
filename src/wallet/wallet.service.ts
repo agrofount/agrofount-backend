@@ -1,14 +1,19 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { WalletEntity } from './entities/wallet.entity';
-import { EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { WalletTransactionEntity } from './entities/wallet-transactions.entity';
 import { TransactionStatus, TransactionType } from './types/wallet.type';
-import { CreditFacilityRequestEntity } from 'src/credit-facility/entities/credit-facility.entity';
+import { CreditFacilityRequestEntity } from '../credit-facility/entities/credit-facility.entity';
+import {
+  LedgerDirection,
+  LedgerEntryEntity,
+} from './entities/ledger-entry.entity';
 
 @Injectable()
 export class WalletService {
@@ -19,33 +24,105 @@ export class WalletService {
     private readonly walletTransactionRepository: Repository<WalletTransactionEntity>,
     @InjectRepository(CreditFacilityRequestEntity)
     private creditFacilityRepo: Repository<CreditFacilityRequestEntity>,
+    private readonly dataSource: DataSource,
   ) {}
-  async createWallet(userId: string): Promise<WalletEntity> {
-    const wallet = this.walletRepository.create({ userId, balance: 0 });
-    return this.walletRepository.save(wallet);
-  }
+  async createWallet(
+    userId: string,
+    manager?: EntityManager,
+  ): Promise<WalletEntity> {
+    const walletRepo =
+      manager?.getRepository(WalletEntity) || this.walletRepository;
+    const existing = await walletRepo.findOne({ where: { userId } });
+    if (existing) return existing;
 
-  async getWalletByUserId(userId: string): Promise<WalletEntity> {
-    const wallet = await this.walletRepository.findOne({ where: { userId } });
-    if (!wallet) {
-      this.createWallet(userId);
+    try {
+      return await walletRepo.save(
+        walletRepo.create({
+          userId,
+          balance: 0,
+          balanceMinor: '0',
+          borrowedAmount: 0,
+          borrowedAmountMinor: '0',
+        }),
+      );
+    } catch (error: any) {
+      if (error?.code === '23505') {
+        return walletRepo.findOneOrFail({ where: { userId } });
+      }
+      throw error;
     }
-    return wallet;
   }
 
-  async creditWallet(userId: string, amount: number): Promise<WalletEntity> {
-    const wallet = await this.getWalletByUserId(userId);
-    wallet.balance += amount;
-    await this.walletRepository.save(wallet);
+  async getWalletByUserId(
+    userId: string,
+    manager?: EntityManager,
+  ): Promise<WalletEntity> {
+    const walletRepo =
+      manager?.getRepository(WalletEntity) || this.walletRepository;
+    return (
+      (await walletRepo.findOne({ where: { userId } })) ||
+      this.createWallet(userId, manager)
+    );
+  }
 
-    const transaction = this.walletTransactionRepository.create({
+  async creditWallet(
+    userId: string,
+    amount: number,
+    operationKey: string,
+    referenceType?: string,
+    referenceId?: string,
+    manager?: EntityManager,
+  ): Promise<WalletEntity> {
+    this.assertValidAmount(amount);
+    if (!manager) {
+      return this.dataSource.transaction((transactionManager) =>
+        this.creditWallet(
+          userId,
+          amount,
+          operationKey,
+          referenceType,
+          referenceId,
+          transactionManager,
+        ),
+      );
+    }
+
+    const walletRepo = manager.getRepository(WalletEntity);
+    const transactionRepo = manager.getRepository(WalletTransactionEntity);
+    await this.getWalletByUserId(userId, manager);
+    const wallet = await walletRepo.findOne({
+      where: { userId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    const existing = await transactionRepo.findOne({ where: { operationKey } });
+    if (existing) return wallet;
+    const amountMinor = this.toMinor(amount);
+    const before = BigInt(wallet.balanceMinor || this.toMinor(wallet.balance));
+    const after = before + amountMinor;
+    wallet.balanceMinor = after.toString();
+    wallet.balance = this.fromMinor(after);
+    await walletRepo.save(wallet);
+
+    const transaction = transactionRepo.create({
       userId,
       amount,
+      amountMinor: amountMinor.toString(),
+      operationKey,
+      referenceType: referenceType || null,
+      referenceId: referenceId || null,
+      balanceBeforeMinor: before.toString(),
+      balanceAfterMinor: after.toString(),
       transactionType: TransactionType.CREDIT,
       status: TransactionStatus.COMPLETED,
       wallet,
     });
-    await this.walletTransactionRepository.save(transaction);
+    const savedTransaction = await transactionRepo.save(transaction);
+    await this.recordBalancedJournal(
+      manager,
+      savedTransaction,
+      { type: 'platform-clearing', id: referenceType || 'treasury' },
+      { type: 'wallet-liability', id: wallet.id },
+    );
 
     return wallet;
   }
@@ -61,29 +138,69 @@ export class WalletService {
   async handleApprovedCredit(
     walletId: string,
     amount: number,
+    operationKey: string,
+    referenceId: string,
     transactionalEntityManager?: EntityManager,
   ): Promise<WalletEntity> {
+    this.assertValidAmount(amount);
+    if (!transactionalEntityManager) {
+      return this.dataSource.transaction((manager) =>
+        this.handleApprovedCredit(
+          walletId,
+          amount,
+          operationKey,
+          referenceId,
+          manager,
+        ),
+      );
+    }
     const walletRepo = transactionalEntityManager.getRepository(WalletEntity);
+    const transactionRepo = transactionalEntityManager.getRepository(
+      WalletTransactionEntity,
+    );
     const wallet = await walletRepo.findOne({
       where: { id: walletId },
-      relations: ['transactions'],
+      lock: { mode: 'pessimistic_write' },
     });
     if (!wallet) {
       throw new NotFoundException(`Wallet with ID ${walletId} not found`);
     }
 
-    wallet.borrowedAmount = Number(wallet.borrowedAmount || 0) + amount;
-    wallet.balance = Number(wallet.balance || 0) + amount;
-    await this.walletRepository.save(wallet);
+    const existing = await transactionRepo.findOne({ where: { operationKey } });
+    if (existing) return wallet;
 
-    const transaction = this.walletTransactionRepository.create({
+    const amountMinor = this.toMinor(amount);
+    const before = BigInt(wallet.balanceMinor || this.toMinor(wallet.balance));
+    const borrowedBefore = BigInt(
+      wallet.borrowedAmountMinor || this.toMinor(wallet.borrowedAmount),
+    );
+    const after = before + amountMinor;
+    wallet.balanceMinor = after.toString();
+    wallet.balance = this.fromMinor(after);
+    wallet.borrowedAmountMinor = (borrowedBefore + amountMinor).toString();
+    wallet.borrowedAmount = this.fromMinor(borrowedBefore + amountMinor);
+    await walletRepo.save(wallet);
+
+    const transaction = transactionRepo.create({
       userId: wallet.userId,
       amount,
+      amountMinor: amountMinor.toString(),
+      operationKey,
+      referenceType: 'credit-facility',
+      referenceId,
+      balanceBeforeMinor: before.toString(),
+      balanceAfterMinor: after.toString(),
       transactionType: TransactionType.FACILITY_CREDIT,
       status: TransactionStatus.COMPLETED,
       wallet,
     });
-    await this.walletTransactionRepository.save(transaction);
+    const savedTransaction = await transactionRepo.save(transaction);
+    await this.recordBalancedJournal(
+      transactionalEntityManager,
+      savedTransaction,
+      { type: 'credit-receivable', id: referenceId },
+      { type: 'wallet-liability', id: wallet.id },
+    );
 
     return wallet;
   }
@@ -91,31 +208,69 @@ export class WalletService {
   async debitWallet(
     userId: string,
     amount: number,
+    operationKey: string,
+    referenceType: string,
+    referenceId: string,
     transactionalEntityManager?: EntityManager,
   ): Promise<WalletEntity> {
-    console.log(`Debiting wallet for user ${userId} with amount ${amount}`);
-    const walletRepo =
-      transactionalEntityManager?.getRepository(WalletEntity) ||
-      this.walletRepository;
-    const wallet = await walletRepo.findOne({ where: { userId } });
+    this.assertValidAmount(amount);
+    if (!transactionalEntityManager) {
+      return this.dataSource.transaction((manager) =>
+        this.debitWallet(
+          userId,
+          amount,
+          operationKey,
+          referenceType,
+          referenceId,
+          manager,
+        ),
+      );
+    }
+    const walletRepo = transactionalEntityManager.getRepository(WalletEntity);
+    const transactionRepo = transactionalEntityManager.getRepository(
+      WalletTransactionEntity,
+    );
+    const wallet = await walletRepo.findOne({
+      where: { userId },
+      lock: { mode: 'pessimistic_write' },
+    });
     if (!wallet)
       throw new NotFoundException(`Wallet with user ID ${userId} not found`);
 
     if (wallet.isFrozen) throw new ConflictException('Wallet is frozen');
 
-    if (wallet.balance < amount)
+    const existing = await transactionRepo.findOne({ where: { operationKey } });
+    if (existing) return wallet;
+
+    const amountMinor = this.toMinor(amount);
+    const before = BigInt(wallet.balanceMinor || this.toMinor(wallet.balance));
+    if (before < amountMinor)
       throw new ConflictException('Insufficient balance');
-    wallet.balance -= amount;
+    const after = before - amountMinor;
+    wallet.balanceMinor = after.toString();
+    wallet.balance = this.fromMinor(after);
     await walletRepo.save(wallet);
 
-    const transaction = this.walletTransactionRepository.create({
+    const transaction = transactionRepo.create({
       userId,
       amount,
+      amountMinor: amountMinor.toString(),
+      operationKey,
+      referenceType,
+      referenceId,
+      balanceBeforeMinor: before.toString(),
+      balanceAfterMinor: after.toString(),
       transactionType: TransactionType.DEBIT,
       status: TransactionStatus.COMPLETED,
       wallet,
     });
-    await this.walletTransactionRepository.save(transaction);
+    const savedTransaction = await transactionRepo.save(transaction);
+    await this.recordBalancedJournal(
+      transactionalEntityManager,
+      savedTransaction,
+      { type: 'wallet-liability', id: wallet.id },
+      { type: 'platform-clearing', id: referenceId },
+    );
 
     return wallet;
   }
@@ -159,5 +314,53 @@ export class WalletService {
     const spent = parseFloat(result.total) || 0;
 
     return spent + amount <= allowed;
+  }
+
+  private assertValidAmount(amount: number): void {
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('Amount must be greater than zero');
+    }
+  }
+
+  private async recordBalancedJournal(
+    manager: EntityManager,
+    transaction: WalletTransactionEntity,
+    debitAccount: { type: string; id: string },
+    creditAccount: { type: string; id: string },
+  ): Promise<void> {
+    const repository = manager.getRepository(LedgerEntryEntity);
+    const common = {
+      operationKey: transaction.operationKey as string,
+      amountMinor: transaction.amountMinor as string,
+      currency: 'NGN',
+      referenceType: transaction.referenceType,
+      referenceId: transaction.referenceId,
+      walletTransactionId: transaction.id,
+    };
+    await repository.save([
+      repository.create({
+        ...common,
+        lineNumber: 1,
+        accountType: debitAccount.type,
+        accountId: debitAccount.id,
+        direction: LedgerDirection.Debit,
+      }),
+      repository.create({
+        ...common,
+        lineNumber: 2,
+        accountType: creditAccount.type,
+        accountId: creditAccount.id,
+        direction: LedgerDirection.Credit,
+      }),
+    ]);
+  }
+
+  private toMinor(amount: number): bigint {
+    this.assertValidAmount(amount);
+    return BigInt(Math.round(amount * 100));
+  }
+
+  private fromMinor(amount: bigint): number {
+    return Number(amount) / 100;
   }
 }

@@ -19,6 +19,8 @@ import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { Paginated, PaginateQuery } from 'nestjs-paginate';
 import { ReviewEntity } from './entities/review.entity';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 
 @Controller('review')
 @ApiBearerAuth()
@@ -44,7 +46,8 @@ export class ReviewController {
   }
 
   @Get('')
-  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_reviews')
   @ApiOperation({ summary: 'get all reviews' })
   findAll(@Query() query: PaginateQuery): Promise<Paginated<ReviewEntity>> {
     return this.reviewService.findAll(query);
@@ -66,12 +69,17 @@ export class ReviewController {
     type: UpdateReviewDto,
     description: 'Json structure for updating review',
   })
-  update(@Param('id') id: string, @Body() updateReviewDto: UpdateReviewDto) {
-    return this.reviewService.update(id, updateReviewDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateReviewDto: UpdateReviewDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.reviewService.update(id, updateReviewDto, user.id);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('delete_reviews')
   remove(@Param('id') id: string) {
     return this.reviewService.remove(id);
   }

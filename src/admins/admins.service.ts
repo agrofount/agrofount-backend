@@ -3,22 +3,21 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InviteAdminDto } from './dto/create-admin.dto';
 import { UpdateAdminDto } from './dto/update-admin.dto';
-import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { AdminEntity } from './entities/admin.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, MoreThan, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { NotificationService } from '../notification/notification.service';
 import {
   MessageTypes,
   NotificationChannels,
 } from '../notification/types/notification.type';
-import { plainToClass, plainToInstance } from 'class-transformer';
-import { RegisterUserDto } from '../auth/dto/create-user.dto';
+import { plainToInstance } from 'class-transformer';
 import { AdminResponseDto } from './admin.response.dto';
 import { Role, UserTypes } from '../auth/enums/role.enum';
 import {
@@ -27,7 +26,8 @@ import {
   Paginated,
   PaginateQuery,
 } from 'nestjs-paginate';
-import { RoleEntity } from 'src/role/entities/role.entity';
+import { RoleEntity } from '../role/entities/role.entity';
+import { createHash, randomBytes } from 'crypto';
 
 @Injectable()
 export class AdminsService {
@@ -36,14 +36,9 @@ export class AdminsService {
     private adminRepo: Repository<AdminEntity>,
     @InjectRepository(RoleEntity)
     private roleRepo: Repository<RoleEntity>,
-    private jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly notificationService: NotificationService,
   ) {}
-
-  create(createAdminDto: InviteAdminDto) {
-    return 'This action adds a new admin';
-  }
 
   async findAll(query: PaginateQuery): Promise<Paginated<AdminEntity>> {
     const result = await paginate(query, this.adminRepo, {
@@ -59,6 +54,8 @@ export class AdminsService {
         department: [FilterOperator.EQ],
       },
       relations: ['roles'],
+      defaultLimit: 25,
+      maxLimit: 100,
     });
 
     // Transform items so @Exclude takes effect
@@ -85,7 +82,7 @@ export class AdminsService {
     return new AdminResponseDto(user);
   }
 
-  async update(id: string, dto: UpdateAdminDto) {
+  async update(id: string, dto: UpdateAdminDto, actor: AdminEntity) {
     const user = await this.adminRepo.findOne({ where: { id } });
     if (!user) {
       throw new NotFoundException(`Admin with ID ${id} not found`);
@@ -96,26 +93,33 @@ export class AdminsService {
       if (roles.length !== dto.roleIds.length) {
         throw new BadRequestException('One or more roles are invalid');
       }
+      this.assertSuperAdminChangeAllowed(actor, user, roles);
       dto.roles = roles;
     }
-    // Merge the existing user with the updated data
-    Object.assign(user, dto);
+    const changes = { ...dto };
+    delete changes.roleIds;
+    delete changes.roles;
+    Object.assign(user, changes);
+    if (dto.roles) user.roles = dto.roles;
 
     // Save the updated user
     const updatedUser = await this.adminRepo.save(user);
-
-    console.log('Updated user:', updatedUser);
 
     // Transform the updated user to exclude sensitive fields
     const admin = plainToInstance(AdminEntity, updatedUser);
     return admin;
   }
 
-  async remove(id: string) {
+  async remove(id: string, actor: AdminEntity) {
     const admin = await this.adminRepo.findOneBy({ id });
     if (!admin) {
       throw new NotFoundException(`Admin with id ${id} not found`);
     }
+
+    if (actor.id === id) {
+      throw new BadRequestException('You cannot delete your own admin account');
+    }
+    this.assertSuperAdminChangeAllowed(actor, admin, []);
 
     await this.adminRepo.softRemove(admin);
   }
@@ -125,7 +129,8 @@ export class AdminsService {
     user: AdminEntity,
   ): Promise<Partial<AdminEntity>> {
     try {
-      const { email, roleIds } = dto;
+      const { email, roleIds, firstname, lastname, username, phone, password } =
+        dto;
 
       const userExist = await this.adminRepo.findOne({
         where: { email: email },
@@ -144,20 +149,31 @@ export class AdminsService {
         throw new BadRequestException('One or more roles are invalid');
       }
 
-      if (
-        user.roles.some((role) => role.name === Role.SuperAdmin) &&
-        user.userType !== UserTypes.System
-      ) {
+      const assigningSuperAdmin = roles.some(
+        (role) => role.name === Role.SuperAdmin,
+      );
+      const inviterIsSuperAdmin = user.roles.some(
+        (role) => role.name === Role.SuperAdmin,
+      );
+      if (assigningSuperAdmin && !inviterIsSuperAdmin) {
         throw new BadRequestException(
           'You are not authorized to create a super admin',
         );
       }
 
-      const verificationToken = Math.random().toString(36).substring(2, 15);
+      const verificationToken = randomBytes(32).toString('hex');
 
       const admin = this.adminRepo.create({
-        ...dto,
-        verificationToken,
+        firstname,
+        lastname,
+        username,
+        phone,
+        password,
+        email: email.trim().toLowerCase(),
+        verificationToken: createHash('sha256')
+          .update(verificationToken)
+          .digest('hex'),
+        verificationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
         createdBy: user.id,
         userType: UserTypes.System,
         roles,
@@ -173,15 +189,19 @@ export class AdminsService {
       );
       const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
 
-      this.notificationService.sendNotification(
-        NotificationChannels.EMAIL,
-        { email, userId: admin.id },
-        MessageTypes.ADMIN_INVITE,
-        {
-          admin_name: savedUser.firstname,
-          invitation_link: verificationUrl,
-        },
-      );
+      void this.notificationService
+        .sendNotification(
+          NotificationChannels.EMAIL,
+          { email, userId: admin.id },
+          MessageTypes.ADMIN_INVITE,
+          {
+            admin_name: savedUser.firstname,
+            invitation_link: verificationUrl,
+          },
+        )
+        .catch((error) =>
+          Logger.error('Failed to send admin invitation', error),
+        );
 
       return plainToInstance(AdminEntity, admin);
     } catch (error: any) {
@@ -192,12 +212,16 @@ export class AdminsService {
 
   async verifyEmail(token: string): Promise<any> {
     const user = await this.adminRepo.findOne({
-      where: { verificationToken: token },
+      where: {
+        verificationToken: createHash('sha256').update(token).digest('hex'),
+        verificationTokenExpires: MoreThan(new Date()),
+      },
     });
-    if (!user) throw new Error('Invalid token');
+    if (!user) throw new BadRequestException('Invalid or expired token');
 
     user.isVerified = true;
     user.verificationToken = null;
+    user.verificationTokenExpires = null;
     await this.adminRepo.save(user);
 
     const payload = { email: user.email, id: user.id };
@@ -210,22 +234,39 @@ export class AdminsService {
   ): Promise<Partial<AdminEntity> | null> {
     const user = await this.adminRepo.findOneBy({ email });
 
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    if (!user.isVerified) {
-      throw new BadRequestException('Please verify your email');
-    }
-
-    const isValid = await bcrypt.compare(passwd, user.password);
-    if (!isValid) {
-      throw new BadRequestException('Invalid password');
+    const fallbackHash =
+      '$2a$12$JqSH7uOEpRsz4l9XfX.6Oel3lUo.BSgMQC3AvOSMEyeM9FjKQFnj2';
+    const isValid = await bcrypt.compare(
+      passwd,
+      user?.password || fallbackHash,
+    );
+    if (!user || !user.isVerified || !isValid) {
+      throw new UnauthorizedException('Invalid credentials');
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { password, ...result } = user;
+    const { password, mfaSecretEncrypted, mfaRecoveryCodeHashes, ...result } =
+      user;
 
     return result;
+  }
+
+  private assertSuperAdminChangeAllowed(
+    actor: AdminEntity,
+    target: AdminEntity,
+    nextRoles: RoleEntity[],
+  ): void {
+    const actorIsSuperAdmin = actor.roles?.some(
+      (role) => role.name === Role.SuperAdmin,
+    );
+    const touchesSuperAdmin =
+      target.roles?.some((role) => role.name === Role.SuperAdmin) ||
+      nextRoles.some((role) => role.name === Role.SuperAdmin);
+
+    if (touchesSuperAdmin && !actorIsSuperAdmin) {
+      throw new BadRequestException(
+        'Only a super admin can modify a super admin account',
+      );
+    }
   }
 }

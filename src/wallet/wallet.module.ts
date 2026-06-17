@@ -5,7 +5,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { WalletEntity } from './entities/wallet.entity';
 import { SendInBlueModule } from '../notification/modules/sendinblue.module';
 import { WalletTransactionEntity } from './entities/wallet-transactions.entity';
-import { CreditFacilityRequestEntity } from 'src/credit-facility/entities/credit-facility.entity';
+import { CreditFacilityRequestEntity } from '../credit-facility/entities/credit-facility.entity';
+import { LedgerEntryEntity } from './entities/ledger-entry.entity';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { CreditFacilityRequestEntity } from 'src/credit-facility/entities/credit
       WalletEntity,
       WalletTransactionEntity,
       CreditFacilityRequestEntity,
+      LedgerEntryEntity,
     ]),
     SendInBlueModule,
   ],

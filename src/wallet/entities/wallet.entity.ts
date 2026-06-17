@@ -13,17 +13,23 @@ export class WalletEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ unique: true })
   userId: string;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0.0 })
   balance: number;
+
+  @Column({ type: 'bigint', nullable: true })
+  balanceMinor: string | null;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0.0 })
   creditLimit: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0.0 })
   borrowedAmount: number;
+
+  @Column({ type: 'bigint', nullable: true })
+  borrowedAmountMinor: string | null;
 
   @Column({ type: 'boolean', default: false })
   isFrozen: boolean;

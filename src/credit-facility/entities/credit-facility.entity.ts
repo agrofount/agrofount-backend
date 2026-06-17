@@ -9,8 +9,8 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { CreditFacilityRequestStatus } from '../types/facility.types';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
-import { DisbursementEntity } from 'src/disbursement/entities/disbursement.entity';
+import { AdminEntity } from '../../admins/entities/admin.entity';
+import { DisbursementEntity } from '../../disbursement/entities/disbursement.entity';
 
 @Entity('credit_facility_request')
 export class CreditFacilityRequestEntity {
@@ -37,7 +37,16 @@ export class CreditFacilityRequestEntity {
     enum: CreditFacilityRequestStatus,
     default: 'pending',
   })
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'under_review' | 'approved' | 'rejected';
+
+  @ManyToOne(() => AdminEntity, { nullable: true })
+  firstApprovedBy: AdminEntity | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  proposedApprovedAmount: number | null;
+
+  @Column({ nullable: true, length: 500 })
+  decisionReason: string | null;
 
   @ManyToOne(() => AdminEntity, { nullable: true })
   approvedBy: AdminEntity;

@@ -3,11 +3,7 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
-import {
-  HumanMessage,
-  SystemMessage,
-  AIMessage,
-} from '@langchain/core/messages';
+import { HumanMessage, AIMessage } from '@langchain/core/messages';
 
 @Injectable()
 export class LangChainLlmService {
@@ -144,7 +140,7 @@ export class LangChainLlmService {
     // Add conversation history if available
     if (conversationHistory.length > 0) {
       fullPrompt += 'CONVERSATION HISTORY:\n';
-      conversationHistory.slice(-6).forEach((message, index) => {
+      conversationHistory.slice(-6).forEach((message) => {
         // Last 3 exchanges
         if (message instanceof HumanMessage) {
           fullPrompt += `User: ${message.content}\n`;

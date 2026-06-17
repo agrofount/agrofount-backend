@@ -1,15 +1,14 @@
 import { ConfigService } from '@nestjs/config';
-import * as brevo from '@getbrevo/brevo';
 
 export const configureSendInBlue = (configService: ConfigService) => {
   const apiKey = configService.get<string>('SEND_IN_BLUE_API_KEY');
+  const fromEmail =
+    configService.get<string>('SEND_IN_BLUE_FROM_EMAIL') ||
+    configService.get<string>('SENDGRID_FROM_EMAIL');
 
   if (!apiKey) {
     throw new Error('SEND_IN_BLUE_API_KEY is not defined');
   }
-
-  const apiInstance = new brevo.TransactionalEmailsApi();
-  apiInstance.setApiKey(brevo.TransactionalEmailsApiApiKeys.apiKey, apiKey);
 
   return {
     sendEmail: async (
@@ -17,22 +16,60 @@ export const configureSendInBlue = (configService: ConfigService) => {
       templateId: number,
       params?: Record<string, any>,
     ) => {
-      const sendSmtpEmail = new brevo.SendSmtpEmail();
-      sendSmtpEmail.to = [{ email: to }];
-
-      sendSmtpEmail.templateId = templateId; // Set the predefined email template ID
-
-      if (params) {
-        sendSmtpEmail.params = params; // Pass dynamic parameters to the template
+      try {
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            'api-key': apiKey,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            to: [{ email: to }],
+            templateId,
+            params,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) {
+          throw new Error(`Brevo returned HTTP ${response.status}`);
+        }
+      } catch {
+        throw new Error('Failed to send email');
+      }
+    },
+    sendCustomEmail: async (
+      to: string,
+      subject: string,
+      htmlContent: string,
+      textContent: string,
+      replyTo?: string,
+    ) => {
+      if (!fromEmail) {
+        throw new Error('SEND_IN_BLUE_FROM_EMAIL is not defined');
       }
       try {
-        await apiInstance.sendTransacEmail(sendSmtpEmail);
-        console.log('Email sent');
-      } catch (error) {
-        console.error(
-          'Error sending email:',
-          error.response ? error.response.body : error,
-        );
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            'api-key': apiKey,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            sender: { name: 'Agrofount', email: fromEmail },
+            to: [{ email: to }],
+            subject,
+            htmlContent,
+            textContent,
+            ...(replyTo ? { replyTo: { email: replyTo } } : {}),
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) {
+          throw new Error(`Brevo returned HTTP ${response.status}`);
+        }
+      } catch {
         throw new Error('Failed to send email');
       }
     },

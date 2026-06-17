@@ -22,11 +22,10 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { Roles } from '../auth/decorator/role.decorator';
-import { Role } from '../auth/enums/role.enum';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
 import { ProductResponseDto } from './dto/product.response.dto';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 
 @ApiTags('Product')
 @Controller('product')
@@ -35,8 +34,8 @@ export class ProductController {
   constructor(private readonly productService: ProductService) {}
 
   @Post()
-  @Roles(Role.Admin, Role.Staff)
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('create_products')
   @ApiOperation({ summary: 'Create product' })
   @ApiBody({
     type: CreateProductDto,
@@ -47,7 +46,8 @@ export class ProductController {
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_products')
   @ApiOperation({ summary: 'get all product' })
   @ApiBody({
     type: ProductResponseDto,
@@ -73,16 +73,16 @@ export class ProductController {
   }
 
   @Put(':id')
-  @Roles(Role.Admin, Role.Staff)
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_products')
   @ApiOperation({ summary: 'Update product by ID' })
   update(@Param('id') id: string, @Body() updateProductDto: UpdateProductDto) {
     return this.productService.update(id, updateProductDto);
   }
 
   @Delete(':id')
-  @Roles(Role.Admin, Role.Staff)
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('delete_products')
   @ApiOperation({ summary: 'Delete product by ID' })
   remove(@Param('id') id: string) {
     return this.productService.remove(id);

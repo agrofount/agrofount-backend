@@ -13,8 +13,10 @@ export interface AppConfig {
 export const appConfig = {
   frontend_url: process.env.FRONTEND_URL,
   admin_frontend_url: process.env.ADMIN_FRONTEND_URL,
-  registrationPromotion: process.env.REGISTRATION_PROMOTION,
-  registrationPromotionAmount: process.env.REGISTRATION_PROMOTION_AMOUNT,
+  registrationPromotion: process.env.REGISTRATION_PROMOTION === 'true',
+  registrationPromotionAmount: Number(
+    process.env.REGISTRATION_PROMOTION_AMOUNT || 0,
+  ),
 };
 
 export default registerAs('app', () => appConfig);

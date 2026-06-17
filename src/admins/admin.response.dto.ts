@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { AdminEntity } from './entities/admin.entity';
-import { Role } from '../auth/enums/role.enum';
-import { RoleEntity } from 'src/role/entities/role.entity';
+import { RoleEntity } from '../role/entities/role.entity';
 
 export class AdminResponseDto {
   @ApiProperty({

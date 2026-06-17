@@ -16,6 +16,8 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PaginateQuery } from 'nestjs-paginate';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 
 @Controller('city')
 @ApiTags('city')
@@ -24,7 +26,8 @@ export class CityController {
 
   @Post()
   @ApiOperation({ summary: 'Create city' })
-  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('create_cities')
   @ApiBearerAuth()
   create(@Body() dto: CreateCityDto) {
     return this.cityService.create(dto);
@@ -44,12 +47,16 @@ export class CityController {
 
   @Put(':id')
   @ApiOperation({ summary: 'Update cities' })
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_cities')
   update(@Param('id') id: string, @Body() updateCityDto: UpdateCityDto) {
     return this.cityService.update(id, updateCityDto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Remove cities' })
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('delete_cities')
   remove(@Param('id') id: string) {
     return this.cityService.remove(id);
   }

@@ -9,18 +9,28 @@ import { UserEntity } from '../user/entities/user.entity';
 import { LocalStrategy } from './strategy/local.strategy';
 import { JwtStrategy } from './strategy/jwt.strategy';
 import { NotificationModule } from '../notification/notification.module';
-import { VoucherModule } from 'src/voucher/voucher.module';
-import { WalletModule } from 'src/wallet/wallet.module';
+import { VoucherModule } from '../voucher/voucher.module';
+import { WalletModule } from '../wallet/wallet.module';
+import { AdminEntity } from '../admins/entities/admin.entity';
+import { AuthSessionEntity } from './entities/auth-session.entity';
+import type { SignOptions } from 'jsonwebtoken';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UserEntity]),
+    TypeOrmModule.forFeature([UserEntity, AdminEntity, AuthSessionEntity]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '60m' },
+        signOptions: {
+          expiresIn: (configService.get<string>('JWT_EXPIRATION') ||
+            '15m') as SignOptions['expiresIn'],
+          issuer: configService.get<string>('JWT_ISSUER') || 'agrofount-api',
+          audience:
+            configService.get<string>('JWT_AUDIENCE') || 'agrofount-client',
+          algorithm: 'HS256',
+        },
       }),
       inject: [ConfigService],
     }),

@@ -1,18 +1,22 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { DriverEntity } from './entities/driver.entity';
 import { ShipmentEntity, ShipmentStatus } from './entities/shipment.entity';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
 import { OrderService } from '../order/order.service';
-import { NotificationService } from '../notification/notification.service';
 import { OrderStatus } from '../order/enums/order.enum';
 import {
   MessageTypes,
   NotificationChannels,
 } from '../notification/types/notification.type';
 import { CreateDriverDto } from './dto/create-driver.dto';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { AdminEntity } from '../admins/entities/admin.entity';
 import {
   FilterOperator,
   paginate,
@@ -21,6 +25,10 @@ import {
 } from 'nestjs-paginate/lib/paginate';
 import { PaginateQuery } from 'nestjs-paginate/lib/decorator';
 import { plainToInstance } from 'class-transformer';
+import { UserEntity } from '../user/entities/user.entity';
+import { UserTypes } from '../auth/enums/role.enum';
+import { OutboxService } from '../outbox/outbox.service';
+import { OrderEntity } from '../order/entities/order.entity';
 
 @Injectable()
 export class SupplyChainService {
@@ -30,7 +38,8 @@ export class SupplyChainService {
     @InjectRepository(ShipmentEntity)
     private readonly shipmentRepo: Repository<ShipmentEntity>,
     private readonly orderService: OrderService,
-    private readonly notificationService: NotificationService,
+    private readonly dataSource: DataSource,
+    private readonly outboxService: OutboxService,
   ) {}
 
   async createDriver(data: CreateDriverDto, user: AdminEntity) {
@@ -59,8 +68,8 @@ export class SupplyChainService {
         licenseNumber: [FilterOperator.ILIKE],
         mainLocation: [FilterOperator.IN],
       },
-      defaultLimit: query.limit ? query.limit : Infinity,
-      maxLimit: query.limit ? query.limit : Infinity,
+      defaultLimit: 25,
+      maxLimit: 100,
     };
     const result = await paginate(query, this.driverRepo, paginationOptions);
 
@@ -89,64 +98,56 @@ export class SupplyChainService {
 
   async createShipment(dto: CreateShipmentDto, user) {
     const { orderId, estimatedDeliveryDate, driverId, route, cost } = dto;
-    try {
-      const order = await this.orderService.findOne(orderId);
-
-      if (order.status === OrderStatus.Pending) {
-        throw new ConflictException('Order is still pending.');
-      }
-
-      const shipmentExist = await this.shipmentRepo.findOne({
-        where: { order: { id: orderId } },
+    const result = await this.dataSource.transaction(async (manager) => {
+      const order = await manager.getRepository(OrderEntity).findOne({
+        where: { id: orderId },
+        relations: ['user'],
+        lock: { mode: 'pessimistic_write' },
       });
-
-      if (shipmentExist) {
-        throw new ConflictException(
-          'Shipment record already created for this order',
-        );
+      if (!order) throw new NotFoundException('Order not found');
+      if ([OrderStatus.Pending, OrderStatus.Cancelled].includes(order.status)) {
+        throw new ConflictException('Order is not ready for shipment');
       }
-
       let driver: DriverEntity | null = null;
       if (driverId) {
-        driver = await this.driverRepo.findOne({
+        driver = await manager.getRepository(DriverEntity).findOne({
           where: { id: driverId },
         });
-        if (!driver) {
-          throw new ConflictException('Driver not found');
-        }
+        if (!driver) throw new NotFoundException('Driver not found');
       }
-
-      const shipmentEntity = this.shipmentRepo.create({
-        trackingNumber: this.generateTrackingNumber(),
-        order,
-        driver,
-        route,
-        cost,
-        estimatedDeliveryDate,
-        shippingAddress: order.address,
-        createdBy: user,
-        status: ShipmentStatus.Assigned,
-      });
-
-      const shipment = await this.shipmentRepo.save(shipmentEntity);
-
-      this.notificationService.sendNotification(
-        NotificationChannels.EMAIL,
-
-        { email: order.user.email, userId: order.user.id },
-        MessageTypes.SHIPMENT_INITIATED,
-        {
-          username: order.user.username,
-          tracking_code: shipment.trackingNumber,
-          courier_number: driver.phone,
-        },
+      const shipmentRepo = manager.getRepository(ShipmentEntity);
+      const shipment = await shipmentRepo.save(
+        shipmentRepo.create({
+          orderId,
+          order,
+          driver,
+          trackingNumber: this.generateTrackingNumber(),
+          route,
+          cost,
+          estimatedDeliveryDate,
+          shippingAddress: order.address,
+          createdBy: user,
+          status: driver ? ShipmentStatus.Assigned : ShipmentStatus.Pending,
+        }),
       );
-
-      return shipment;
-    } catch (error) {
-      console.error(error);
-      throw error;
-    }
+      const outbox = await this.outboxService.create(
+        'notification.send',
+        {
+          channel: NotificationChannels.EMAIL,
+          recipient: { email: order.user.email, userId: order.userId },
+          messageType: MessageTypes.SHIPMENT_INITIATED,
+          params: {
+            username: order.user.username,
+            tracking_code: shipment.trackingNumber,
+            courier_number: driver?.phone || 'To be assigned',
+          },
+        },
+        manager,
+      );
+      return { shipment, outboxId: outbox.id };
+    });
+    await this.outboxService.dispatch(result.outboxId);
+    return result.shipment;
   }
 
   async listShipments(
@@ -166,16 +167,11 @@ export class SupplyChainService {
         'driver.phone': [FilterOperator.EQ],
         route: [FilterOperator.ILIKE],
       },
-      defaultLimit: query.limit ? query.limit : Infinity,
-      maxLimit: query.limit ? query.limit : Infinity,
-      relations: ['order', 'driver'],
+      defaultLimit: 25,
+      maxLimit: 100,
+      relations: ['order', 'order.user', 'driver'],
     };
 
-    const modifiedQuery = query;
-
-    if (!query.limit) {
-      modifiedQuery.limit = Number.MAX_SAFE_INTEGER;
-    }
     const result = await paginate(query, this.shipmentRepo, paginationOptions);
 
     // Transform items so @Exclude takes effect
@@ -189,19 +185,50 @@ export class SupplyChainService {
     status: ShipmentStatus,
     deliveryDate?: Date,
   ) {
-    const shipment = await this.shipmentRepo.findOne({
-      where: { id: shipmentId },
+    return this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(ShipmentEntity);
+      const shipment = await repository.findOne({
+        where: { id: shipmentId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!shipment) throw new NotFoundException('Shipment not found');
+      const allowed: Record<ShipmentStatus, ShipmentStatus[]> = {
+        [ShipmentStatus.Pending]: [
+          ShipmentStatus.Assigned,
+          ShipmentStatus.Cancelled,
+        ],
+        [ShipmentStatus.Assigned]: [
+          ShipmentStatus.InTransit,
+          ShipmentStatus.Cancelled,
+        ],
+        [ShipmentStatus.InTransit]: [
+          ShipmentStatus.Shipped,
+          ShipmentStatus.Delivered,
+        ],
+        [ShipmentStatus.Shipped]: [ShipmentStatus.Delivered],
+        [ShipmentStatus.Delivered]: [],
+        [ShipmentStatus.Cancelled]: [],
+      };
+      if (!allowed[shipment.status].includes(status)) {
+        throw new BadRequestException(
+          `Invalid shipment transition: ${shipment.status} -> ${status}`,
+        );
+      }
+      shipment.status = status;
+      if (status === ShipmentStatus.Delivered) {
+        shipment.deliveredAt = deliveryDate || new Date();
+      }
+      return repository.save(shipment);
     });
-    if (!shipment) throw new Error('Shipment not found');
-    shipment.status = status;
-    if (deliveryDate) shipment.deliveredAt = deliveryDate;
-    if (status === ShipmentStatus.Delivered && shipment.driver) {
-      // Optionally update driver availability here
-    }
-    return this.shipmentRepo.save(shipment);
   }
 
-  async getShipmentsByOrder(orderId: string) {
+  async getShipmentsByOrder(orderId: string, user: UserEntity | AdminEntity) {
+    const order = await this.orderService.findOne(orderId);
+    if (user.userType !== UserTypes.System && order.userId !== user.id) {
+      throw new ConflictException(
+        'You are not authorized to view this shipment',
+      );
+    }
     return this.shipmentRepo.find({
       where: { order: { id: orderId } },
       relations: ['driver', 'order'],

@@ -1,5 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsString, ValidateIf } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  ValidateIf,
+} from 'class-validator';
 
 export class SignInDto {
   @ApiProperty({
@@ -30,4 +37,13 @@ export class SignInDto {
   @IsString()
   @IsNotEmpty()
   password: string;
+
+  @ApiProperty({
+    description: 'Admin authenticator code or one-time recovery code.',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^(?:\d{6}|[A-Z0-9_-]{12,32})$/i)
+  mfaCode?: string;
 }

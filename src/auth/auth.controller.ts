@@ -18,12 +18,14 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { BaseController } from '../utils/base.controller';
 import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SignInDto } from './dto/signin-auth.dto';
-import { AdminAuthGuard } from './guards/admin.guard';
 import { LocalAdminAuthGuard } from './guards/local-admin-auth.guard';
-import { Verify } from 'crypto';
 import { VerifyPhoneDto } from './dto/verify-phoneDto';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { AdminEntity } from '../admins/entities/admin.entity';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { Throttle } from '@nestjs/throttler';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ConfirmAdminMfaDto } from './dto/confirm-admin-mfa.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -33,37 +35,95 @@ export class AuthController extends BaseController {
   }
 
   @UseGuards(LocalAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('login')
   @ApiOperation({ summary: 'User login' })
   @ApiBody({
     type: SignInDto,
     description: 'Json structure for user login',
   })
-  async login(@CurrentUser() user: UserEntity) {
-    const { accessToken } = await this.authService.login(user);
+  async login(@CurrentUser() user: UserEntity, @Request() req) {
+    const { accessToken, refreshToken } = await this.authService.login(user, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
 
-    return { success: true, token: accessToken, message: 'Login successful' };
+    return {
+      success: true,
+      token: accessToken,
+      refreshToken,
+      message: 'Login successful',
+    };
   }
 
   @UseGuards(LocalAdminAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('admin/login')
   @ApiOperation({ summary: 'Admin login' })
   @ApiBody({
     type: SignInDto,
     description: 'Json structure for user login',
   })
-  async adminLogin(@CurrentUser() admin: AdminEntity) {
-    const { accessToken } = await this.authService.adminLogin(admin);
+  async adminLogin(@CurrentUser() admin: AdminEntity, @Request() req) {
+    const result = await this.authService.adminLogin(
+      admin,
+      {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      },
+      req.body?.mfaCode,
+    );
 
-    return { success: true, token: accessToken, message: 'Login successful' };
+    if ('mfaSetupRequired' in result) return result;
+
+    const { accessToken, refreshToken } = result;
+
+    return {
+      success: true,
+      token: accessToken,
+      refreshToken,
+      message: 'Login successful',
+    };
+  }
+
+  @Post('admin/mfa/verify')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async confirmAdminMfa(@Body() dto: ConfirmAdminMfaDto, @Request() req) {
+    const result = await this.authService.confirmAdminMfaEnrollment(dto, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return {
+      success: true,
+      token: result.accessToken,
+      refreshToken: result.refreshToken,
+      recoveryCodes: result.recoveryCodes,
+      message: 'MFA enabled and login successful',
+    };
+  }
+
+  @Post('refresh')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async refresh(@Body() dto: RefreshTokenDto, @Request() req) {
+    const { accessToken, refreshToken } = await this.authService.refresh(
+      dto.refreshToken,
+      {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      },
+    );
+    return { success: true, token: accessToken, refreshToken };
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
-  async logout(@Request() req) {
-    const { accessToken } = await this.authService.login(req.user);
-
-    return { success: true, message: 'Logout successful', token: accessToken };
+  async logout(@CurrentUser() user: any) {
+    await this.authService.logout(
+      user.tokenId,
+      user.tokenExpiresAt,
+      user.sessionId,
+    );
+    return { success: true, message: 'Logout successful' };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -79,6 +139,7 @@ export class AuthController extends BaseController {
   }
 
   @Post('register')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({ summary: 'User registration' })
   @ApiBody({
     type: RegisterUserDto,
@@ -95,6 +156,7 @@ export class AuthController extends BaseController {
   }
 
   @Get('verify-email')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async verifyEmail(@Query('token') token: string) {
     await this.authService.verifyEmail(token);
     return {
@@ -104,6 +166,7 @@ export class AuthController extends BaseController {
   }
 
   @Post('verify-phone')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async verifyPhone(@Body() payload: VerifyPhoneDto) {
     await this.authService.verifyPhone(payload);
     return {
@@ -113,17 +176,19 @@ export class AuthController extends BaseController {
   }
 
   @Post('forgot-password')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @ApiOperation({ summary: 'Request password reset link' })
-  async forgotPassword(@Body('identifier') identifier: string) {
-    const data = await this.authService.sendPasswordResetEmail(identifier);
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    const data = await this.authService.sendPasswordResetEmail(dto.identifier);
     return {
       success: true,
-      message: 'Password reset link sent to your email',
+      message: 'If the account exists, reset instructions have been sent',
       data,
     };
   }
 
   @Post('reset-password')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({ summary: 'Reset password using token' })
   async resetPassword(@Body() data: ResetPasswordDto) {
     await this.authService.resetPassword(data);

@@ -6,13 +6,13 @@ import { SupplyChainService } from './supply-chain.service';
 import { SupplyChainController } from './supply-chain.controller';
 import { OrderEntity } from '../order/entities/order.entity';
 import { OrderModule } from '../order/order.module';
-import { NotificationModule } from '../notification/notification.module';
+import { OutboxModule } from '../outbox/outbox.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DriverEntity, ShipmentEntity, OrderEntity]),
     OrderModule,
-    NotificationModule,
+    OutboxModule,
   ],
   providers: [SupplyChainService],
   controllers: [SupplyChainController],

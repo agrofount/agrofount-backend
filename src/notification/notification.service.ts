@@ -31,7 +31,6 @@ import { OrderEntity } from '../order/entities/order.entity';
 import { TeamsService } from './services/teams.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { Cache, CACHE_MANAGER } from '@nestjs/cache-manager';
 
 @Injectable()
 export class NotificationService {
@@ -44,7 +43,6 @@ export class NotificationService {
     private readonly configService: ConfigService,
     private readonly teamsService: TeamsService,
     @InjectQueue('price-updates') private readonly queue: Queue,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   async create(dto: CreateNotificationDto) {
@@ -57,20 +55,16 @@ export class NotificationService {
     const today = new Date().toISOString().split('T')[0]; // e.g. "2025-08-20"
     const jobId = `price-updates-${today}`;
 
-    const cacheKey = `notifications:${jobId}`;
-    let cachedData = await this.cacheManager.get<string>(cacheKey);
-
-    if (cachedData) {
-      this.logger.log('Job already enqueued today, skipping...');
-      return;
-    }
-
     await this.queue.add(
-      jobId,
+      'price-updates',
       { triggeredAt: new Date().toISOString() },
-      { removeOnComplete: true, attempts: 3 },
+      {
+        jobId,
+        removeOnComplete: true,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1_000 },
+      },
     );
-    await this.cacheManager.set(cacheKey, JSON.stringify(jobId));
   }
 
   async findAll(
@@ -88,6 +82,8 @@ export class NotificationService {
         createdAt: [FilterOperator.ILIKE],
       },
       where: { userId },
+      defaultLimit: 25,
+      maxLimit: 100,
     });
   }
 
@@ -316,6 +312,42 @@ export class NotificationService {
     }
   }
 
+  async sendCustomEmail(
+    recipient: MessageRecipient,
+    subject: string,
+    htmlContent: string,
+    textContent: string,
+    messageType: MessageTypes,
+    replyTo?: string,
+  ): Promise<void> {
+    if (!recipient.email) {
+      throw new BadGatewayException(
+        'Recipient email is required for email notifications',
+      );
+    }
+
+    await this.sendInBlue.sendCustomEmail(
+      recipient.email,
+      subject,
+      htmlContent,
+      textContent,
+      replyTo,
+    );
+    try {
+      await this.create({
+        messageType,
+        userId: recipient.userId,
+        sender: 'Agrofount',
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Custom email sent but message audit could not be saved: ${
+          error?.message || error
+        }`,
+      );
+    }
+  }
+
   private async sendEmail(
     recipient: MessageRecipient,
     params: Record<string, any>,
@@ -327,18 +359,11 @@ export class NotificationService {
       );
     }
 
-    // Implementation for sending email
-    console.log(
-      `Sending email to ${recipient.email} for message type ${messageType}`,
-    );
     const templateId = EmailTemplateIds[messageType];
-    console.log(
-      `Using template ID ${templateId} for message type ${messageType}`,
-    );
 
     await this.sendInBlue.sendEmail(recipient.email, templateId, params);
 
-    this.create({
+    await this.create({
       messageType,
       templateId,
       userId: recipient.userId,
@@ -460,7 +485,7 @@ export class NotificationService {
       );
 
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       // Log the error for debugging purposes
       if (error.response) {
         console.error('Termii API Error Response:', error.response.data);
@@ -556,6 +581,8 @@ export class NotificationService {
   }
 
   private async sendPushNotification(recipient: string, message: MessageTypes) {
+    void recipient;
+    void message;
     // Implementation for sending push notification
     return {};
   }
@@ -564,6 +591,8 @@ export class NotificationService {
     recipient: string,
     message: MessageTypes,
   ) {
+    void recipient;
+    void message;
     // Implementation for sending in-app notification
     return {};
   }

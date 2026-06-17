@@ -1,9 +1,9 @@
 import { Controller, Get, Put, UseGuards } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
-import { CurrentUser } from 'src/utils/decorators/current-user.decorator';
-import { UserEntity } from 'src/user/entities/user.entity';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../utils/decorators/current-user.decorator';
+import { UserEntity } from '../user/entities/user.entity';
 
 @Controller('wallet')
 @ApiTags('Wallet')

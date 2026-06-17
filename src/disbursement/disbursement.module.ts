@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { DisbursementService } from './disbursement.service';
 import { DisbursementController } from './disbursement.controller';
-import { WalletModule } from 'src/wallet/wallet.module';
+import { WalletModule } from '../wallet/wallet.module';
 import { DisbursementEntity } from './entities/disbursement.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
