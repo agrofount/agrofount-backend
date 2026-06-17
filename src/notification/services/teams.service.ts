@@ -4,7 +4,7 @@ import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { MessageTypes } from '../types/notification.type';
-import { OrderEntity } from 'src/order/entities/order.entity';
+import { OrderEntity } from '../../order/entities/order.entity';
 
 @Injectable()
 export class TeamsService {

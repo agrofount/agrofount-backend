@@ -23,7 +23,8 @@ export class PaystackStrategy implements PaymentStrategy {
     amount: number,
     currency: string,
     email: string,
-    metadata?: any,
+    reference: string,
+    metadata?: Record<string, any>,
   ): Promise<any> {
     const url = `${this.paystackUrl}/transaction/initialize`;
     const headers = {
@@ -35,6 +36,7 @@ export class PaystackStrategy implements PaymentStrategy {
       amount: Math.round(amount * 100), // Paystack expects amount in kobo
       email: email || 'support@agrofount.com',
       currency,
+      reference,
       metadata,
     };
 
@@ -58,13 +60,44 @@ export class PaystackStrategy implements PaymentStrategy {
     };
 
     try {
-      const response = await this.httpService.get(url, { headers }).toPromise();
+      const response = await lastValueFrom(
+        this.httpService.get(url, { headers }),
+      );
       return response.data;
     } catch (error) {
       console.error(error);
       throw new InternalServerErrorException(
         'Failed to verify payment with Paystack',
       );
+    }
+  }
+
+  async createRefund(
+    reference: string,
+    amountMinor: string,
+    currency: string,
+  ): Promise<any> {
+    const url = `${this.paystackUrl}/refund`;
+    try {
+      const response = await lastValueFrom(
+        this.httpService.post(
+          url,
+          {
+            transaction: reference,
+            amount: Number(amountMinor),
+            currency,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${this.paystackSecretKey}`,
+              'Content-Type': 'application/json',
+            },
+          },
+        ),
+      );
+      return response.data;
+    } catch (error) {
+      throw new InternalServerErrorException('Failed to initiate refund');
     }
   }
 }

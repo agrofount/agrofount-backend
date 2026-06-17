@@ -2,25 +2,17 @@ import {
   Controller,
   Post,
   Body,
-  Session,
   HttpStatus,
   HttpException,
   Headers,
 } from '@nestjs/common';
 import { AiChatService } from './services/ai-chat.service';
 import {
-  AiChatMessageDto,
   AiChatResponseDto,
   ChatRequestDto,
   ChatResponseDto,
 } from './dto/ai-chat.dto';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiBody,
-  ApiHeader,
-  ApiResponse,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiHeader, ApiResponse } from '@nestjs/swagger';
 
 @ApiTags('AI Chat')
 @Controller('ai-chat')

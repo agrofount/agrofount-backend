@@ -12,11 +12,7 @@ import {
 } from 'typeorm';
 import { ProductLocationEntity } from '../../product-location/entities/product-location.entity';
 import slugify from 'slugify';
-import {
-  AnimalCategory,
-  PrimaryProductCategory,
-  ProductSubCategoryType,
-} from '../types/product.enum';
+import { AnimalCategory, ProductSubCategoryType } from '../types/product.enum';
 
 @Entity('products')
 @Index('IDX_PRODUCT_CATEGORY', ['category'])

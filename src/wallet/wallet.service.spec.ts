@@ -1,18 +1,17 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 
-describe('WalletService', () => {
-  let service: WalletService;
+describe('WalletService money invariants', () => {
+  const service = Object.create(WalletService.prototype) as WalletService;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [WalletService],
-    }).compile();
-
-    service = module.get<WalletService>(WalletService);
+  it('uses integer minor units for ledger arithmetic', () => {
+    expect((service as any).toMinor(123.45)).toBe(12345n);
+    expect((service as any).fromMinor(12345n)).toBe(123.45);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
+  it('rejects invalid financial amounts', () => {
+    expect(() => (service as any).assertValidAmount(-1)).toThrow(
+      BadRequestException,
+    );
   });
 });

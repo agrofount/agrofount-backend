@@ -56,6 +56,7 @@ export class RagContextService {
   }
 
   private async getUserContext(userId: string): Promise<string> {
+    void userId;
     try {
       // const user = await this.userService.findById(userId);
       // if (user) {
@@ -69,6 +70,7 @@ export class RagContextService {
   }
 
   private async getLocationContext(userId: string): Promise<string> {
+    void userId;
     try {
       // const user = await this.userService.findById(userId);
       // if (user?.state) {

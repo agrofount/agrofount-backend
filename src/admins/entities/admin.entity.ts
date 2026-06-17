@@ -37,7 +37,7 @@ export class AdminEntity {
   @Column({ nullable: true })
   address: string;
 
-  @ManyToMany(() => RoleEntity, (role) => role.admins, { eager: true })
+  @ManyToMany(() => RoleEntity, (role) => role.admins)
   @JoinTable()
   roles: RoleEntity[];
 
@@ -54,9 +54,27 @@ export class AdminEntity {
   @Column({ default: false })
   isVerified: boolean;
 
+  @Column({ type: 'int', default: 0 })
+  tokenVersion: number;
+
+  @Column({ default: false })
+  mfaEnabled: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  @Exclude()
+  mfaSecretEncrypted: string | null;
+
+  @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
+  @Exclude()
+  mfaRecoveryCodeHashes: string[];
+
   @Column({ nullable: true })
   @Exclude()
   verificationToken: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  @Exclude()
+  verificationTokenExpires: Date;
 
   @Column({ type: 'uuid', nullable: true })
   createdBy: string;
@@ -74,7 +92,7 @@ export class AdminEntity {
   deletedAt: Date;
 
   @BeforeInsert()
-  hashPassword(): void {
-    this.password = bcrypt.hashSync(this.password, 16);
+  async hashPassword(): Promise<void> {
+    this.password = await bcrypt.hash(this.password, 12);
   }
 }

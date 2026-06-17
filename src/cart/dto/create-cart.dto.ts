@@ -5,17 +5,32 @@ import {
   IsNotEmpty,
   IsNumber,
   IsString,
+  IsUUID,
+  ArrayMaxSize,
+  Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 
-class CartItemDto {
-  productId: string;
+export class CartItemDto {
+  @IsUUID()
+  itemId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  selectedUOMUnit: string;
+
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @Min(0.001)
+  @Max(1_000_000)
   quantity: number;
 }
 
 export class SyncCartDto {
   @IsArray()
+  @ArrayMaxSize(100)
   @ValidateNested({ each: true })
   @Type(() => CartItemDto)
   items: CartItemDto[];
@@ -28,16 +43,19 @@ export class AddToCartDto {
   })
   @IsString()
   @IsNotEmpty()
+  @IsUUID()
   itemId: string;
 
   @ApiProperty({ description: 'Unit of measure', example: 'kg' })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(40)
   selectedUOMUnit: string;
 
   @ApiProperty({ description: 'Quantity', example: 10 })
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 3 })
   @IsNotEmpty()
-  @Min(1, { message: 'Quantity must be a non-negative number' })
+  @Min(0.001, { message: 'Quantity must be greater than zero' })
+  @Max(1_000_000)
   quantity: number;
 }

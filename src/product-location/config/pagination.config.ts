@@ -38,4 +38,6 @@ export const PRODUCT_LOCATION_PAGINATION_CONFIG: PaginateConfig<ProductLocationE
       bestSeller: [FilterOperator.EQ],
     },
     relations: ['product', 'state', 'country'],
+    defaultLimit: 25,
+    maxLimit: 100,
   };

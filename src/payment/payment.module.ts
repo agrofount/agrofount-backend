@@ -7,18 +7,29 @@ import { HttpModule } from '@nestjs/axios';
 import { PaystackStrategy } from './strategies/paystack.strategy';
 import { OrderEntity } from '../order/entities/order.entity';
 import { NotificationModule } from '../notification/notification.module';
-import { CartModule } from '../cart/cart.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { VoucherModule } from '../voucher/voucher.module';
+import { InventoryModule } from '../inventory/inventory.module';
+import { OutboxModule } from '../outbox/outbox.module';
+import { PaymentWebhookEventEntity } from './entities/payment-webhook-event.entity';
+import { PaymentRefundEntity } from './entities/payment-refund.entity';
+import { PaymentAttemptEntity } from './entities/payment-attempt.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([PaymentEntity, OrderEntity]),
-    HttpModule,
+    TypeOrmModule.forFeature([
+      PaymentEntity,
+      PaymentWebhookEventEntity,
+      PaymentRefundEntity,
+      PaymentAttemptEntity,
+      OrderEntity,
+    ]),
+    HttpModule.register({ timeout: 10_000, maxRedirects: 3 }),
     NotificationModule,
-    CartModule,
     WalletModule,
     VoucherModule,
+    InventoryModule,
+    OutboxModule,
   ],
   controllers: [PaymentController],
   providers: [PaymentService, PaystackStrategy],

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { ClassSerializerInterceptor, Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -9,7 +9,6 @@ import { PaymentModule } from './payment/payment.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import databaseConfig from './config/database/database.config';
-import { SendgridModule } from './notification/modules/sendgrid.module';
 import { SendInBlueModule } from './notification/modules/sendinblue.module';
 import { CartModule } from './cart/cart.module';
 import appConfig from './config/app.config';
@@ -37,9 +36,25 @@ import termiiConfig from './config/termii.config';
 import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
 import KeyvRedis from '@keyv/redis';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { validateEnvironment } from './config/env.validation';
+import { RedisThrottlerStorage } from './common/throttling/redis-throttler.storage';
+import { createHash } from 'crypto';
+import { InventoryModule } from './inventory/inventory.module';
+import { OutboxModule } from './outbox/outbox.module';
+import { RequestAuditInterceptor } from './common/interceptors/request-audit.interceptor';
+import { AppThrottlingModule } from './common/throttling/throttling.module';
+import { CareersModule } from './careers/careers.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      load: [databaseConfig, appConfig, termiiConfig],
+      isGlobal: true,
+      cache: true,
+      validate: validateEnvironment,
+    }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
@@ -47,16 +62,32 @@ import KeyvRedis from '@keyv/redis';
         autoLoadEntities: true,
       }),
     }),
-    ConfigModule.forRoot({
-      load: [databaseConfig, appConfig, termiiConfig],
-      isGlobal: true,
+    ThrottlerModule.forRootAsync({
+      imports: [AppThrottlingModule],
+      inject: [RedisThrottlerStorage],
+      useFactory: (storage: RedisThrottlerStorage) => ({
+        storage,
+        getTracker: (request: Record<string, any>) => {
+          const identity =
+            request.user?.id ||
+            request.body?.identifier ||
+            request.body?.challengeId ||
+            request.body?.phone ||
+            request.ip ||
+            request.socket?.remoteAddress ||
+            'unknown';
+          return createHash('sha256')
+            .update(String(identity).trim().toLowerCase())
+            .digest('hex');
+        },
+        throttlers: [{ ttl: 60_000, limit: 120, blockDuration: 60_000 }],
+      }),
     }),
     AuthModule,
     UserModule,
     ProductModule,
     OrderModule,
     PaymentModule,
-    SendgridModule,
     SendInBlueModule,
     CartModule,
     UploadModule,
@@ -80,6 +111,8 @@ import KeyvRedis from '@keyv/redis';
     CountryModule,
     ReviewModule,
     ProductLocationModule,
+    InventoryModule,
+    OutboxModule,
     AdminsModule,
     ContactModule,
     SupplyChainModule,
@@ -89,10 +122,25 @@ import KeyvRedis from '@keyv/redis';
     BlogModule,
     InvoiceModule,
     VoucherModule,
+    CareersModule,
     // AiChatModule,
     DisbursementModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ClassSerializerInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestAuditInterceptor,
+    },
+  ],
 })
 export class AppModule {}

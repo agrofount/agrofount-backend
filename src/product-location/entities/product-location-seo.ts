@@ -2,11 +2,9 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  OneToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { ProductLocationEntity } from './product-location.entity';
 
 @Entity('seo')
 export class SEOEntity {

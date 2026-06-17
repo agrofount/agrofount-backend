@@ -46,6 +46,8 @@ export class CountryService {
       filterableColumns: {
         active: [FilterOperator.ILIKE],
       },
+      defaultLimit: 25,
+      maxLimit: 100,
     });
   }
 

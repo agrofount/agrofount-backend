@@ -3,7 +3,6 @@ import {
   Get,
   Post,
   Body,
-  Patch,
   Param,
   Delete,
   UseGuards,
@@ -19,16 +18,16 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import { RegisterUserDto } from '../auth/dto/create-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UserResponseDto } from '../user/dto/user.response.dto';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
 import { AdminEntity } from './entities/admin.entity';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
-import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 import { InviteAdminDto } from './dto/create-admin.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -37,7 +36,8 @@ export class AdminsController {
   constructor(private readonly adminsService: AdminsService) {}
 
   @Post('register')
-  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('create_admins')
   @ApiOperation({ summary: 'User registration' })
   @ApiBody({
     type: InviteAdminDto,
@@ -52,6 +52,7 @@ export class AdminsController {
   }
 
   @Get('verify-email')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async verifyEmail(@Query('token') token: string) {
     await this.adminsService.verifyEmail(token);
     return {
@@ -94,13 +95,13 @@ export class AdminsController {
     @CurrentUser() admin: AdminEntity,
   ) {
     updateAdminDto.updatedBy = admin.id;
-    return this.adminsService.update(id, updateAdminDto);
+    return this.adminsService.update(id, updateAdminDto, admin);
   }
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
   @RequiredPermissions('delete_admins')
-  remove(@Param('id') id: string) {
-    return this.adminsService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() admin: AdminEntity) {
+    return this.adminsService.remove(id, admin);
   }
 }

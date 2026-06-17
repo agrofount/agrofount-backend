@@ -11,20 +11,19 @@ import { CreditFacilityRequestStatus } from './types/facility.types';
 import { OrderEntity } from '../order/entities/order.entity';
 import { OrderStatus } from '../order/enums/order.enum';
 import { CreditAssessmentEntity } from './entities/credit-assessment.entity';
-import { UserEntity } from 'src/user/entities/user.entity';
+import { UserEntity } from '../user/entities/user.entity';
 import {
   ApproveCreditFacilityDto,
   CreditFacilityRequestDto,
 } from './dto/create-credit-facility.dto';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { AdminEntity } from '../admins/entities/admin.entity';
 import { FilterOperator, paginate, Paginated } from 'nestjs-paginate';
 import { plainToInstance } from 'class-transformer';
-import { UserTypes } from 'src/auth/enums/role.enum';
+import { UserTypes } from '../auth/enums/role.enum';
 import { NotificationService } from '../notification/notification.service';
 import {
   MessageTypes,
   NotificationChannels,
-  NotificationTypes,
 } from '../notification/types/notification.type';
 import { DisbursementEntity } from '../disbursement/entities/disbursement.entity';
 
@@ -39,8 +38,7 @@ export class CreditFacilityService {
     private readonly creditAssessmentRepository: Repository<CreditAssessmentEntity>,
     @InjectRepository(OrderEntity)
     private readonly orderRepository: Repository<OrderEntity>,
-    @InjectRepository(DisbursementEntity)
-    private readonly notificationService: NotificationService, // Inject NotificationService
+    private readonly notificationService: NotificationService,
   ) {}
 
   // Request credit
@@ -48,11 +46,16 @@ export class CreditFacilityService {
     user: UserEntity,
     data: CreditFacilityRequestDto,
   ): Promise<CreditFacilityRequestEntity> {
-    const wallet = await this.walletService.getWalletByUserId(user.id);
-
-    // if (data.requestedAmount > wallet.creditLimit) {
-    //   throw new BadRequestException('Requested amount exceeds credit limit');
-    // }
+    await this.walletService.getWalletByUserId(user.id);
+    const assessment = await this.checkEligibility(user);
+    if (
+      !assessment.eligible ||
+      data.requestedAmount > Number(assessment.maxAmount || 0)
+    ) {
+      throw new BadRequestException(
+        'Requested amount exceeds the current assessed credit limit',
+      );
+    }
 
     // Check for pending credit facility requests
     const pendingRequest = await this.creditRequestRepository.findOne({
@@ -83,107 +86,177 @@ export class CreditFacilityService {
     id: string,
     data: ApproveCreditFacilityDto,
   ): Promise<CreditFacilityRequestEntity> {
-    return this.dataSource.transaction(async (transactionalEntityManager) => {
-      const { approve, approvedAmount, admin } = data;
-      const creditRequestRepo = transactionalEntityManager.getRepository(
-        CreditFacilityRequestEntity,
-      );
-      const disbursementRepo =
-        transactionalEntityManager.getRepository(DisbursementEntity);
-      let creditRequest = await creditRequestRepo.findOne({
-        where: { id },
-      });
-      if (!creditRequest)
-        throw new NotFoundException('Credit request not found');
-
-      if (creditRequest.status !== CreditFacilityRequestStatus.PENDING) {
-        throw new BadRequestException(
-          'Only pending requests can be approved or rejected',
+    const result = await this.dataSource.transaction(
+      async (transactionalEntityManager) => {
+        const { approve, approvedAmount, admin, decisionReason } = data;
+        const creditRequestRepo = transactionalEntityManager.getRepository(
+          CreditFacilityRequestEntity,
         );
-      }
-      let phaseAmount = 0;
-      if (approve) {
-        creditRequest.status = 'approved';
-        creditRequest.approvedAmount =
-          approvedAmount ?? creditRequest.requestedAmount;
-        creditRequest.approvedAt = new Date();
-        creditRequest.creditStartDate = new Date();
-        creditRequest.creditEndDate = new Date(
-          Date.now() + 6 * 7 * 24 * 60 * 60 * 1000,
-        ); // 6 weeks
-        creditRequest.approvedBy = admin;
+        const disbursementRepo =
+          transactionalEntityManager.getRepository(DisbursementEntity);
+        let creditRequest = await creditRequestRepo.findOne({
+          where: { id },
+          relations: ['user', 'firstApprovedBy'],
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!creditRequest)
+          throw new NotFoundException('Credit request not found');
 
-        const wallet = await this.walletService.getWalletByUserId(
-          creditRequest.user.id,
-        );
+        if (
+          ![
+            CreditFacilityRequestStatus.PENDING,
+            CreditFacilityRequestStatus.UNDER_REVIEW,
+          ].includes(creditRequest.status as CreditFacilityRequestStatus)
+        ) {
+          throw new BadRequestException(
+            'Only pending requests can be approved or rejected',
+          );
+        }
+        let phaseAmount = 0;
+        if (approve) {
+          const proposedAmount = Number(
+            approvedAmount ??
+              creditRequest.proposedApprovedAmount ??
+              creditRequest.requestedAmount,
+          );
+          if (
+            proposedAmount <= 0 ||
+            proposedAmount > Number(creditRequest.requestedAmount)
+          ) {
+            throw new BadRequestException(
+              'Approved amount cannot exceed the requested amount',
+            );
+          }
+          const latestAssessment = await transactionalEntityManager
+            .getRepository(CreditAssessmentEntity)
+            .findOne({
+              where: { user: { id: creditRequest.user.id }, isEligible: true },
+              order: { createdAt: 'DESC' },
+            });
+          if (
+            !latestAssessment ||
+            proposedAmount > Number(latestAssessment.maxAmount)
+          ) {
+            throw new BadRequestException(
+              'Approved amount exceeds the assessed credit limit',
+            );
+          }
+          if (creditRequest.status === CreditFacilityRequestStatus.PENDING) {
+            creditRequest.status =
+              CreditFacilityRequestStatus.UNDER_REVIEW as any;
+            creditRequest.firstApprovedBy = admin;
+            creditRequest.proposedApprovedAmount = proposedAmount;
+            creditRequest.decisionReason = decisionReason;
+            return {
+              creditRequest: await creditRequestRepo.save(creditRequest),
+              phaseAmount: 0,
+            };
+          }
+          if (creditRequest.firstApprovedBy?.id === admin.id) {
+            throw new BadRequestException(
+              'A different administrator must provide final approval',
+            );
+          }
+          if (proposedAmount !== Number(creditRequest.proposedApprovedAmount)) {
+            throw new BadRequestException(
+              'Final approval amount must match the first approval',
+            );
+          }
+          creditRequest.status = 'approved';
+          creditRequest.approvedAmount = proposedAmount;
+          creditRequest.approvedAt = new Date();
+          creditRequest.creditStartDate = new Date();
+          creditRequest.creditEndDate = new Date(
+            Date.now() + 6 * 7 * 24 * 60 * 60 * 1000,
+          ); // 6 weeks
+          creditRequest.approvedBy = admin;
+          creditRequest.decisionReason = decisionReason;
 
-        // PHASED DISBURSEMENT LOGIC
-        const total = Number(creditRequest.approvedAmount);
-        phaseAmount = Math.floor((total / 3) * 100) / 100; // 2 decimal places
-        const remainder = Math.round((total - phaseAmount * 3) * 100) / 100;
-        const now = new Date();
-        const repaymentWeeks = Number(creditRequest.repaymentPeriod) || 6;
-        const intervalWeeks = Math.floor(repaymentWeeks / 3) || 2;
+          const wallet = await this.walletService.getWalletByUserId(
+            creditRequest.user.id,
+            transactionalEntityManager,
+          );
 
-        // Disburse first phase immediately
-        await this.walletService.handleApprovedCredit(
-          wallet.id,
-          phaseAmount,
-          transactionalEntityManager,
-        );
-        const disbursements = [
-          {
-            creditFacility: creditRequest,
-            amount: phaseAmount,
-            phase: 1,
-            scheduledAt: now,
-            completed: true,
-          },
-          ...Array.from({ length: 2 }, (_, i) => ({
-            creditFacility: creditRequest,
-            amount: i === 1 ? phaseAmount + remainder : phaseAmount,
-            phase: i + 2,
-            scheduledAt: new Date(
-              now.getTime() + intervalWeeks * (i + 1) * 7 * 24 * 60 * 60 * 1000,
-            ),
-            completed: false,
-          })),
-        ];
-        await disbursementRepo.save(disbursements);
-      } else {
-        creditRequest.status = 'rejected';
-      }
+          // PHASED DISBURSEMENT LOGIC
+          const total = Number(creditRequest.approvedAmount);
+          phaseAmount = Math.floor((total / 3) * 100) / 100; // 2 decimal places
+          const remainder = Math.round((total - phaseAmount * 3) * 100) / 100;
+          const now = new Date();
+          const repaymentWeeks = Number(creditRequest.repaymentPeriod) || 6;
+          const intervalWeeks = Math.floor(repaymentWeeks / 3) || 2;
 
-      creditRequest = await creditRequestRepo.save(creditRequest);
+          // Disburse first phase immediately
+          await this.walletService.handleApprovedCredit(
+            wallet.id,
+            phaseAmount,
+            `credit-facility:${creditRequest.id}:phase:1`,
+            creditRequest.id,
+            transactionalEntityManager,
+          );
+          const disbursements = [
+            {
+              creditFacility: creditRequest,
+              amount: phaseAmount,
+              phase: 1,
+              scheduledAt: now,
+              completed: true,
+            },
+            ...Array.from({ length: 2 }, (_, i) => ({
+              creditFacility: creditRequest,
+              amount: i === 1 ? phaseAmount + remainder : phaseAmount,
+              phase: i + 2,
+              scheduledAt: new Date(
+                now.getTime() +
+                  intervalWeeks * (i + 1) * 7 * 24 * 60 * 60 * 1000,
+              ),
+              completed: false,
+            })),
+          ];
+          await disbursementRepo.save(disbursements);
+        } else {
+          creditRequest.status = 'rejected';
+          creditRequest.decisionReason = decisionReason;
+          creditRequest.approvedBy = admin;
+        }
 
-      // Send notification to user (email and/or SMS)
-      const recipient = {
-        userId: creditRequest.user.id,
-        email: creditRequest.user.email,
-        phoneNumber: creditRequest.user.phone,
-      };
+        creditRequest = await creditRequestRepo.save(creditRequest);
 
-      const params = {
-        approvedAmount: creditRequest.approvedAmount,
-        repaymentPeriod: creditRequest.repaymentPeriod,
-        creditStartDate: creditRequest.creditStartDate,
-        creditEndDate: creditRequest.creditEndDate,
-        firstname: creditRequest.user.firstname,
-        lastname: creditRequest.user.lastname,
-        phaseAmount,
-        totalPhases: 3,
-      };
+        return { creditRequest, phaseAmount };
+      },
+    );
 
-      // Send email notification
+    const { creditRequest, phaseAmount } = result;
+    if (creditRequest.status === CreditFacilityRequestStatus.UNDER_REVIEW) {
+      return creditRequest;
+    }
+    try {
       await this.notificationService.sendNotification(
         NotificationChannels.EMAIL,
-        recipient,
-        MessageTypes.CREDIT_APPROVED,
-        params,
+        {
+          userId: creditRequest.user.id,
+          email: creditRequest.user.email,
+          phoneNumber: creditRequest.user.phone,
+        },
+        creditRequest.status === CreditFacilityRequestStatus.APPROVED
+          ? MessageTypes.CREDIT_APPROVED
+          : MessageTypes.CREDIT_REJECTED,
+        {
+          approvedAmount: creditRequest.approvedAmount,
+          repaymentPeriod: creditRequest.repaymentPeriod,
+          creditStartDate: creditRequest.creditStartDate,
+          creditEndDate: creditRequest.creditEndDate,
+          firstname: creditRequest.user.firstname,
+          lastname: creditRequest.user.lastname,
+          phaseAmount,
+          totalPhases: 3,
+        },
       );
+    } catch (error: any) {
+      // Approval is committed; notification failures must not duplicate credit.
+      console.error('Credit decision notification failed:', error.message);
+    }
 
-      return creditRequest;
-    });
+    return creditRequest;
   }
 
   // Get all requests (for admin)
@@ -211,6 +284,8 @@ export class CreditFacilityService {
             ? undefined
             : { user: { id: user.id } },
         relations: ['user', 'approvedBy'],
+        defaultLimit: 25,
+        maxLimit: 100,
       });
 
       // Transform the data array so @Exclude takes effect
@@ -232,29 +307,35 @@ export class CreditFacilityService {
     reason: string;
   }> {
     // Calculate order history stats only (no third-party API)
-    const orders = await this.orderRepository.find({
-      where: { user: { id: user.id } },
-      relations: ['user'],
-    });
-    const completedOrders = orders.filter(
-      (o) =>
-        o.status != OrderStatus.Pending &&
-        o.status != OrderStatus.Cancelled &&
-        o.status != OrderStatus.Returned,
-    );
-    const totalSpent = completedOrders.reduce(
-      (sum, o) => sum + (Number(o.totalPrice) || 0),
-      0,
-    );
+    const stats = await this.orderRepository
+      .createQueryBuilder('order')
+      .select('COUNT(*)', 'totalOrders')
+      .addSelect(
+        'COUNT(*) FILTER (WHERE order.status NOT IN (:...excludedStatuses))',
+        'completedOrders',
+      )
+      .addSelect(
+        'COALESCE(SUM(order.totalPrice) FILTER (WHERE order.status NOT IN (:...excludedStatuses)), 0)',
+        'totalSpent',
+      )
+      .where('order.userId = :userId', { userId: user.id })
+      .setParameter('excludedStatuses', [
+        OrderStatus.Pending,
+        OrderStatus.Cancelled,
+        OrderStatus.Returned,
+      ])
+      .getRawOne();
+    const totalOrders = Number(stats.totalOrders);
+    const completedOrders = Number(stats.completedOrders);
+    const totalSpent = Number(stats.totalSpent);
 
-    // Calculate repayment rate (delivered/total orders)
-    const repaymentRate =
-      orders.length > 0 ? (completedOrders.length / orders.length) * 100 : 0;
+    const orderCompletionRate =
+      totalOrders > 0 ? (completedOrders / totalOrders) * 100 : 0;
 
     // Simple eligibility logic based on order history
     // You can adjust these thresholds as needed
     let score = 0;
-    if (completedOrders.length >= 3) score += 400;
+    if (completedOrders >= 3) score += 400;
     if (totalSpent >= 50000) score += 300;
     if (totalSpent >= 100000) score += 300;
     const eligible = score >= 650;
@@ -263,11 +344,14 @@ export class CreditFacilityService {
     await this.creditAssessmentRepository.save({
       user,
       totalSpending: totalSpent,
-      repaymentRate,
+      repaymentRate: orderCompletionRate,
+      score,
+      maxAmount: eligible ? Math.min(100000, totalSpent * 0.5) : 0,
+      modelVersion: 'order-history-v1',
       isEligible: eligible,
       comments: eligible
-        ? 'Eligible based on order history'
-        : 'Not enough order history or low score',
+        ? 'Eligible based on marketplace order history; no repayment history was inferred'
+        : 'Insufficient marketplace order history for this model',
     });
 
     if (eligible) {

@@ -5,8 +5,23 @@ import {
   ArrayNotEmpty,
   IsNotEmpty,
   IsObject,
-  IsUUID,
+  IsIn,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ACTIONS, RESOURCES } from '../../permission/Enum/permissions.enum';
+
+export class PermissionGrantDto {
+  @IsString()
+  @IsIn(Object.values(RESOURCES))
+  resource: string;
+
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  @IsIn(Object.values(ACTIONS), { each: true })
+  actions: string[];
+}
 
 export class CreateRoleDto {
   @ApiProperty({
@@ -37,7 +52,9 @@ export class CreateRoleDto {
   @IsArray()
   @ArrayNotEmpty()
   @IsObject({ each: true })
-  permissions: { resource: string; actions: string[] }[];
+  @ValidateNested({ each: true })
+  @Type(() => PermissionGrantDto)
+  permissions: PermissionGrantDto[];
 
   updatedBy?: string;
 }

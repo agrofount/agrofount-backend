@@ -5,10 +5,12 @@ import {
   ManyToOne,
   CreateDateColumn,
   UpdateDateColumn,
+  JoinColumn,
+  Index,
 } from 'typeorm';
 import { OrderEntity } from '../../order/entities/order.entity';
 import { DriverEntity } from './driver.entity';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { AdminEntity } from '../../admins/entities/admin.entity';
 
 export enum ShipmentStatus {
   Pending = 'pending',
@@ -20,14 +22,19 @@ export enum ShipmentStatus {
 }
 
 @Entity('shipment')
+@Index(['orderId'], { unique: true })
 export class ShipmentEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => OrderEntity, { eager: true })
+  @Column({ type: 'uuid' })
+  orderId: string;
+
+  @ManyToOne(() => OrderEntity, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'orderId' })
   order: OrderEntity;
 
-  @ManyToOne(() => DriverEntity, { eager: true, nullable: true })
+  @ManyToOne(() => DriverEntity, { nullable: true, onDelete: 'SET NULL' })
   driver: DriverEntity;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
@@ -44,7 +51,8 @@ export class ShipmentEntity {
   status: ShipmentStatus;
 
   @ManyToOne(() => AdminEntity, {
-    onDelete: 'CASCADE',
+    nullable: true,
+    onDelete: 'SET NULL',
   })
   createdBy: AdminEntity;
 

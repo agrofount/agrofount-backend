@@ -8,7 +8,7 @@ import { NotificationService } from '../notification/notification.service';
 import {
   MessageTypes,
   NotificationChannels,
-} from 'src/notification/types/notification.type';
+} from '../notification/types/notification.type';
 
 @Injectable()
 export class SubscriberService {
@@ -33,14 +33,16 @@ export class SubscriberService {
     const frontendUrl = this.configService.get<string>('app.frontend_url');
     const shopUrl = `${frontendUrl}/shop`;
 
-    this.notificationService.sendNotification(
-      NotificationChannels.EMAIL,
-      { email },
-      MessageTypes.SUBSCRIPTION_EMAIL,
-      {
-        shop_link: shopUrl,
-      },
-    );
+    void this.notificationService
+      .sendNotification(
+        NotificationChannels.EMAIL,
+        { email },
+        MessageTypes.SUBSCRIPTION_EMAIL,
+        {
+          shop_link: shopUrl,
+        },
+      )
+      .catch(() => undefined);
 
     return {
       success: true,

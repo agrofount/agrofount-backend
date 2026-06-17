@@ -8,7 +8,7 @@ export function IsMatch(
   property: string,
   validationOptions?: ValidationOptions,
 ) {
-  return function (object: Object, propertyName: string) {
+  return function (object: object, propertyName: string) {
     registerDecorator({
       name: 'isMatch',
       target: object.constructor,

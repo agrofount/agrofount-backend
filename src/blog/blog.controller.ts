@@ -8,18 +8,17 @@ import {
   Delete,
   UseGuards,
   Put,
-  Query,
 } from '@nestjs/common';
 import { BlogService } from './blog.service';
 import { CreatePostDto } from './dto/create-blog.dto';
 import { UpdatePostDto } from './dto/update-blog.dto';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
-import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
-import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
-import { CurrentUser } from 'src/utils/decorators/current-user.decorator';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
+import { CurrentUser } from '../utils/decorators/current-user.decorator';
+import { AdminEntity } from '../admins/entities/admin.entity';
 import {
   ApiOkPaginatedResponse,
   ApiPaginationQuery,

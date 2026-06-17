@@ -15,12 +15,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { UserEntity } from '../user/entities/user.entity';
 import { PaginateQuery } from 'nestjs-paginate';
-import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
-import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
-import { Job } from 'bullmq';
-import { Processor } from '@nestjs/bullmq';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 @Controller('message')
 @ApiTags('Notification')

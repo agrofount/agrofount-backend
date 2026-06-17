@@ -28,20 +28,87 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: agrofount-${{ inputs.environment }}
+      cancel-in-progress: false
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_USER: agrofount_test
+          POSTGRES_PASSWORD: agrofount_test
+          POSTGRES_DB: agrofount_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agrofount_test -d agrofount_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_USERNAME: agrofount_test
+      DB_PASSWORD: agrofount_test
+      DB_NAME: agrofount_test
+      DB_SCHEMA: public
+      DB_SYNCHRONIZE: 'true'
+      JWT_SECRET: ci-only-jwt-secret-with-at-least-32-characters
+      JWT_EXPIRATION: 15m
+      JWT_ISSUER: agrofount-api
+      JWT_AUDIENCE: agrofount-client
+      MFA_ENCRYPTION_KEY: ci-only-mfa-secret-with-at-least-32-characters
+      REDIS_URL: redis://127.0.0.1:6379
+      CORS_ORIGINS: http://localhost:3000
+      AWS_S3_REGION: eu-west-2
+      AWS_BUCKET_NAME: agrofount-ci-placeholder
+      PAYSTACK_SECRET_KEY: ci-placeholder
+      PAYSTACK_URL: https://api.paystack.co
+      SEND_IN_BLUE_API_KEY: ci-placeholder
+      SEND_IN_BLUE_FROM_EMAIL: ci@example.com
+      TERMII_API_KEY: ci-placeholder
+      TERMII_SENDER_ID: Agrofount
+      TERMII_BASE_URL: https://api.ng.termii.com/api
+      FRONTEND_URL: http://localhost:3000
+      ADMIN_FRONTEND_URL: http://localhost:3001
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 24
+          cache: npm
 
-      # - name: Install dependencies
-      #   run: npm install
+      - name: Install dependencies
+        run: npm ci
 
-      # - name: Build the application
-      #   run: npm run build
+      - name: Build the application
+        run: npm run build
+
+      - name: Lint the application
+        run: npm run lint
+
+      - name: Run security regression tests
+        run: npm run test:ci
+
+      - name: Run application integration tests
+        run: npm run test:e2e
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -64,15 +131,14 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # Add debugging steps
-      - name: Test image locally
-        run: |
-          docker run -d -p 3000:3000 --name test-container ${{ steps.build-image.outputs.image }}
-          sleep 10
-          docker logs test-container
-          curl -f http://localhost:3000/health || echo "Health check failed"
-          docker stop test-container
-          docker rm test-container
+      - name: Scan container image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.build-image.outputs.image }}
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
 
       - name: Check ECS service events
         run: |
@@ -96,3 +162,53 @@ jobs:
           service: ${{ inputs.service }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
+
+      - name: Seed career positions
+        run: |
+          TASK_DEFINITION=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ inputs.service }} \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          echo "Running careers seed with task definition: $TASK_DEFINITION"
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition "$TASK_DEFINITION" \
+            --launch-type EC2 \
+            --count 1 \
+            --started-by "github-actions-careers-seed-${{ github.run_id }}" \
+            --overrides '{"containerOverrides":[{"name":"${{ inputs.container-name }}","command":["node","dist/seed/careers.seed.js"]}]}' \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "Failed to start careers seed ECS task"
+            exit 1
+          fi
+
+          echo "Waiting for careers seed task to finish: $TASK_ARN"
+          aws ecs wait tasks-stopped \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[?name=='${{ inputs.container-name }}'].exitCode | [0]" \
+            --output text)
+
+          STOP_REASON=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Careers seed failed with exit code $EXIT_CODE"
+            echo "Stop reason: $STOP_REASON"
+            exit 1
+          fi
+
+          echo "Careers seed completed successfully"

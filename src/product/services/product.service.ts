@@ -56,6 +56,8 @@ export class ProductService {
         category: [FilterOperator.ILIKE],
         price: [FilterOperator.BTW],
       },
+      defaultLimit: 25,
+      maxLimit: 100,
     });
   }
 

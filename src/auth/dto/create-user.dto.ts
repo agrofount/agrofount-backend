@@ -5,14 +5,13 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
+  MinLength,
   ValidateIf,
 } from 'class-validator';
-import { RoleEntity } from '../../role/entities/role.entity';
 import { BusinessType } from '../enums/role.enum';
 
 export class RegisterUserDto {
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: 'The firstname of the user.',
     example: 'Adigun',
   })
@@ -77,18 +76,10 @@ export class RegisterUserDto {
     example: 'P@ssw0rd123',
     required: true,
   })
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @MinLength(12)
   password: string;
-
-  @ApiPropertyOptional({
-    description: 'Role IDs associated with the user.',
-    example: ['a3f1c2d4-5678-4e9b-8a2c-123456789abc'], // Example of valid UUIDs
-  })
-  @IsUUID('4', { each: true }) // Ensure each value is a valid UUID (version 4)
-  @IsOptional()
-  @IsString({ each: true })
-  roleIds: string[];
 
   @ApiPropertyOptional({
     description: 'Referral code of the user who referred this user',
@@ -134,7 +125,4 @@ export class RegisterUserDto {
   @IsString()
   @IsNotEmpty()
   gender: string;
-
-  updatedBy?: string;
-  roles?: RoleEntity[];
 }

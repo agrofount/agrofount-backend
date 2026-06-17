@@ -10,10 +10,9 @@ export class VectorRetrievalService {
   private readonly logger = new Logger(VectorRetrievalService.name);
   private vectorStore: HNSWLib;
   private isInitialized = false;
+  private initializationPromise?: Promise<void>;
 
-  constructor() {
-    this.initializeVectorStore();
-  }
+  constructor() {}
 
   private async initializeVectorStore() {
     try {
@@ -80,8 +79,14 @@ export class VectorRetrievalService {
     k: number = 4,
   ): Promise<Document[]> {
     if (!this.isInitialized) {
-      this.logger.warn('Vector store not initialized, returning empty results');
-      return [];
+      this.initializationPromise ||= this.initializeVectorStore();
+      await this.initializationPromise;
+      if (!this.isInitialized) {
+        this.logger.warn(
+          'Vector store not initialized, returning empty results',
+        );
+        return [];
+      }
     }
 
     try {

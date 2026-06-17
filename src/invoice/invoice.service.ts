@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { CreateInvoiceDto } from './dto/create-invoice.dto';
-import { UpdateInvoiceDto } from './dto/update-invoice.dto';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { InvoiceEntity } from './entities/invoice.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { OrderEntity } from 'src/order/entities/order.entity';
 import { Repository } from 'typeorm';
 import {
   FilterOperator,
@@ -12,9 +13,9 @@ import {
   Paginated,
   PaginateQuery,
 } from 'nestjs-paginate';
-import { UserEntity } from 'src/user/entities/user.entity';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
-import { UserTypes } from 'src/auth/enums/role.enum';
+import { UserEntity } from '../user/entities/user.entity';
+import { AdminEntity } from '../admins/entities/admin.entity';
+import { UserTypes } from '../auth/enums/role.enum';
 
 @Injectable()
 export class InvoiceService {
@@ -49,6 +50,8 @@ export class InvoiceService {
             ? undefined
             : { order: { user: { id: user.id } } },
         relations: ['order', 'order.user'],
+        defaultLimit: 25,
+        maxLimit: 100,
         select: [
           'id',
           'status',
@@ -74,16 +77,25 @@ export class InvoiceService {
     }
   }
 
-  async findByOrderId(orderId: string) {
+  async findByOrderId(orderId: string, user: UserEntity | AdminEntity) {
     try {
       const invoice = await this.invoiceRepo.findOne({
         where: { order: { id: orderId } },
-        relations: ['order'],
+        relations: ['order', 'order.user'],
       });
 
       if (!invoice) {
         throw new NotFoundException(
           `Invoice for order with ID ${orderId} not found`,
+        );
+      }
+
+      if (
+        user.userType !== UserTypes.System &&
+        invoice.order.user.id !== user.id
+      ) {
+        throw new ForbiddenException(
+          'You are not authorized to view this invoice',
         );
       }
 

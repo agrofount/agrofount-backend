@@ -18,11 +18,12 @@ import { UserEntity } from '../user/entities/user.entity';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
-import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
+import { AdminEntity } from '../admins/entities/admin.entity';
 import { Paginated, PaginateQuery } from 'nestjs-paginate';
 import { CreditFacilityRequestEntity } from './entities/credit-facility.entity';
+import { StepUpGuard } from '../auth/guards/step-up.guard';
 
 @ApiTags('CreditFacilityRequest')
 @Controller('credit-facility')
@@ -47,7 +48,7 @@ export class CreditFacilityController {
 
   // Admin: Approve/Reject request
   @Patch(':id/handle-approval')
-  @UseGuards(AdminAuthGuard, RolesGuard)
+  @UseGuards(AdminAuthGuard, RolesGuard, StepUpGuard)
   @RequiredPermissions('manage_credit_facility')
   @ApiOperation({ summary: 'Approve or reject credit facility request' })
   async handleRequest(

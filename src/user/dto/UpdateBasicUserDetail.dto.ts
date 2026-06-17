@@ -32,22 +32,6 @@ export class UpdateBasicUserDetailDto {
   gender?: string;
 
   @ApiPropertyOptional({
-    description: 'Phone number',
-    example: '+23488894893033',
-  })
-  @IsString()
-  @IsOptional()
-  phone?: string;
-
-  @ApiPropertyOptional({
-    description: 'Email address',
-    example: 'adigun@example.com',
-  })
-  @IsString()
-  @IsOptional()
-  email?: string;
-
-  @ApiPropertyOptional({
     description: 'Residential or business address',
     example: '123 Farm Lane, Lagos, Nigeria',
   })

@@ -10,17 +10,19 @@ import {
 } from '@nestjs/common';
 import { SupplyChainService } from './supply-chain.service';
 import { ShipmentEntity, ShipmentStatus } from './entities/shipment.entity';
-import { CurrentUser } from 'src/utils/decorators/current-user.decorator';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
+import { CurrentUser } from '../utils/decorators/current-user.decorator';
+import { AdminEntity } from '../admins/entities/admin.entity';
+import { UserEntity } from '../user/entities/user.entity';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
-import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
-import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
-import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { ApiBody, ApiResponse } from '@nestjs/swagger';
 import { CreateDriverDto } from './dto/create-driver.dto';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { DriverEntity } from './entities/driver.entity';
+import { UserAuthGuard } from '../auth/guards/user.guard';
 
 @Controller('supply-chain')
 export class SupplyChainController {
@@ -78,6 +80,8 @@ export class SupplyChainController {
   }
 
   @Patch('shipment/:id/status')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_shipments')
   async updateShipmentStatus(
     @Param('id') shipmentId: string,
     @Body('status') status: ShipmentStatus,
@@ -86,7 +90,21 @@ export class SupplyChainController {
   }
 
   @Get('order/:orderId/shipments')
-  async getShipmentsByOrder(@Param('orderId') orderId: string) {
-    return this.supplyChainService.getShipmentsByOrder(orderId);
+  @UseGuards(JwtAuthGuard, UserAuthGuard)
+  async getShipmentsByOrder(
+    @Param('orderId') orderId: string,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.supplyChainService.getShipmentsByOrder(orderId, user);
+  }
+
+  @Get('admin/order/:orderId/shipments')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_shipments')
+  async getShipmentsByOrderForAdmin(
+    @Param('orderId') orderId: string,
+    @CurrentUser() admin: AdminEntity,
+  ) {
+    return this.supplyChainService.getShipmentsByOrder(orderId, admin);
   }
 }

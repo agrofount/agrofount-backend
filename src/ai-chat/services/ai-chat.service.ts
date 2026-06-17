@@ -2,10 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { UserService } from '../../user/user.service';
 import { AdminsService } from '../../admins/admins.service';
 import { ProductLocationService } from '../../product-location/product-location.service';
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import {
   LexRuntimeV2Client,
   RecognizeTextCommand,
@@ -23,7 +20,7 @@ import {
   LivestockFeedCategory,
   ProductCategory,
   ProductSubCategory,
-} from 'src/product/types/product.enum';
+} from '../../product/types/product.enum';
 import { ConfigService } from '@nestjs/config';
 import { LangChainLlmService } from './langchain-llm/langchain-llm.service';
 import { LangChainMemoryService } from './langchain-memory/langchain-memory.service';
@@ -531,6 +528,8 @@ export class AiChatService {
     animalType: string,
     subCategory: string,
   ): Promise<string> {
+    void animalType;
+    void subCategory;
     try {
       const prompt = `Make this diagnosis even simpler and more direct for a Nigerian farmer:
 
@@ -647,6 +646,9 @@ Please provide 5-7 prevention tips that:
     message: string,
     sessionData: any,
   ): Promise<any> {
+    void sessionId;
+    void message;
+    void sessionData;
     // Implementation depends on your review system
     return {
       type: 'REVIEW_COMPLETE',
@@ -731,6 +733,7 @@ Please provide 5-7 prevention tips that:
   private async generatePersonalizedDiagnosis(
     sessionData: any,
   ): Promise<string> {
+    // void ragContext;
     const symptomDescription = sessionData.symptoms
       ?.map((s) => s.description)
       .join(', ');
@@ -828,6 +831,7 @@ Keep it focused on ${animalType} and use simple language the farmer can understa
     sessionData: any,
     ragContext: string,
   ): Promise<string> {
+    void ragContext;
     const symptomDescription = sessionData.symptoms
       ?.map((s) => s.description)
       .join(', ');
@@ -977,9 +981,8 @@ PREVENTION:
   ): Promise<any> {
     try {
       // Try to use Lex first as fallback
-      let lexResponse;
       try {
-        lexResponse = await this.lexClient.send(
+        await this.lexClient.send(
           new RecognizeTextCommand({
             botId: process.env.LEX_BOT_ID,
             botAliasId: process.env.LEX_BOT_ALIAS_ID,
@@ -1386,6 +1389,8 @@ PREVENTION:
     subCategory: string,
     symptoms: string[],
   ): string {
+    void diagnosis;
+    void animalType;
     // Extract key terms from diagnosis for product matching
     const keyTerms = this.extractKeyTermsFromDiagnosis(diagnosis);
     const symptomTerms = symptoms.join(' ');
@@ -1586,6 +1591,8 @@ PREVENTION:
     diagnosis: string,
     animalType: string,
   ): string {
+    void diagnosis;
+    void animalType;
     // Your logic to determine lifecycle stage based on diagnosis and animal type
     return 'Starter'; // Default
   }
@@ -1745,7 +1752,7 @@ PREVENTION:
   }
 
   private getAvailableSymptoms(sessionData: any): string[] {
-    const { animalType, subCategory, symptoms = [] } = sessionData;
+    const { animalType } = sessionData;
     const mentionedSymptoms = (sessionData.symptoms || []).map((s) =>
       typeof s === 'string' ? s.toLowerCase() : s.description.toLowerCase(),
     );
@@ -1802,6 +1809,7 @@ PREVENTION:
   }
 
   private getErrorResponse(sessionId: string, sessionData: any) {
+    void sessionData;
     return {
       type: 'ERROR_RECOVERY',
       message:

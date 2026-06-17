@@ -5,7 +5,6 @@ import { MessageEntity } from './entities/message.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SendInBlueModule } from './modules/sendinblue.module';
 import { HttpModule } from '@nestjs/axios';
-import { AfricasTalkingModule } from './modules/africasTalking.module';
 import { TeamsService } from './services/teams.service';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -16,8 +15,7 @@ import { ProductLikeModule } from '../product-like/product-like.module';
   imports: [
     TypeOrmModule.forFeature([MessageEntity]),
     SendInBlueModule,
-    AfricasTalkingModule,
-    HttpModule,
+    HttpModule.register({ timeout: 10_000, maxRedirects: 3 }),
     ConfigModule,
     BullModule.registerQueueAsync({
       name: 'price-updates',
