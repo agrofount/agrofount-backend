@@ -926,7 +926,9 @@ export class OrderService {
       );
     } catch (error) {
       this.logger.warn(
-        `Could not resume payment for order ${order.id}: ${error?.message || error}`,
+        `Could not resume payment for order ${order.id}: ${
+          error?.message || error
+        }`,
       );
       return null;
     }

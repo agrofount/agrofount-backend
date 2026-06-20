@@ -387,7 +387,7 @@ export class AiAnalyticsService {
 
   // ── user satisfaction ─────────────────────────────────────────────────────
 
-  async getSatisfaction(_from?: string, _to?: string) {
+  async getSatisfaction() {
     // Satisfaction requires explicit thumbs-up / thumbs-down feedback which is
     // not yet stored. Return a zero-state so the frontend can render the widget
     // gracefully until a feedback entity is added.
