@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - dev
+      - main
   workflow_dispatch:
     inputs:
       deploy_production:
@@ -26,9 +27,8 @@ jobs:
 
   deploy-prod:
     if: >-
-      github.event_name == 'workflow_dispatch' &&
-      github.ref == 'refs/heads/main' &&
-      inputs.deploy_production
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_production)
     uses: ./.github/workflows/template.yaml
     with:
       environment: prod
