@@ -25,8 +25,6 @@ const REQUIRED_PRODUCTION_VARIABLES = [
   'AWS_BUCKET_NAME',
   'FRONTEND_URL',
   'ADMIN_FRONTEND_URL',
-  'AI_PROVIDER',
-  'AI_FARM_ASSISTANT_ENABLED',
 ] as const;
 
 export function validateEnvironment(
