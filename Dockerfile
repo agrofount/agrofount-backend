@@ -29,7 +29,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN apk add --no-cache dumb-init
+RUN apk upgrade --no-cache && apk add --no-cache dumb-init
 
 # Copy only package files first
 COPY package*.json ./
