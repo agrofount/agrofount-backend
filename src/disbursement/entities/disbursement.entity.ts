@@ -5,10 +5,12 @@ import {
   ManyToOne,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 import { CreditFacilityRequestEntity } from '../../credit-facility/entities/credit-facility.entity';
 
 @Entity('disbursement')
+@Index(['creditFacility', 'phase'], { unique: true })
 export class DisbursementEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

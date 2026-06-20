@@ -2,7 +2,6 @@ import {
   IsString,
   IsNumber,
   IsOptional,
-  IsBoolean,
   IsArray,
   IsJSON,
   IsUUID,

@@ -15,6 +15,15 @@ export class CreditAssessmentEntity {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   repaymentRate: number; // percentage of successful repayments
 
+  @Column({ type: 'int', default: 0 })
+  score: number;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  maxAmount: number;
+
+  @Column({ length: 40, default: 'order-history-v1' })
+  modelVersion: string;
+
   @Column({ type: 'boolean', default: false })
   isEligible: boolean;
 

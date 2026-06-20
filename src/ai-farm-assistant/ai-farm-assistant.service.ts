@@ -1,0 +1,298 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
+import { ILike, Repository } from 'typeorm';
+import { AskFarmAssistantDto } from './dto/ask-farm-assistant.dto';
+import { FarmAssistantConversationEntity } from './entities/farm-assistant-conversation.entity';
+import {
+  FarmAssistantMessageEntity,
+  FarmAssistantMessageRole,
+} from './entities/farm-assistant-message.entity';
+import {
+  AiProviderService,
+  FarmAssistantSuggestedProduct,
+} from './ai-provider.service';
+import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
+
+const MESSAGE_MAX_LENGTH = 2000;
+
+@Injectable()
+export class AiFarmAssistantService {
+  constructor(
+    @InjectRepository(FarmAssistantConversationEntity)
+    private readonly conversationRepository: Repository<FarmAssistantConversationEntity>,
+    @InjectRepository(FarmAssistantMessageEntity)
+    private readonly messageRepository: Repository<FarmAssistantMessageEntity>,
+    @InjectRepository(ProductLocationEntity)
+    private readonly productLocationRepository: Repository<ProductLocationEntity>,
+    private readonly aiProviderService: AiProviderService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  async ask(userId: string, dto: AskFarmAssistantDto, image?: Express.Multer.File) {
+    this.ensureEnabled();
+    const message = this.sanitizeMessage(dto.message);
+    const requiresVetAttention = this.detectVetAttention(message);
+    const suggestedProducts = await this.findSuggestedProducts(message);
+    const conversation = dto.conversationId
+      ? await this.findOwnedConversation(dto.conversationId, userId)
+      : await this.createConversation(
+          userId,
+          message,
+          (dto.farmContext as Record<string, unknown>) || null,
+        );
+
+    if (dto.farmContext) {
+      conversation.farmContext = this.sanitizeFarmContext(
+        dto.farmContext as Record<string, unknown>,
+      );
+      await this.conversationRepository.save(conversation);
+    }
+
+    const history = await this.messageRepository.find({
+      where: { conversationId: conversation.id },
+      order: { createdAt: 'ASC' },
+      take: 20,
+    });
+
+    await this.messageRepository.save(
+      this.messageRepository.create({
+        conversationId: conversation.id,
+        conversation,
+        role: FarmAssistantMessageRole.User,
+        content: message,
+        metadata: {
+          farmContext: dto.farmContext || null,
+          suggestedProductCount: suggestedProducts.length,
+          hasImage: !!image,
+        },
+      }),
+    );
+
+    const aiReply = await this.aiProviderService.generateFarmAssistantReply({
+      message,
+      farmContext: conversation.farmContext,
+      history: history.map((item) => ({
+        role:
+          item.role === FarmAssistantMessageRole.Assistant
+            ? 'assistant'
+            : 'user',
+        content: item.content,
+      })),
+      products: suggestedProducts,
+      requiresVetAttention,
+      imageBuffer: image?.buffer,
+      imageMimeType: image?.mimetype,
+    });
+
+    await this.messageRepository.save(
+      this.messageRepository.create({
+        conversationId: conversation.id,
+        conversation,
+        role: FarmAssistantMessageRole.Assistant,
+        content: aiReply.reply,
+        metadata: {
+          suggestedProducts,
+          quickReplies: aiReply.quickReplies,
+          requiresVetAttention: aiReply.requiresVetAttention,
+        },
+      }),
+    );
+
+    conversation.updatedAt = new Date();
+    await this.conversationRepository.save(conversation);
+
+    return {
+      success: true,
+      conversationId: conversation.id,
+      reply: aiReply.reply,
+      suggestedProducts,
+      quickReplies: aiReply.quickReplies,
+      requiresVetAttention: aiReply.requiresVetAttention,
+    };
+  }
+
+  async listConversations(userId: string) {
+    const conversations = await this.conversationRepository.find({
+      where: { userId },
+      order: { updatedAt: 'DESC' },
+      take: 50,
+    });
+
+    return { success: true, data: conversations };
+  }
+
+  async getConversation(userId: string, id: string) {
+    const conversation = await this.findOwnedConversation(id, userId, true);
+    return { success: true, data: conversation };
+  }
+
+  async deleteConversation(userId: string, id: string) {
+    const conversation = await this.findOwnedConversation(id, userId);
+    await this.conversationRepository.remove(conversation);
+    return { success: true, message: 'Conversation deleted successfully' };
+  }
+
+  private ensureEnabled() {
+    if (
+      this.configService.get<string>('AI_FARM_ASSISTANT_ENABLED') === 'false'
+    ) {
+      throw new ServiceUnavailableException(
+        'AI farm assistant is temporarily unavailable',
+      );
+    }
+  }
+
+  private sanitizeMessage(value: string): string {
+    const message = String(value || '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!message) {
+      throw new BadRequestException('Message is required');
+    }
+
+    if (message.length > MESSAGE_MAX_LENGTH) {
+      throw new BadRequestException(
+        `Message must not exceed ${MESSAGE_MAX_LENGTH} characters`,
+      );
+    }
+
+    return message;
+  }
+
+  private sanitizeFarmContext(
+    farmContext: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(farmContext).map(([key, value]) => [
+        key,
+        typeof value === 'string'
+          ? value.replace(/<[^>]*>/g, '').trim()
+          : value,
+      ]),
+    );
+  }
+
+  private async createConversation(
+    userId: string,
+    message: string,
+    farmContext: Record<string, unknown> | null,
+  ) {
+    const title = message.length > 80 ? `${message.slice(0, 77)}...` : message;
+    return this.conversationRepository.save(
+      this.conversationRepository.create({
+        userId,
+        title,
+        farmContext: farmContext ? this.sanitizeFarmContext(farmContext) : null,
+      }),
+    );
+  }
+
+  private async findOwnedConversation(
+    id: string,
+    userId: string,
+    withMessages = false,
+  ) {
+    const conversation = await this.conversationRepository.findOne({
+      where: { id },
+      relations: withMessages ? ['messages'] : [],
+      order: withMessages
+        ? { messages: { createdAt: 'ASC' } as any }
+        : undefined,
+    });
+    if (!conversation) {
+      throw new NotFoundException('Conversation not found');
+    }
+    if (conversation.userId !== userId) {
+      throw new ForbiddenException('You cannot access this conversation');
+    }
+    return conversation;
+  }
+
+  private detectVetAttention(message: string): boolean {
+    return [
+      'high mortality',
+      'many died',
+      'many are dying',
+      'sudden death',
+      'unusual death',
+      'bleeding',
+      'blood',
+      'paralysis',
+      'paralyzed',
+      'cannot stand',
+      'severe weakness',
+      'twisted neck',
+      'greenish diarrhoea',
+      'green diarrhea',
+      'emergency',
+    ].some((keyword) => message.toLowerCase().includes(keyword));
+  }
+
+  private async findSuggestedProducts(
+    message: string,
+  ): Promise<FarmAssistantSuggestedProduct[]> {
+    const keywords = this.extractProductKeywords(message);
+    if (keywords.length === 0) return [];
+
+    const where = keywords.flatMap((keyword) => [
+      { product: { name: ILike(`%${keyword}%`) } },
+      { product: { subCategory: ILike(`%${keyword}%`) } },
+      { product: { primaryCategory: ILike(`%${keyword}%`) as any } },
+      { product: { category: ILike(`%${keyword}%`) as any } },
+    ]);
+
+    const productLocations = await this.productLocationRepository.find({
+      where,
+      relations: ['product'],
+      order: { bestSeller: 'DESC', popularityScore: 'DESC' },
+      take: 6,
+    });
+
+    const seen = new Set<string>();
+    return productLocations
+      .filter((location) => location.product && !seen.has(location.product.id))
+      .map((location) => {
+        seen.add(location.product.id);
+        return {
+          id: location.id,
+          name: location.product.name,
+          price: Number(location.price),
+          imageUrl: location.product.images?.[0] || null,
+          category:
+            location.product.subCategory ||
+            String(location.product.primaryCategory || '') ||
+            null,
+        };
+      })
+      .slice(0, 5);
+  }
+
+  private extractProductKeywords(message: string): string[] {
+    const lowerMessage = message.toLowerCase();
+    const keywordMap: Record<string, string[]> = {
+      feed: ['feed', 'starter', 'grower', 'finisher', 'mash', 'pellet'],
+      vaccine: ['vaccine', 'vaccination', 'newcastle', 'gumboro', 'lasota'],
+      medication: ['drug', 'medicine', 'medication', 'vitamin', 'antibiotic'],
+      equipment: ['equipment', 'brooder', 'drinkers', 'feeder', 'cage'],
+      broiler: ['broiler'],
+      layer: ['layer'],
+      chick: ['chick', 'day old', 'doc'],
+    };
+
+    return Object.entries(keywordMap)
+      .filter(([, triggers]) =>
+        triggers.some((trigger) => lowerMessage.includes(trigger)),
+      )
+      .map(([keyword]) => keyword)
+      .slice(0, 5);
+  }
+}

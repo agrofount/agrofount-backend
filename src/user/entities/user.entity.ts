@@ -12,9 +12,9 @@ import {
 } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { Exclude } from 'class-transformer';
-import { BusinessType, Role, UserTypes } from '../../auth/enums/role.enum';
+import { BusinessType, UserTypes } from '../../auth/enums/role.enum';
 import { ReviewEntity } from '../../review/entities/review.entity';
-import { OrderEntity } from 'src/order/entities/order.entity';
+import { OrderEntity } from '../../order/entities/order.entity';
 import { LivestockFarmerProfile } from './profile.entity';
 
 @Entity('user')
@@ -59,24 +59,32 @@ export class UserEntity {
   @Column({ default: false })
   isVerified: boolean;
 
+  @Column({ type: 'int', default: 0 })
+  tokenVersion: number;
+
   @Column({ nullable: true })
   @Exclude()
   verificationToken: string;
 
+  @Column({ type: 'timestamp', nullable: true })
+  @Exclude()
+  verificationTokenExpires: Date;
+
   @Column({ nullable: true })
+  @Exclude()
   resetToken: string;
 
   @Column({ type: 'timestamp', nullable: true })
+  @Exclude()
   resetTokenExpires: Date;
 
-  @OneToMany(() => ReviewEntity, (review) => review.user, { cascade: true })
+  @OneToMany(() => ReviewEntity, (review) => review.user)
   reviews: ReviewEntity[];
 
-  @OneToMany(() => OrderEntity, (order) => order.user, { cascade: true })
+  @OneToMany(() => OrderEntity, (order) => order.user)
   orders: OrderEntity[];
 
   @OneToOne(() => LivestockFarmerProfile, (profile) => profile.user, {
-    eager: true,
     nullable: true,
   })
   @JoinColumn({ name: 'profileId' })
@@ -116,7 +124,7 @@ export class UserEntity {
   deletedAt: Date;
 
   @BeforeInsert()
-  hashPassword(): void {
-    this.password = bcrypt.hashSync(this.password, 16);
+  async hashPassword(): Promise<void> {
+    this.password = await bcrypt.hash(this.password, 12);
   }
 }

@@ -1,18 +1,14 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 
-describe('PaymentService', () => {
-  let service: PaymentService;
+describe('PaymentService money conversion', () => {
+  const service = Object.create(PaymentService.prototype) as PaymentService;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [PaymentService],
-    }).compile();
-
-    service = module.get<PaymentService>(PaymentService);
+  it('converts decimal amounts to integer minor units', () => {
+    expect((service as any).toMinor(10.01)).toBe(1001n);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
+  it('rejects non-positive payment amounts', () => {
+    expect(() => (service as any).toMinor(0)).toThrow(BadRequestException);
   });
 });

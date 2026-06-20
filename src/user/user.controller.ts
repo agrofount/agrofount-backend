@@ -11,6 +11,7 @@ import {
   Put,
   Patch,
   Query,
+  ParseBoolPipe,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
@@ -25,9 +26,9 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UserResponseDto } from './dto/user.response.dto';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
-import { RequiredPermissions } from 'src/auth/decorator/required-permission.decorator';
-import { AdminAuthGuard } from 'src/auth/guards/admin.guard';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
+import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateLivestockFarmerDto } from './dto/create-profile.dto';
 import { UpdateLivestockFarmerDto } from './dto/update-profile.dto';
 import { UpdateBasicUserDetailDto } from './dto/UpdateBasicUserDetail.dto';
@@ -39,7 +40,8 @@ export class UserController {
 
   @Get('')
   @UseInterceptors(ClassSerializerInterceptor)
-  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_users')
   findAll(@Paginate() query: PaginateQuery): Promise<Paginated<UserEntity>> {
     return this.userService.findAll(query);
   }
@@ -50,7 +52,7 @@ export class UserController {
   @RequiredPermissions('update_users')
   activate(
     @Param('id') id: string,
-    @Query('activate') activate: boolean,
+    @Query('activate', ParseBoolPipe) activate: boolean,
   ): Promise<UserEntity> {
     return this.userService.activate(id, activate);
   }
@@ -66,8 +68,8 @@ export class UserController {
   @Delete(':id')
   @ApiOperation({ summary: 'Delete user data' })
   @UseGuards(JwtAuthGuard)
-  remove(@Param('id') id: string) {
-    return this.userService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: UserEntity) {
+    return this.userService.remove(id, user);
   }
 
   @Post('profile')

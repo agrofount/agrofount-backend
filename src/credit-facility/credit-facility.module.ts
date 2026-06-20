@@ -6,11 +6,9 @@ import { CreditFacilityRequestEntity } from './entities/credit-facility.entity';
 import { CreditAssessmentEntity } from './entities/credit-assessment.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { HttpModule } from '@nestjs/axios';
-import { OrderEntity } from 'src/order/entities/order.entity';
+import { OrderEntity } from '../order/entities/order.entity';
 import { NotificationModule } from '../notification/notification.module';
 import { DisbursementEntity } from '../disbursement/entities/disbursement.entity';
-import { DisbursementController } from '../disbursement/disbursement.controller';
-import { DisbursementModule } from 'src/disbursement/disbursement.module';
 
 @Module({
   imports: [
@@ -21,11 +19,10 @@ import { DisbursementModule } from 'src/disbursement/disbursement.module';
       DisbursementEntity, // Register DisbursementEntity
     ]),
     WalletModule,
-    HttpModule,
-    NotificationModule, // Add NotificationModule import
-    DisbursementModule,
+    HttpModule.register({ timeout: 10_000, maxRedirects: 3 }),
+    NotificationModule,
   ],
-  controllers: [CreditFacilityController, DisbursementController],
+  controllers: [CreditFacilityController],
   providers: [CreditFacilityService],
   exports: [CreditFacilityService], // Export CreditFacilityService for use in other modules
 })

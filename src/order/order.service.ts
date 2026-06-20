@@ -7,12 +7,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { CreateOrderDto } from './dto/create-order.dto';
-import { UpdateOrderDto } from './dto/update-order.dto';
 import { Cache, CACHE_MANAGER } from '@nestjs/cache-manager';
+import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
+import { UpdateOrderDto } from './dto/update-order.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { OrderEntity } from './entities/order.entity';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import {
   PaymentChannel,
   PaymentMethod,
@@ -30,36 +30,58 @@ import {
 } from 'nestjs-paginate';
 import { AdminEntity } from '../admins/entities/admin.entity';
 import { UserTypes } from '../auth/enums/role.enum';
-import { plainToClass, plainToInstance } from 'class-transformer';
-import { PaymentEntity } from 'src/payment/entities/payment.entity';
+import { plainToInstance } from 'class-transformer';
+import { PaymentEntity } from '../payment/entities/payment.entity';
 import { OrderSettings, OrderStatus } from './enums/order.enum';
 import { VoucherService } from '../voucher/voucher.service';
-import { NotificationService } from '../notification/notification.service';
-import { NotificationChannels } from '../notification/types/notification.type';
 import { ProductLocationService } from '../product-location/product-location.service';
 import { UpdateOrderItemDto } from './dto/update-order-item.dto';
+import { randomUUID } from 'crypto';
+import { InventoryService } from '../inventory/inventory.service';
+import { CartService } from '../cart/cart.service';
+import { OutboxService } from '../outbox/outbox.service';
+import { ConfigService } from '@nestjs/config';
+
+export type BankAccount = {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+};
 
 @Injectable()
 export class OrderService {
-  private readonly logger = new Logger(OrderService.name);
+  private logger = new Logger(OrderService.name);
   constructor(
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     @InjectRepository(OrderEntity)
     private readonly orderRepository: Repository<OrderEntity>,
     private readonly paymentService: PaymentService,
     private readonly voucherService: VoucherService,
-    private readonly notificationService: NotificationService,
     private readonly productLocationService: ProductLocationService,
+    private readonly dataSource: DataSource,
+    private readonly inventoryService: InventoryService,
+    private readonly cartService: CartService,
+    private readonly outboxService: OutboxService,
+    private readonly configService: ConfigService,
   ) {}
 
+  private getBankAccounts(): BankAccount[] {
+    try {
+      const raw = this.configService.get<string>('BANK_ACCOUNTS');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (a) => a?.bankName && a?.accountName && a?.accountNumber,
+      );
+    } catch {
+      this.logger.warn('BANK_ACCOUNTS env var is not valid JSON');
+      return [];
+    }
+  }
+
   generateOrderCode() {
-    const prefix = 'ORD';
-    const timestamp = Date.now().toString();
-    const randomString = Math.random()
-      .toString(36)
-      .substring(2, 8)
-      .toUpperCase();
-    return `${prefix}-${timestamp}-${randomString}`;
+    return `ORD-${randomUUID()}`;
   }
 
   async create(dto: CreateOrderDto, user: UserEntity) {
@@ -68,23 +90,40 @@ export class OrderService {
         paymentMethod,
         address,
         paymentChannel = PaymentChannel.Paystack,
-        items,
         isPickup,
         voucherCode,
+        phoneNumber,
+        fullName,
+        pickupDate,
+        pickupTime,
+        idempotencyKey,
       } = dto;
+
+      const indenpotencyCheck = await this.checkIdempotency(
+        idempotencyKey,
+        user,
+      );
+      if (indenpotencyCheck) {
+        return indenpotencyCheck;
+      }
 
       if (!Object.values(PaymentMethod).includes(paymentMethod)) {
         throw new BadRequestException('Invalid payment method');
       }
 
-      const cacheKey = `cart:${user.id}`;
-      const cartData: any = await this.cacheManager.get(cacheKey);
+      const cartData = await this.cartService.getCartData(user.id);
 
-      if (!cartData || Object.keys(cartData).length === 0) {
-        throw new BadRequestException('No cart found');
-      }
+      await this.validateItemAvailability(cartData);
 
-      let discountAmount = await this.validateVoucher(voucherCode, user);
+      const unadjustedSummary = await this.calculateOrderSummary(
+        cartData,
+        isPickup,
+      );
+      const discountAmount = await this.validateVoucher(
+        voucherCode,
+        user,
+        unadjustedSummary.subTotal,
+      );
 
       const {
         subTotal,
@@ -95,22 +134,31 @@ export class OrderService {
         volumeDiscountApplied,
         originalSubTotal,
       } = await this.calculateOrderSummary(cartData, isPickup, discountAmount);
-
-      // Validate item availability before saving
-      await this.validateItemAvailability(cartData);
+      const pickupSchedule = this.normalizePickupSchedule(
+        isPickup,
+        pickupDate,
+        pickupTime,
+      );
 
       const orderData: Partial<OrderEntity> = {
         user,
-        items,
+        userId: user.id,
+        items: this.buildOrderItems(cartData),
         totalPrice,
         paymentMethod,
         paymentChannel,
-        address,
+        address: address || ({} as any),
         subTotal,
+        phoneNumber,
+        fullName,
+        isPickup,
+        pickupDate: pickupSchedule.pickupDate,
+        pickupTime: pickupSchedule.pickupTime,
         vat,
         deliveryFee,
         code: this.generateOrderCode(),
         voucherCode,
+        idempotencyKey: idempotencyKey || null,
         discountAmount,
         volumeDiscountSavings,
         volumeDiscountApplied,
@@ -122,43 +170,99 @@ export class OrderService {
 
       const orderEntity = this.orderRepository.create(orderData);
 
-      const createdOrder = await this.orderRepository.save(orderEntity);
+      let createdOrder: OrderEntity;
+      let orderCreatedEventId: string;
+      try {
+        const created = await this.dataSource.transaction(async (manager) => {
+          const saved = await manager
+            .getRepository(OrderEntity)
+            .save(orderEntity);
+          try {
+            await this.inventoryService.reserveOrder(
+              saved.id,
+              saved.items.map((item) => ({
+                id: item.id,
+                unit: item.unit,
+                quantity: item.quantity,
+              })),
+              manager,
+              paymentMethod === PaymentMethod.PayNow ? 30 : 24 * 60,
+            );
+          } catch (inventoryError) {
+            this.logger.warn(
+              `Inventory reservation skipped for order ${saved.id}: ${inventoryError?.message}`,
+            );
+          }
+          if (voucherCode) {
+            await this.voucherService.markAsUsed(voucherCode, user, manager);
+          }
+          const event = await this.outboxService.create(
+            'order.created',
+            { orderId: saved.id },
+            manager,
+          );
+          return { order: saved, eventId: event.id };
+        });
+        createdOrder = created.order;
+        orderCreatedEventId = created.eventId;
+      } catch (error: any) {
+        if (error?.code === '23505' && idempotencyKey) {
+          const existing = await this.orderRepository.findOne({
+            where: { user: { id: user.id }, idempotencyKey },
+          });
+          if (existing) {
+            // Warm the cache so future retries are served from Redis, not DB
+            await this.setIndempotencyKey(
+              idempotencyKey,
+              user,
+              existing.id,
+            ).catch(() => {});
+            return {
+              order: plainToInstance(OrderEntity, existing),
+              payment: await this.resumePayment(existing, user),
+            };
+          }
+        }
+        throw error;
+      }
 
       if (createdOrder) {
-        this.notificationService.sendOrderNotification(createdOrder, [
-          NotificationChannels.TEAMS_NOTIFICATION,
-        ]);
+        try {
+          await this.setIndempotencyKey(idempotencyKey, user, createdOrder.id);
+        } catch (error) {
+          this.logger.warn(
+            'Order created but idempotency cache could not be updated',
+            error?.message || error,
+          );
+        }
+        await this.outboxService.dispatch(orderCreatedEventId);
       }
 
       if (paymentMethod != PaymentMethod.PayLater) {
-        let payment = await this.paymentService.findByOrderId(orderEntity.id);
-        if (payment) {
-          throw new ConflictException(
-            'Payment already initialized for this order',
-          );
-        }
-
-        payment = await this.paymentService.processPayment(
+        const payment = await this.paymentService.processPayment(
           paymentChannel,
           paymentMethod,
           {
             amount: totalPrice,
             email: user.email,
             phone: user.phone,
-            orderId: orderEntity.id,
+            orderId: createdOrder.id,
           },
         );
 
         if (!payment) {
-          await this.orderRepository.remove(createdOrder);
           throw new InternalServerErrorException(
-            'Failed to initialize payment',
+            'Order was created but payment initialization failed',
           );
         }
 
         return {
           order: plainToInstance(OrderEntity, createdOrder),
           payment: plainToInstance(PaymentEntity, payment),
+          bankAccounts:
+            paymentMethod === PaymentMethod.BankTransfer
+              ? this.getBankAccounts()
+              : undefined,
         };
       }
 
@@ -170,6 +274,153 @@ export class OrderService {
       console.error(`Error creating order for user ${user.id}:`, error);
       throw error;
     }
+  }
+
+  normalizePickupSchedule(
+    isPickup: boolean,
+    pickupDate?: string | Date,
+    pickupTime?: string,
+  ): Pick<OrderEntity, 'pickupDate' | 'pickupTime'> {
+    if (!isPickup) {
+      return { pickupDate: null, pickupTime: null };
+    }
+
+    if (!pickupDate) {
+      throw new BadRequestException('Pickup date is required');
+    }
+
+    if (!pickupTime) {
+      throw new BadRequestException('Pickup time is required');
+    }
+
+    const parsedPickupDate =
+      pickupDate instanceof Date ? pickupDate : new Date(pickupDate);
+
+    if (Number.isNaN(parsedPickupDate.getTime())) {
+      throw new BadRequestException('Invalid pickup date');
+    }
+
+    if (!/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(pickupTime)) {
+      throw new BadRequestException('Invalid pickup time');
+    }
+
+    return {
+      pickupDate: parsedPickupDate,
+      pickupTime: pickupTime.length === 5 ? `${pickupTime}:00` : pickupTime,
+    };
+  }
+
+  async addItems(id: string, dto: OrderItemDto[], admin: AdminEntity) {
+    if (dto.length === 0 || dto.length > 50) {
+      throw new BadRequestException('Provide between 1 and 50 order items');
+    }
+    const uniqueLines = new Set(dto.map((item) => `${item.id}:${item.unit}`));
+    if (uniqueLines.size !== dto.length) {
+      throw new BadRequestException('Duplicate product and unit lines');
+    }
+
+    const enrichedItems = await Promise.all(
+      dto.map(async (item) => {
+        const productLocation = await this.productLocationService.findById(
+          item.id,
+        );
+        if (productLocation.isDraft || !productLocation.isAvailable) {
+          throw new ConflictException('Product is not available');
+        }
+        const uom = productLocation.uom.find(
+          (candidate) => candidate.unit === item.unit,
+        );
+        if (!uom) throw new BadRequestException('Unit of Measure not found');
+        if (uom.moq && item.quantity < uom.moq) {
+          throw new BadRequestException(
+            `Minimum quantity for ${item.unit} is ${uom.moq}`,
+          );
+        }
+        const tier = uom.vtp?.find(
+          (candidate) =>
+            item.quantity >= candidate.minVolume &&
+            item.quantity <= candidate.maxVolume,
+        );
+        return {
+          id: productLocation.id,
+          name: productLocation.product?.name,
+          quantity: item.quantity,
+          price: Number(tier?.price ?? uom.platformPrice),
+          unit: item.unit,
+          productId: productLocation.product?.id,
+          productName: productLocation.product?.name,
+          productSlug: productLocation.productSlug,
+          images: productLocation.product?.images || [],
+          stateId: productLocation.state?.id,
+          stateName: productLocation.state?.name,
+          countryId: productLocation.country?.id,
+          countryName: productLocation.country?.name,
+        };
+      }),
+    );
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(OrderEntity);
+      const order = await repository.findOne({
+        where: { id },
+        relations: ['user'],
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) throw new NotFoundException('Order not found');
+      if (
+        order.status !== OrderStatus.Pending ||
+        order.paymentStatus !== PaymentStatus.Pending
+      ) {
+        throw new ConflictException(
+          'Items can only be added to an unpaid pending order',
+        );
+      }
+      const existingLines = new Set(
+        (order.items || []).map((item) => `${item.id}:${item.unit}`),
+      );
+      if (
+        enrichedItems.some((item) =>
+          existingLines.has(`${item.id}:${item.unit}`),
+        )
+      ) {
+        throw new ConflictException(
+          'Order already contains this item and unit',
+        );
+      }
+
+      await this.inventoryService.reserveOrder(id, dto, manager, 30);
+      order.items = [...(order.items || []), ...enrichedItems];
+      order.updatedByAdmin = true;
+      order.updatedById = admin.id;
+
+      const subTotal = order.items.reduce(
+        (sum, item) => sum + Number(item.price) * Number(item.quantity),
+        0,
+      );
+      const deliveryFee = 0;
+      const vat = (subTotal * OrderSettings.vat_charge) / 100;
+      order.subTotal = Number(subTotal.toFixed(2));
+      order.deliveryFee = deliveryFee;
+      order.vat = Number(vat.toFixed(2));
+      order.totalPrice = Number(
+        Math.max(
+          0,
+          subTotal + deliveryFee + vat - Number(order.discountAmount || 0),
+        ).toFixed(2),
+      );
+      const saved = await repository.save(order);
+      const event = await this.outboxService.create(
+        'order.updated',
+        {
+          orderId: saved.id,
+          message: 'Order items have been updated by an admin.',
+        },
+        manager,
+      );
+      return { saved, eventId: event.id };
+    });
+    await this.outboxService.dispatch(result.eventId);
+    return plainToInstance(OrderEntity, result.saved);
   }
 
   async findAll(
@@ -200,8 +451,8 @@ export class OrderService {
             ? undefined
             : { user: { id: user.id } },
         relations: ['user'],
-        defaultLimit: Number.MAX_SAFE_INTEGER,
-        maxLimit: Number.MAX_SAFE_INTEGER,
+        defaultLimit: 25,
+        maxLimit: 100,
       };
 
       const result = await paginate(
@@ -214,8 +465,9 @@ export class OrderService {
       result.data = plainToInstance(OrderEntity, result.data);
 
       return result;
-    } catch (error) {
-      throw new Error(`Failed to fetch orders: ${error.message}`);
+    } catch (error: any) {
+      this.logger.error('Failed to fetch orders', error?.stack || error);
+      throw new InternalServerErrorException('Failed to fetch orders');
     }
   }
 
@@ -276,11 +528,22 @@ export class OrderService {
     };
   }
 
-  async findOne(id: string) {
-    const order = await this.orderRepository.findOne({ where: { id } });
+  async findOne(id: string, actor?: UserEntity | AdminEntity) {
+    const order = await this.orderRepository.findOne({
+      where: { id },
+      relations: ['user'],
+    });
 
     if (!order) {
       throw new NotFoundException(`Order with ID ${id} not found`);
+    }
+
+    if (
+      actor &&
+      actor.userType !== UserTypes.System &&
+      order.userId !== actor.id
+    ) {
+      throw new ConflictException('You are not authorized to view this order');
     }
 
     return plainToInstance(OrderEntity, order);
@@ -290,44 +553,79 @@ export class OrderService {
     id: string,
     updateOrderDto: UpdateOrderDto,
   ): Promise<OrderEntity> {
-    let order = await this.findOne(id);
-
-    Object.assign(order, updateOrderDto);
-
-    const updatedOrder = this.orderRepository.save(order);
-    return plainToInstance(OrderEntity, updatedOrder);
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(OrderEntity);
+      const order = await repo.findOne({
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) throw new NotFoundException(`Order with ID ${id} not found`);
+      this.assertOrderTransition(order.status, updateOrderDto.status);
+      if (
+        updateOrderDto.status === OrderStatus.Cancelled &&
+        order.paymentStatus === PaymentStatus.Completed
+      ) {
+        throw new ConflictException(
+          'Paid orders require a refund before cancellation',
+        );
+      }
+      order.status = updateOrderDto.status;
+      if (order.status === OrderStatus.Cancelled) {
+        await this.inventoryService.releaseOrder(order.id, manager);
+      }
+      return plainToInstance(OrderEntity, await repo.save(order));
+    });
   }
 
   async confirmOrderReceived(
     id: string,
     user: UserEntity,
   ): Promise<OrderEntity> {
-    const order = await this.findOne(id);
-
-    if (order.user.id !== user.id) {
-      throw new ConflictException(
-        'You are not authorized to confirm this order',
-      );
-    }
-
-    order.status = OrderStatus.Delivered;
-    return this.orderRepository.save(order);
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(OrderEntity);
+      const order = await repo.findOne({
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) throw new NotFoundException(`Order with ID ${id} not found`);
+      if (order.userId !== user.id) {
+        throw new ConflictException(
+          'You are not authorized to confirm this order',
+        );
+      }
+      this.assertOrderTransition(order.status, OrderStatus.Delivered);
+      order.status = OrderStatus.Delivered;
+      return repo.save(order);
+    });
   }
 
   async cancelOrder(
     id: string,
     user: UserEntity | AdminEntity,
   ): Promise<OrderEntity> {
-    const order = await this.findOne(id);
-
-    if (order.user.id !== user.id && user.userType !== UserTypes.System) {
-      throw new ConflictException(
-        'You are not authorized to confirm this order',
-      );
-    }
-
-    order.status = OrderStatus.Cancelled;
-    return this.orderRepository.save(order);
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(OrderEntity);
+      const order = await repo.findOne({
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) throw new NotFoundException(`Order with ID ${id} not found`);
+      if (order.userId !== user.id && user.userType !== UserTypes.System) {
+        throw new ConflictException(
+          'You are not authorized to cancel this order',
+        );
+      }
+      if (order.paymentStatus === PaymentStatus.Completed) {
+        throw new ConflictException(
+          'Paid orders require a refund before cancellation',
+        );
+      }
+      this.assertOrderTransition(order.status, OrderStatus.Cancelled);
+      order.status = OrderStatus.Cancelled;
+      order.paymentStatus = PaymentStatus.Cancelled;
+      await this.inventoryService.releaseOrder(order.id, manager);
+      return repo.save(order);
+    });
   }
 
   async calculateOrderSummary(
@@ -366,9 +664,14 @@ export class OrderService {
       }
     }
 
-    const { delivery_charge, vat_charge } = OrderSettings;
+    const { vat_charge } = OrderSettings;
     const deliveryFee = 0; // isPickup ? 0 : (subTotal * delivery_charge) / 100;
     const vat = (subTotal * vat_charge) / 100;
+    if (discountAmount < 0 || discountAmount >= subTotal + deliveryFee + vat) {
+      throw new BadRequestException(
+        'Voucher discount must be less than the order total',
+      );
+    }
     const finalAmount = subTotal + deliveryFee + vat - discountAmount;
     const totalPrice = parseFloat(finalAmount.toFixed(2));
 
@@ -390,19 +693,23 @@ export class OrderService {
   async validateVoucher(
     voucherCode: string,
     user: UserEntity,
+    subTotal: number,
   ): Promise<number> {
     if (!voucherCode) {
       return 0; // No voucher code provided, no discount
     }
     const voucher = await this.voucherService.findOne(voucherCode, user);
 
-    const discountAmount = voucher.amount;
+    if (voucher.currency !== 'NGN') {
+      throw new BadRequestException('Voucher currency is not supported');
+    }
+    if (subTotal < Number(voucher.minimumSpend)) {
+      throw new BadRequestException(
+        `Voucher requires a minimum spend of ${voucher.minimumSpend}`,
+      );
+    }
 
-    // Mark voucher as used
-    voucher.used = true;
-    await this.voucherService.markAsUsed(voucher.code);
-
-    return discountAmount;
+    return Number(voucher.amount);
   }
 
   async getTotalSales(): Promise<number> {
@@ -489,9 +796,154 @@ export class OrderService {
             `Product ${itemId} with UOM ${uom} no longer available`,
           );
         }
+        const quantity = Number(item.quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          throw new BadRequestException(
+            'Cart quantity must be greater than zero',
+          );
+        }
+        if (!productLocation.isAvailable || productLocation.isDraft) {
+          throw new BadRequestException(`Product ${itemId} is not available`);
+        }
 
-        // Additional availability checks can be added here
+        const matchedVtp = uomData.vtp?.find(
+          (tier) => quantity >= tier.minVolume && quantity <= tier.maxVolume,
+        );
+        item.platformPrice = Number(uomData.platformPrice);
+        item.actualUnitPrice = Number(
+          matchedVtp?.price ?? uomData.platformPrice,
+        );
+        item.productLocation = productLocation;
+        item.priceDetails = {
+          isVolumeDiscount: Boolean(matchedVtp),
+          originalUnitPrice: Number(uomData.platformPrice),
+          discountPercentage: matchedVtp?.discount || 0,
+          matchedVtp,
+          savings: matchedVtp
+            ? (Number(uomData.platformPrice) - Number(matchedVtp.price)) *
+              quantity
+            : 0,
+        };
       }
+    }
+  }
+
+  private buildOrderItems(cartData: Record<string, any>): any[] {
+    const items = [];
+    for (const itemId of Object.keys(cartData)) {
+      for (const unit of Object.keys(cartData[itemId])) {
+        const cartItem = cartData[itemId][unit];
+        const productLocation = cartItem.productLocation;
+        items.push({
+          id: itemId,
+          name: productLocation.product?.name || productLocation.name,
+          quantity: Number(cartItem.quantity),
+          price: Number(cartItem.actualUnitPrice),
+          unit,
+          productId: productLocation.product?.id,
+          productName: productLocation.product?.name,
+          productSlug: productLocation.productSlug,
+          images: productLocation.product?.images || [],
+          stateId: productLocation.state?.id,
+          stateName: productLocation.state?.name,
+          countryId: productLocation.country?.id,
+          countryName: productLocation.country?.name,
+        });
+      }
+    }
+    return items;
+  }
+
+  private async checkIdempotency(
+    idempotencyKey: string,
+    user: UserEntity,
+  ): Promise<any> {
+    if (!idempotencyKey) {
+      return null; // No idempotency key provided
+    }
+
+    const idempotencyCacheKey = `order:idempotency:${user.id}:${idempotencyKey}`;
+    const existingOrderId = await this.cacheManager.get(idempotencyCacheKey);
+
+    if (existingOrderId) {
+      this.logger.log(
+        `Idempotent order creation detected for user ${user.id} with key ${idempotencyKey}`,
+      );
+      const existingOrder = await this.findOne(existingOrderId as string);
+      return {
+        order: plainToInstance(OrderEntity, existingOrder),
+        payment: await this.resumePayment(existingOrder, user),
+      };
+    }
+
+    const existingOrder = await this.orderRepository.findOne({
+      where: { user: { id: user.id }, idempotencyKey },
+    });
+    if (existingOrder) {
+      await this.setIndempotencyKey(idempotencyKey, user, existingOrder.id);
+      return {
+        order: plainToInstance(OrderEntity, existingOrder),
+        payment: await this.resumePayment(existingOrder, user),
+      };
+    }
+
+    return null; // No existing order found
+  }
+
+  private async setIndempotencyKey(
+    idempotencyKey: string,
+    user: UserEntity,
+    orderId: string,
+  ) {
+    if (!idempotencyKey) {
+      return; // No idempotency key provided
+    }
+
+    const idempotencyCacheKey = `order:idempotency:${user.id}:${idempotencyKey}`;
+    await this.cacheManager.set(
+      idempotencyCacheKey,
+      orderId,
+      24 * 60 * 60 * 1000,
+    ); // 24 hours TTL
+
+    this.logger.log(
+      `Set idempotency key for user ${user.id} with key ${idempotencyKey} to order ${orderId}`,
+    );
+  }
+
+  private async resumePayment(order: OrderEntity, user: UserEntity) {
+    if (order.paymentMethod === PaymentMethod.PayLater) return null;
+    try {
+      return await this.paymentService.processPayment(
+        order.paymentChannel || PaymentChannel.Paystack,
+        order.paymentMethod,
+        {
+          amount: Number(order.totalPrice),
+          email: user.email,
+          phone: user.phone,
+          orderId: order.id,
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not resume payment for order ${order.id}: ${error?.message || error}`,
+      );
+      return null;
+    }
+  }
+
+  private assertOrderTransition(from: OrderStatus, to: OrderStatus): void {
+    if (from === to) return;
+    const allowed: Record<OrderStatus, OrderStatus[]> = {
+      [OrderStatus.Pending]: [OrderStatus.Confirmed, OrderStatus.Cancelled],
+      [OrderStatus.Confirmed]: [OrderStatus.Shipped, OrderStatus.Cancelled],
+      [OrderStatus.Shipped]: [OrderStatus.Delivered, OrderStatus.Returned],
+      [OrderStatus.Delivered]: [OrderStatus.Returned],
+      [OrderStatus.Cancelled]: [],
+      [OrderStatus.Returned]: [],
+    };
+    if (!allowed[from]?.includes(to)) {
+      throw new ConflictException(`Invalid order transition: ${from} -> ${to}`);
     }
   }
 }

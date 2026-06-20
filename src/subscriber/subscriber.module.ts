@@ -4,7 +4,7 @@ import { SubscriberController } from './subscriber.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SubscriberEntity } from './entities/subscriber.entity';
 import { SendInBlueModule } from '../notification/modules/sendinblue.module';
-import { NotificationModule } from 'src/notification/notification.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [

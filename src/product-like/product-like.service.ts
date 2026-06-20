@@ -1,15 +1,9 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { UserEntity } from '../user/entities/user.entity';
-import { Cache, CACHE_MANAGER } from '@nestjs/cache-manager';
 import { ProductLike } from './entities/product-like.entity';
-import { ProductLocationEntity } from 'src/product-location/entities/product-location.entity';
+import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
 
 @Injectable()
 export class ProductLikeService {

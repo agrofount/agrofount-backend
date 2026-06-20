@@ -30,49 +30,49 @@ export class PriceUpdatesProcessor extends WorkerHost {
       return;
     }
 
-    return this.dataSource.transaction(async (manager) => {
-      // 1. Get most recent price changes for today
-      const latestPriceChanges = await this.getLatestPriceChanges(manager);
+    const manager = this.dataSource.manager;
+    // 1. Get most recent price changes for today
+    const latestPriceChanges = await this.getLatestPriceChanges(manager);
 
-      if (latestPriceChanges.length === 0) {
-        this.logger.log('No price changes found for today');
+    if (latestPriceChanges.length === 0) {
+      this.logger.log('No price changes found for today');
 
-        return; // No changes to process
-      }
+      return;
+    }
 
-      // 2. Get product location IDs that have price changes
-      const productLocationIds = latestPriceChanges.map(
-        (change) => change.productLocation.id,
-      );
+    // 2. Get product location IDs that have price changes
+    const productLocationIds = latestPriceChanges.map(
+      (change) => change.productLocation.id,
+    );
 
-      // 3. Get likes for products with price changes
-      const likes = await manager.find(ProductLike, {
-        where: { productLocation: { id: In(productLocationIds) } },
-        relations: ['user', 'productLocation', 'productLocation.product'],
-      });
-
-      if (likes.length === 0) {
-        this.logger.log('No users to notify for price updates');
-        return; // No users to notify
-      }
-
-      // 4. Create user notification map
-      const userMap = await this.createUserNotificationMap(
-        likes,
-        latestPriceChanges,
-      );
-
-      // 5. Send notifications in batches
-      await this.sendNotificationsInBatches(userMap);
-      this.logger.log(
-        `✅ Completed job ${job.id}, sent notifications to ${userMap.size} users`,
-      );
+    // 3. Get likes for products with price changes
+    const likes = await manager.find(ProductLike, {
+      where: { productLocation: { id: In(productLocationIds) } },
+      relations: ['user', 'productLocation', 'productLocation.product'],
     });
+
+    if (likes.length === 0) {
+      this.logger.log('No users to notify for price updates');
+      return;
+    }
+
+    // 4. Create user notification map
+    const userMap = await this.createUserNotificationMap(
+      likes,
+      latestPriceChanges,
+    );
+
+    // 5. Send notifications in batches
+    await this.sendNotificationsInBatches(userMap);
+    this.logger.log(
+      `✅ Completed job ${job.id}, sent notifications to ${userMap.size} users`,
+    );
   }
 
   private async getLatestPriceChanges(manager: any) {
     try {
       this.logger.log('🟡 Getting latest price changes...');
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const result = await manager
         .createQueryBuilder(PriceHistoryEntity, 'ph')
         .distinctOn(['ph.productLocationId'])
@@ -80,6 +80,7 @@ export class PriceUpdatesProcessor extends WorkerHost {
         .addOrderBy('ph.changedAt', 'DESC')
         .leftJoinAndSelect('ph.productLocation', 'productLocation')
         .where('ph.productLocation IS NOT NULL')
+        .andWhere('ph.changedAt >= :since', { since })
         .getMany();
 
       this.logger.log(`🟡 Found ${result.length} price changes`);

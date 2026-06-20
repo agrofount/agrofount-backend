@@ -60,6 +60,8 @@ export class CityService {
         'state.id': [FilterOperator.EQ],
       },
       where,
+      defaultLimit: 25,
+      maxLimit: 100,
     });
   }
 

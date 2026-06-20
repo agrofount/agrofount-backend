@@ -11,4 +11,6 @@ export const BLOG_POST_PAGINATION_CONFIG: PaginateConfig<PostEntity> = {
     isActive: [FilterOperator.EQ],
   },
   relations: ['comments'],
+  defaultLimit: 25,
+  maxLimit: 100,
 };

@@ -7,23 +7,6 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-class ShippingAddressDto {
-  @IsString()
-  street: string;
-
-  @IsString()
-  city: string;
-
-  @IsString()
-  state: string;
-
-  @IsString()
-  country: string;
-
-  @IsString()
-  postalCode: string;
-}
-
 export class CreateShipmentDto {
   @ApiProperty({
     description: 'Order ID for the shipment',

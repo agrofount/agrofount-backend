@@ -1,14 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource } from 'typeorm';
 import { DisbursementEntity } from './entities/disbursement.entity';
 import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class DisbursementService {
   constructor(
-    @InjectRepository(DisbursementEntity)
-    private readonly disbursementRepository: Repository<DisbursementEntity>,
     private readonly walletService: WalletService,
     private dataSource: DataSource,
   ) {}
@@ -18,26 +15,33 @@ export class DisbursementService {
       const disbursementRepo =
         transactionalEntityManager.getRepository(DisbursementEntity);
 
-      const now = new Date();
-      const pending = await disbursementRepo.find({
-        where: { completed: false },
-        relations: ['creditFacility', 'creditFacility.user'],
-      });
+      const pending = await disbursementRepo
+        .createQueryBuilder('disbursement')
+        .innerJoinAndSelect('disbursement.creditFacility', 'creditFacility')
+        .innerJoinAndSelect('creditFacility.user', 'user')
+        .where('disbursement.completed = false')
+        .andWhere('disbursement.scheduledAt <= :now', { now: new Date() })
+        .orderBy('disbursement.scheduledAt', 'ASC')
+        .limit(100)
+        .setLock('pessimistic_write')
+        .setOnLocked('skip_locked')
+        .getMany();
       const results = [];
       for (const disb of pending) {
-        if (disb.scheduledAt <= now) {
-          const wallet = await this.walletService.getWalletByUserId(
-            disb.creditFacility.user.id,
-          );
-          await this.walletService.handleApprovedCredit(
-            wallet.id,
-            Number(disb.amount),
-            transactionalEntityManager,
-          );
-          disb.completed = true;
-          await this.disbursementRepository.save(disb);
-          results.push({ id: disb.id, status: 'disbursed' });
-        }
+        const wallet = await this.walletService.getWalletByUserId(
+          disb.creditFacility.user.id,
+          transactionalEntityManager,
+        );
+        await this.walletService.handleApprovedCredit(
+          wallet.id,
+          Number(disb.amount),
+          `disbursement:${disb.id}`,
+          disb.creditFacility.id,
+          transactionalEntityManager,
+        );
+        disb.completed = true;
+        await disbursementRepo.save(disb);
+        results.push({ id: disb.id, status: 'disbursed' });
       }
       return { processed: results.length, details: results };
     });

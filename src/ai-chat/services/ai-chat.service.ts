@@ -2,10 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { UserService } from '../../user/user.service';
 import { AdminsService } from '../../admins/admins.service';
 import { ProductLocationService } from '../../product-location/product-location.service';
-import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import {
   LexRuntimeV2Client,
   RecognizeTextCommand,
@@ -23,13 +20,14 @@ import {
   LivestockFeedCategory,
   ProductCategory,
   ProductSubCategory,
-} from 'src/product/types/product.enum';
+} from '../../product/types/product.enum';
 import { ConfigService } from '@nestjs/config';
 import { LangChainLlmService } from './langchain-llm/langchain-llm.service';
 import { LangChainMemoryService } from './langchain-memory/langchain-memory.service';
 import { LangChainKendraService } from './langchain-kendra/langchain-kendra.service';
 import { PromptTemplatesService } from './prompt-templates/prompt-templates.service';
 import { RagContextService } from './rag-context/rag-context.service';
+import { VeterinaryKnowledgeService } from './veterinary-knowledge/veternary-knowledge.service';
 
 @Injectable()
 export class AiChatService {
@@ -47,6 +45,7 @@ export class AiChatService {
     private readonly promptTemplatesService: PromptTemplatesService,
     private readonly ragContextService: RagContextService,
     private readonly configService: ConfigService,
+    private readonly veterinaryKnowledgeService: VeterinaryKnowledgeService,
     private readonly userService: UserService,
     private readonly adminsService: AdminsService,
   ) {
@@ -289,10 +288,12 @@ export class AiChatService {
     sessionData: any,
   ) {
     try {
+      const lowerMessage = message.toLowerCase().trim();
+
       // Handle request for more symptoms
       if (
-        message.toLowerCase().includes('more symptoms') ||
-        message.toLowerCase().includes('other symptoms')
+        lowerMessage.includes('more symptoms') ||
+        lowerMessage.includes('other symptoms')
       ) {
         return this.showAdditionalSymptoms(sessionId, sessionData);
       }
@@ -305,6 +306,15 @@ export class AiChatService {
       // Handle symptom selection from list
       if (this.isSymptomSelection(message, sessionData)) {
         return this.processSelectedSymptom(sessionId, message, sessionData);
+      }
+
+      // Handle comma-separated symptoms
+      if (message.includes(',')) {
+        return await this.processMultipleSymptoms(
+          sessionId,
+          message,
+          sessionData,
+        );
       }
 
       // Add new symptom (free text or selected from list)
@@ -324,20 +334,110 @@ export class AiChatService {
     }
   }
 
+  private async processMultipleSymptoms(
+    sessionId: string,
+    message: string,
+    sessionData: any,
+  ) {
+    const symptoms = message
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+
+    if (symptoms.length === 0) {
+      return {
+        type: 'ERROR',
+        message: 'Please enter valid symptoms separated by commas.',
+        options: ['Try again', 'See symptom options'],
+        updatedSessionData: sessionData,
+      };
+    }
+
+    const currentSymptoms = Array.isArray(sessionData.symptoms)
+      ? sessionData.symptoms.filter((s) => s && s.description)
+      : [];
+
+    const newSymptoms = symptoms
+      .filter(
+        (symptom) =>
+          !currentSymptoms.some(
+            (existing) =>
+              existing.description.toLowerCase() === symptom.toLowerCase(),
+          ),
+      )
+      .map((symptom) => ({
+        description: symptom,
+        timestamp: new Date().toISOString(),
+        type: 'multiple',
+      }));
+
+    if (newSymptoms.length === 0) {
+      return {
+        type: 'MESSAGE',
+        message: 'All the symptoms you entered are already selected.',
+        options: ['Add different symptoms', 'Proceed to diagnosis'],
+        updatedSessionData: sessionData,
+      };
+    }
+
+    const updatedSession = {
+      ...sessionData,
+      symptoms: [...currentSymptoms, ...newSymptoms],
+    };
+
+    await this.saveSessionData(sessionId, updatedSession);
+
+    return {
+      type: 'SYMPTOMS_ADDED',
+      message: `Added ${newSymptoms.length} symptom(s): ${newSymptoms
+        .map((s) => s.description)
+        .join(', ')}`,
+      options: [
+        'Add more symptoms',
+        'See current symptoms',
+        'Proceed to diagnosis',
+      ],
+      symptomCount: updatedSession.symptoms.length,
+      updatedSessionData: updatedSession,
+    };
+  }
+
+  private async clearSymptoms(sessionId: string, sessionData: any) {
+    const updatedSession = {
+      ...sessionData,
+      symptoms: [],
+      currentOptions: undefined,
+    };
+
+    await this.saveSessionData(sessionId, updatedSession);
+
+    return {
+      type: 'SYMPTOMS_CLEARED',
+      message:
+        "All symptoms have been cleared. Please describe the symptoms you're observing.",
+      options: this.getAvailableSymptoms(updatedSession).slice(0, 5),
+      updatedSessionData: updatedSession,
+    };
+  }
+
   private async handleDiagnosis(
     sessionId: string,
     message: string,
     sessionData: any,
   ) {
-    // Get detailed diagnosis from Bedrock
-    const diagnosis = await this.generateDiagnosis(sessionData);
+    // Get detailed diagnosis from Titan
+    const diagnosis = await this.generatePersonalizedDiagnosis(sessionData);
 
-    // Update session state
-    await this.saveSessionData(sessionId, {
+    // Create updated session with diagnosis
+    const updatedSession = {
       ...sessionData,
       currentState: 'POST_DIAGNOSIS',
-      diagnosis,
-    });
+      diagnosis: diagnosis, // Make sure this is properly set
+      lastDiagnosisTimestamp: new Date().toISOString(), // Optional: track when diagnosis was made
+    };
+
+    // Save the updated session data with diagnosis
+    await this.saveSessionData(sessionId, updatedSession);
 
     return {
       type: 'POST_DIAGNOSIS',
@@ -347,6 +447,7 @@ export class AiChatService {
         'What products can help?',
         'How to prevent this?',
       ],
+      updatedSessionData: updatedSession,
     };
   }
 
@@ -357,12 +458,18 @@ export class AiChatService {
   ) {
     const diagnosis = sessionData.diagnosis;
     const animalType = sessionData.animalType;
+    const subCategory = sessionData.subCategory;
     const lower = message.toLowerCase();
+
     switch (true) {
       case lower.includes('explain'):
         return {
           type: 'SIMPLIFIED_DIAGNOSIS',
-          message: await this.simplifyDiagnosis(diagnosis),
+          message: await this.simplifyDiagnosis(
+            diagnosis,
+            animalType,
+            subCategory,
+          ),
           options: [
             'Show original diagnosis',
             'Recommend products',
@@ -380,7 +487,11 @@ export class AiChatService {
       case lower.includes('prevent'):
         return {
           type: 'PREVENTION_TIPS',
-          message: await this.generatePreventionTips(diagnosis, animalType),
+          message: await this.generatePreventionTips(
+            diagnosis,
+            animalType,
+            subCategory,
+          ),
           options: [
             'Back to diagnosis',
             'Recommended products',
@@ -412,107 +523,72 @@ export class AiChatService {
     }
   }
 
-  private async simplifyDiagnosis(technicalDiagnosis: string): Promise<string> {
+  private async simplifyDiagnosis(
+    technicalDiagnosis: string,
+    animalType: string,
+    subCategory: string,
+  ): Promise<string> {
+    void animalType;
+    void subCategory;
     try {
-      const prompt = `Simplify this veterinary diagnosis for a farmer with basic education:\n\n${technicalDiagnosis}\n\nUse simple terms, short sentences, and bullet points. Focus on practical advice.`;
+      const prompt = `Make this diagnosis even simpler and more direct for a Nigerian farmer:
 
-      const response = await this.bedrockClient.send(
-        new InvokeModelCommand({
-          modelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
-          contentType: 'application/json',
-          accept: 'application/json',
-          body: JSON.stringify({
-            anthropic_version: 'bedrock-2023-05-31',
-            max_tokens: 500,
-            temperature: 0.3,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: `\n\nHuman: ${prompt}\n\nAssistant:` },
-                ],
-              },
-            ],
-          }),
-        }),
+Original: ${technicalDiagnosis}
+
+Please rewrite it to be:
+- More conversational (use "you" and "your")
+- Shorter and to the point
+- Focused on immediate actions
+- Easy to understand`;
+
+      return await this.langchainLlmService.generateSimpleResponse(
+        prompt,
+        'You are a friendly advisor who makes complex information simple and actionable.',
       );
-
-      // Decode and parse
-      const bodyString = Buffer.from(response.body).toString('utf-8');
-      const parsed = JSON.parse(bodyString);
-
-      // Claude 3 response format: completion text is in `content[0].text`
-      return parsed.content?.[0]?.text ?? '';
     } catch (error) {
       console.error('Simplification error:', error);
-      return `Simplified explanation:\n- ${technicalDiagnosis
-        .split('\n')
-        .filter(Boolean)
-        .join('\n- ')}`;
+      // Return original if simplification fails
+      return technicalDiagnosis;
     }
   }
 
   private async generatePreventionTips(
     diagnosis: string,
     animalType: string,
+    subCategory: string,
   ): Promise<string> {
     try {
-      const prompt = `You are a veterinary specialist providing prevention advice to farmers.
-    
-                      Diagnosis: ${diagnosis}
-                      Animal Type: ${animalType}
-                      
-                      Generate 5-7 practical prevention tips with these requirements:
-                      1. Use simple language understandable by farmers
-                      2. Format as numbered bullet points
-                      3. Include specific actions they can take
-                      4. Mention observable signs to watch for
-                      5. Add relevant emojis where appropriate
-                      6. Keep each tip under 2 sentences
-                      
-                      Prevention Tips:`;
+      const prompt = `Based on this diagnosis for a ${subCategory} ${animalType}, provide practical prevention tips in simple, friendly language:
 
-      const response = await this.bedrockClient.send(
-        new InvokeModelCommand({
-          modelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
-          contentType: 'application/json',
-          accept: 'application/json',
-          body: JSON.stringify({
-            anthropic_version: 'bedrock-2023-05-31',
-            max_tokens: 1000,
-            temperature: 0.5,
-            top_p: 0.9,
-            stop_sequences: ['\n\nHuman:'],
-            messages: [
-              {
-                role: 'user',
-                content: [{ type: 'text', text: prompt }],
-              },
-            ],
-          }),
-        }),
+Diagnosis: ${diagnosis}
+
+Please provide 5-7 prevention tips that:
+- Are specific to ${subCategory} ${animalType}
+- Use simple, actionable language
+- Include practical steps the farmer can take today
+- Mention signs to watch for
+- Are encouraging and supportive
+- Focus on Nigerian farming conditions`;
+
+      return await this.langchainLlmService.generateVeterinaryResponse(
+        prompt,
+        animalType,
+        [],
+        [],
       );
-
-      // Parse Bedrock Claude 3 response
-      const parsed = JSON.parse(new TextDecoder().decode(response.body));
-      const result = parsed.content?.[0]?.text ?? '';
-
-      // Fallback if empty response
-      if (!result.trim()) {
-        throw new Error('Empty response from Bedrock');
-      }
-
-      return `🛡️ Prevention Tips for ${animalType}:\n${result}`;
     } catch (error) {
-      this.logger.error(`Bedrock prevention tips error: ${error.message}`);
+      this.logger.error(`Prevention tips error: ${error.message}`);
 
       // Fallback prevention tips
-      return `General Prevention Tips for ${animalType}:
-              1. Maintain clean living conditions 🧼
-              2. Provide balanced nutrition specific to ${animalType} 🥗
-              3. Schedule regular health check-ups 🩺
-              4. Isolate sick animals immediately 🚧
-              5. Follow recommended vaccination schedules 💉`;
+      return `Here are some general prevention tips for your ${subCategory} ${animalType}:
+
+1. 🧼 Keep their living area clean and dry
+2. 🥗 Provide balanced feed and clean water daily  
+3. 👀 Watch for early signs of illness
+4. 🚧 Separate sick animals immediately
+5. 💉 Follow vaccination schedules
+6. 🌡️ Protect from extreme weather
+7. 📝 Keep simple health records`;
     }
   }
 
@@ -520,17 +596,13 @@ export class AiChatService {
     const { animalType, symptoms, diagnosis, subCategory } = sessionData;
 
     try {
-      // Get nearest available vets (implementation depends on your system)
-      // const availableVets = await this.adminsService.findAvailableVets(
-      //   animalType,
-      // );
       const availableVets = [
         { name: 'Dr Akinwunmi', specialization: 'Animal Doctor' },
       ];
 
       return {
         type: 'VET_CONNECTION',
-        message: `Based on your ${subCategory}'s symptoms (${symptoms.join(
+        message: `Based on your ${subCategory} ${animalType}'s symptoms (${symptoms.join(
           ', ',
         )}), here are available veterinarians:`,
         options: availableVets.map(
@@ -574,6 +646,9 @@ export class AiChatService {
     message: string,
     sessionData: any,
   ): Promise<any> {
+    void sessionId;
+    void message;
+    void sessionData;
     // Implementation depends on your review system
     return {
       type: 'REVIEW_COMPLETE',
@@ -584,23 +659,6 @@ export class AiChatService {
         'Contact support',
       ],
     };
-  }
-
-  // Helper method
-  private getCommonSymptoms(animalType: string, subcategory: string): string[] {
-    const symptomMap = {
-      poultry: {
-        Broiler: ['Rapid breathing', 'Reduced growth', 'Lameness'],
-        Layer: ['Reduced egg production', 'Soft shells', 'Pale comb'],
-      },
-      cattle: {
-        Dairy: ['Milk drop', 'Mastitis signs', 'Reduced appetite'],
-        Beef: ['Weight loss', 'Bloat', 'Lameness'],
-      },
-      default: ['Fever', 'Loss of appetite', 'Diarrhea', 'Coughing'],
-    };
-
-    return symptomMap[animalType]?.[subcategory] || symptomMap.default;
   }
 
   private async restartSymptomCollection(sessionId: string, sessionData: any) {
@@ -644,7 +702,15 @@ export class AiChatService {
       fish: ['fish', 'tilapia', 'catfish', 'salmon', 'aquaculture'],
       pig: ['pig', 'swine', 'hog', 'boar', 'piglet'],
       cattle: ['cow', 'cattle', 'bull', 'ox', 'calf', 'dairy', 'beef'],
-      small_ruminant: ['sheep', 'goat', 'lamb', 'ram', 'doe', 'buck'],
+      small_ruminant: [
+        'sheep',
+        'goat',
+        'lamb',
+        'ram',
+        'doe',
+        'buck',
+        'small_ruminant',
+      ],
       rabbit: ['rabbit', 'bunny'],
       snail: ['snail'],
       apiculture: ['bee', 'honeybee', 'apiculture'],
@@ -664,91 +730,165 @@ export class AiChatService {
     return 'poultry' as keyof typeof LivestockFeedCategory; // Default to poultry
   }
 
-  private async generateResponse(type: string, sessionData?: any) {
-    const responses = {
-      GREETING:
-        'Welcome to Livestock Veterinary Assistant! What animal are we discussing today?',
-      FALLBACK:
-        "I didn't understand that. Could you rephrase or choose an option?",
-      FOLLOW_UP:
-        'Is there anything else I can help you with regarding your livestock?',
-      GOODBYE:
-        'Thank you for using our veterinary service. Wishing your animals good health!',
-    };
-
-    if (type === 'DIAGNOSIS_PROMPT' && sessionData) {
-      return `To help your ${sessionData.animalType}, I need to know:\n1. Main symptoms\n2. Duration\n3. Any treatments tried`;
-    }
-
-    return responses[type] || responses.FALLBACK;
-  }
-
-  private async generateDiagnosis(sessionData: any): Promise<string> {
+  private async generatePersonalizedDiagnosis(
+    sessionData: any,
+  ): Promise<string> {
+    // void ragContext;
     const symptomDescription = sessionData.symptoms
       ?.map((s) => s.description)
       .join(', ');
 
-    // Retrieve documents using LangChain
-    const retrievalQuery = `Symptoms for ${sessionData.animalType} (${sessionData.subCategory}): ${symptomDescription}. Diagnosis and treatment advice for Nigerian farmers.`;
+    // Get knowledge base context only for the specific animal type
+    const retrievalQuery = `${sessionData.animalType} ${sessionData.subCategory} symptoms: ${symptomDescription}. Diagnosis and treatment for Nigerian farmers.`;
 
-    const documents = await this.langchainKendraService.retrieveDocuments(
-      retrievalQuery,
-      process.env.KENDRA_KNOWLEDGE_INDEX_ID,
-    );
+    let ragContext = 'No specific documentation found for this animal type.';
 
-    const ragContext =
-      documents.length > 0
-        ? this.formatDocumentsWithMetadata(documents)
-        : 'No specific documentation found. Rely on general veterinary knowledge.';
+    try {
+      // Only retrieve knowledge for the specific animal type
+      const documents =
+        await this.veterinaryKnowledgeService.retrieveRelevantKnowledge(
+          retrievalQuery,
+          3, // Get top 3 most relevant documents
+        );
 
-    // Get real-time context
-    const realTimeContext =
-      await this.ragContextService.enrichWithRealTimeContext(
-        sessionData,
-        sessionData.sessionId,
+      if (documents.length > 0) {
+        ragContext = this.formatDocumentsFromVectorStore(documents);
+        this.logger.log(
+          `Found ${documents.length} relevant documents for ${sessionData.animalType}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        'Vector retrieval failed, using general knowledge:',
+        error.message,
       );
+    }
 
-    // Use LangChain for structured response generation
-    const prompt = await this.promptTemplatesService.renderTemplate(
-      'diagnosis',
-      {
-        context: ragContext,
-        real_time_context: realTimeContext,
-        animal_type: sessionData.animalType,
-        subcategory: sessionData.subCategory,
-        symptoms: symptomDescription,
-      },
+    // Build simple, focused prompt
+    const prompt = this.buildSimpleDiagnosisPrompt(
+      sessionData.animalType,
+      sessionData.subCategory,
+      symptomDescription,
+      ragContext,
     );
 
     try {
-      const conversationHistory =
-        await this.langchainMemoryService.getConversationHistory(
-          sessionData.sessionId,
-        );
+      const systemMessage = `You are a practical veterinary assistant for Nigerian farmers. Provide clear, simple advice that's easy to understand and act upon.
 
-      const response = await this.langchainLlmService.generateResponse(
+IMPORTANT INSTRUCTIONS:
+- Focus ONLY on ${sessionData.animalType} (${sessionData.subCategory})
+- Address the farmer directly using "you" and "your"
+- Keep it brief and to the point
+- Structure your response in 3 clear parts:
+  1. Primary Cause (most likely reason)
+  2. Immediate Action (what to do now)
+  3. Prevention (how to avoid in future)
+- Use simple language - no complex medical terms
+- Be practical and actionable
+- Use emojis sparingly to make it friendly
+- Maximum 200 words`;
+
+      const response = await this.langchainLlmService.generateSimpleResponse(
         prompt,
-        undefined, // system message is already in the template
-        conversationHistory,
-      );
-
-      // Save to memory
-      await this.langchainMemoryService.saveConversation(
-        sessionData.sessionId,
-        `Animal: ${sessionData.animalType}, Symptoms: ${symptomDescription}`,
-        response,
+        systemMessage,
       );
 
       return response;
     } catch (error) {
-      this.logger.error('LangChain diagnosis generation error:', error);
-      // Fallback to original method
-      return await this.fallbackGenerateDiagnosis(
-        sessionData,
-        ragContext,
-        realTimeContext,
-      );
+      this.logger.error('Diagnosis generation error:', error);
+      return await this.fallbackSimpleDiagnosis(sessionData, ragContext);
     }
+  }
+
+  private buildSimpleDiagnosisPrompt(
+    animalType: string,
+    subCategory: string,
+    symptoms: string,
+    ragContext: string,
+  ): string {
+    return `
+I'm helping a Nigerian farmer with their ${subCategory} ${animalType}.
+
+SYMPTOMS OBSERVED:
+${symptoms}
+
+RELEVANT INFORMATION FOR ${animalType.toUpperCase()}:
+${ragContext}
+
+Based on this information, provide a simple, practical diagnosis with:
+
+PRIMARY CAUSE: What is the most likely reason for these symptoms?
+
+IMMEDIATE ACTION: What should the farmer do right now? (2-3 specific steps)
+
+PREVENTION: How can they prevent this in the future? (2-3 practical tips)
+
+Keep it focused on ${animalType} and use simple language the farmer can understand immediately.
+`;
+  }
+
+  private async fallbackSimpleDiagnosis(
+    sessionData: any,
+    ragContext: string,
+  ): Promise<string> {
+    void ragContext;
+    const symptomDescription = sessionData.symptoms
+      ?.map((s) => s.description)
+      .join(', ');
+
+    const prompt = `
+For a ${sessionData.subCategory} ${sessionData.animalType} with these symptoms: ${symptomDescription}
+
+Provide a simple diagnosis with:
+1. Most likely cause
+2. What to do now
+3. How to prevent it
+
+Keep it brief and practical for a Nigerian farmer.
+`;
+
+    try {
+      const systemMessage = `Give clear, direct advice for ${sessionData.animalType}. Focus on practical steps the farmer can take today.`;
+
+      return await this.langchainLlmService.generateSimpleResponse(
+        prompt,
+        systemMessage,
+      );
+    } catch (error) {
+      this.logger.error('Fallback diagnosis also failed:', error);
+
+      // Ultimate simple fallback
+      return `Based on the symptoms in your ${sessionData.subCategory} ${sessionData.animalType} (${symptomDescription}):
+
+PRIMARY CAUSE: Likely health issue requiring attention
+
+IMMEDIATE ACTION: 
+• Separate sick animal from others
+• Ensure clean water and comfortable environment
+• Contact a veterinarian if symptoms worsen
+
+PREVENTION:
+• Maintain clean living conditions
+• Provide balanced nutrition
+• Monitor animals regularly for early signs`;
+    }
+  }
+
+  private formatDocumentsFromVectorStore(documents: any[]): string {
+    if (!documents || documents.length === 0) {
+      return 'No relevant veterinary knowledge found.';
+    }
+
+    return documents
+      .slice(0, 2) // Only use top 2 most relevant documents
+      .map((doc, index) => {
+        const content = doc.pageContent || '';
+        // Extract first 200 characters of most relevant information
+        const briefContent =
+          content.length > 200 ? content.substring(0, 200) + '...' : content;
+        return `[Source ${index + 1}]: ${briefContent}`;
+      })
+      .join('\n');
   }
 
   async endSession(sessionId: string): Promise<void> {
@@ -799,132 +939,6 @@ export class AiChatService {
       .join('\n\n');
   }
 
-  private async fallbackGenerateDiagnosis(
-    sessionData: any,
-    ragContext: string,
-    realTimeContext: string,
-  ): Promise<string> {
-    // Fallback to the original Bedrock implementation if LangChain fails
-    const symptomDescription = sessionData.symptoms
-      ?.map((s) => s.description)
-      .join(', ');
-
-    const prompt = `
-      You are an expert veterinary assistant for Nigerian farmers. Use the following context from trusted sources to inform your response.
-
-      <trusted_knowledge_context>
-      ${ragContext}
-      </trusted_knowledge_context>
-
-      <real_time_context>
-      ${realTimeContext}
-      </real_time_context>
-
-      <conversation_context>
-      Animal: ${sessionData.animalType} (${sessionData.subCategory})
-      Symptoms: ${symptomDescription}
-      </conversation_context>
-
-      Based on ALL the context above and your expertise, provide:
-      1. Likely diagnosis (consider Nigerian agricultural context)
-      2. Immediate recommended actions (practical for Nigerian farmers)
-      3. When to seek in-person veterinary care
-      4. Preventive measures specific to the current season and region
-
-      Use clear, simple language with bullet points. Keep response under 400 words.
-      `;
-
-    try {
-      const modelId = 'anthropic.claude-3-sonnet-20240229-v1:0';
-
-      const payload = {
-        anthropic_version: 'bedrock-2023-05-31',
-        max_tokens: 1024,
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: prompt }],
-          },
-        ],
-        temperature: 0.3,
-      };
-
-      const command = new InvokeModelCommand({
-        modelId,
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: JSON.stringify(payload),
-      });
-
-      const response = await this.bedrockClient.send(command);
-      const bodyString = Buffer.from(response.body).toString('utf-8');
-      const parsed = JSON.parse(bodyString);
-
-      return parsed.content?.[0]?.text || '';
-    } catch (error) {
-      this.logger.error('Fallback diagnosis generation also failed:', error);
-      return "I'm having trouble generating a diagnosis right now. Please try again later or contact a veterinarian directly.";
-    }
-  }
-
-  private async superFallbackResponse(message: string): Promise<any> {
-    // Ultimate fallback when everything else fails
-    this.logger.warn('Using super fallback response');
-
-    const simpleResponses = {
-      greeting:
-        "Hello! I'm here to help with your livestock and agricultural questions. What can I assist you with today?",
-      symptoms:
-        "Please describe the symptoms you're observing in your animals. For example: fever, loss of appetite, coughing, etc.",
-      products:
-        'I can help you find agricultural products. What type of product are you looking for?',
-      emergency:
-        'For urgent veterinary issues, please contact a local veterinarian immediately. You can also call our support hotline at 0800-AGRO-HELP.',
-      default:
-        "I apologize, I'm having technical difficulties right now. Please try again in a moment or contact our support team for immediate assistance.",
-    };
-
-    const lowerMessage = message.toLowerCase();
-
-    if (/(hello|hi|hey|start|begin)/i.test(lowerMessage)) {
-      return {
-        type: 'ai_response',
-        message: simpleResponses.greeting,
-        isFallback: true,
-      };
-    }
-
-    if (/(symptom|sick|ill|disease|not well)/i.test(lowerMessage)) {
-      return {
-        type: 'ai_response',
-        message: simpleResponses.symptoms,
-        isFallback: true,
-      };
-    }
-
-    if (/(product|buy|purchase|feed|medicine|drug)/i.test(lowerMessage)) {
-      return {
-        type: 'ai_response',
-        message: simpleResponses.products,
-        isFallback: true,
-      };
-    }
-
-    if (/(emergency|urgent|dying|critical|help now)/i.test(lowerMessage)) {
-      return {
-        type: 'ai_response',
-        message: simpleResponses.emergency,
-        isFallback: true,
-      };
-    }
-
-    return {
-      type: 'ai_response',
-      message: simpleResponses.default,
-      isFallback: true,
-    };
-  }
-
   private async deleteSessionData(sessionId: string): Promise<void> {
     try {
       await this.ddbClient.send(
@@ -967,9 +981,8 @@ export class AiChatService {
   ): Promise<any> {
     try {
       // Try to use Lex first as fallback
-      let lexResponse;
       try {
-        lexResponse = await this.lexClient.send(
+        await this.lexClient.send(
           new RecognizeTextCommand({
             botId: process.env.LEX_BOT_ID,
             botAliasId: process.env.LEX_BOT_ALIAS_ID,
@@ -1004,6 +1017,7 @@ export class AiChatService {
             sessionData.sessionId,
           );
 
+        // Use Titan via LangChain service
         const response = await this.langchainLlmService.generateResponse(
           prompt,
           undefined,
@@ -1118,33 +1132,75 @@ export class AiChatService {
 
   private async getSessionData(sessionId: string) {
     try {
-      const response = await this.ddbClient.send(
-        new GetItemCommand({
-          TableName: process.env.DYNAMODB_TABLE_NAME,
-          Key: { sessionId: { S: sessionId } },
-        }),
-      );
-      return response.Item ? unmarshall(response.Item) : null;
+      const command = new GetItemCommand({
+        TableName: process.env.DYNAMODB_TABLE_NAME,
+        Key: { sessionId: { S: sessionId } },
+      });
+
+      const response = await this.ddbClient.send(command);
+      if (!response.Item) return null;
+
+      // Unmarshall the data
+      const data = unmarshall(response.Item);
+
+      // Ensure any array fields are properly initialized
+      if (data.symptoms && !Array.isArray(data.symptoms)) {
+        data.symptoms = [];
+      }
+      if (data.previousMessages && !Array.isArray(data.previousMessages)) {
+        data.previousMessages = [];
+      }
+      if (
+        data.recommendedProducts &&
+        !Array.isArray(data.recommendedProducts)
+      ) {
+        data.recommendedProducts = [];
+      }
+
+      return data;
     } catch (error) {
-      console.error('DynamoDB get error:', error);
+      console.error('DynamoDB get error details:', {
+        name: error.name,
+        message: error.message,
+        sessionId: sessionId,
+        tableName: process.env.DYNAMODB_TABLE_NAME,
+      });
       return null;
     }
   }
 
   private async saveSessionData(sessionId: string, data: any) {
     try {
+      // Create a clean copy with only the data we need for session
+      const sessionDataToSave = {
+        sessionId,
+        currentState: data.currentState,
+        animalType: data.animalType,
+        subCategory: data.subCategory,
+        symptoms: this.prepareSymptomsForStorage(data.symptoms),
+        previousMessages: this.prepareMessagesForStorage(data.previousMessages),
+        diagnosis: data.diagnosis,
+        recommendedProducts: this.prepareProductsForStorage(
+          data.recommendedProducts,
+        ),
+        createdAt: data.createdAt,
+        updatedAt: new Date().toISOString(),
+        ttl: Math.floor(Date.now() / 1000) + 3600, // 1 hour TTL
+      };
+
       await this.ddbClient.send(
         new PutItemCommand({
           TableName: process.env.DYNAMODB_TABLE_NAME,
           Item: marshall(
             {
               sessionId,
-              ...data,
+              ...sessionDataToSave,
               ttl: Math.floor(Date.now() / 1000) + 3600, // 1 hour TTL
             },
             {
-              removeUndefinedValues: true, // This fixes the error
-              convertEmptyValues: true, // Optional: converts empty strings to NULL
+              removeUndefinedValues: true,
+              convertEmptyValues: true,
+              convertClassInstanceToMap: true, // Add this option
             },
           ),
         }),
@@ -1153,73 +1209,390 @@ export class AiChatService {
       this.logger.error('DynamoDB save error:', {
         error: error.message,
         sessionId,
-        data: JSON.stringify(data),
+        data: JSON.stringify(data), // Sanitize for logging too
       });
-      throw error; // Re-throw after logging
+      throw error;
     }
   }
 
-  private async recommendProducts(query: string) {
-    // Simple keyword-based recommendation
-    const allProducts = await this.productLocationService.findAllForAI();
-    return allProducts.filter(
-      (p) =>
-        query.toLowerCase().includes(p.product.name.toLowerCase()) ||
-        query
-          .toLowerCase()
-          .includes(p.product.description?.toLowerCase() || ''),
+  private prepareSymptomsForStorage(symptoms: any[]): any[] {
+    if (!Array.isArray(symptoms)) {
+      return [];
+    }
+
+    return symptoms.map((symptom) => ({
+      description: symptom.description || '',
+      timestamp: symptom.timestamp || new Date().toISOString(),
+      type: symptom.type || 'unknown',
+    }));
+  }
+
+  private prepareMessagesForStorage(messages: any[]): any[] {
+    if (!Array.isArray(messages)) {
+      return [];
+    }
+
+    return messages.map((message) => ({
+      role: message.role || 'user',
+      text: message.text || '',
+      timestamp: message.timestamp || new Date().toISOString(),
+    }));
+  }
+
+  private prepareProductsForStorage(products: any[]): any[] {
+    if (!Array.isArray(products)) {
+      return [];
+    }
+
+    return products.map((product) => ({
+      id: product.id,
+      name: product.name,
+      description: product.description,
+      price: product.price,
+      category: product.category,
+      subCategory: product.subCategory,
+      brand: product.brand,
+      isAvailable: product.isAvailable,
+      bestSeller: product.bestSeller,
+    }));
+  }
+
+  private isComplexObject(value: any): boolean {
+    if (value === null || value === undefined) {
+      return false;
+    }
+
+    // Check if it's an entity instance or complex object
+    return (
+      (typeof value === 'object' &&
+        value.constructor &&
+        value.constructor.name !== 'Object') ||
+      value instanceof Date ||
+      (Array.isArray(value) && value.some((item) => this.isComplexObject(item)))
     );
   }
 
   async handleProductRecommendation(
     sessionId: string,
-    diagnosis: string,
+    message: string,
     sessionData: any,
   ) {
-    const { feedCategory, productCategories, additives } =
-      this.mapDiagnosisToProductCategories(diagnosis);
+    try {
+      // Use the diagnosis from session data to get relevant products
+      const diagnosis = sessionData.diagnosis;
+      const animalType = sessionData.animalType;
+      const subCategory = sessionData.subCategory;
+      const symptoms = sessionData.symptoms?.map((s) => s.description) || [];
 
-    // Get lifecycle stage (e.g., starter, grower, layer)
-    const lifecycleStage = this.determineLifecycleStage(
-      diagnosis,
-      sessionData.animalType,
-    );
+      if (!diagnosis) {
+        return {
+          type: 'ERROR',
+          message: 'No diagnosis found. Please complete the diagnosis first.',
+          options: ['Go back to diagnosis', 'Start over'],
+        };
+      }
 
-    // Get recommended products
-    const products = await this.productLocationService.getRecommendations({
-      feedCategory,
-      productCategories: productCategories.length
-        ? productCategories
-        : [ProductCategory.ENERGY_SOURCES, ProductCategory.PROTEIN_SOURCES],
-      additives,
-      animalType: sessionData.animalType,
-      lifecycleStage,
+      // Get AI-based product recommendations using diagnosis
+      const recommendedProducts = await this.getProductsByDiagnosis(
+        diagnosis,
+        animalType,
+        subCategory,
+        symptoms,
+      );
+
+      if (recommendedProducts.length === 0) {
+        // Fallback to category-based recommendations
+        const { feedCategory, productCategories, additives } =
+          this.mapDiagnosisToProductCategories(diagnosis);
+
+        const fallbackProducts =
+          await this.productLocationService.getRecommendations({
+            feedCategory,
+            productCategories: productCategories.length
+              ? productCategories
+              : [
+                  ProductCategory.ENERGY_SOURCES,
+                  ProductCategory.PROTEIN_SOURCES,
+                ],
+            additives,
+            animalType,
+            lifecycleStage: this.determineLifecycleStage(diagnosis, animalType),
+          });
+
+        return this.formatProductResponse(
+          sessionId,
+          sessionData,
+          fallbackProducts,
+          true,
+        );
+      }
+
+      return this.formatProductResponse(
+        sessionId,
+        sessionData,
+        recommendedProducts,
+        false,
+      );
+    } catch (error) {
+      this.logger.error('Product recommendation error:', error);
+      return {
+        type: 'ERROR',
+        message: 'Unable to fetch product recommendations at this time.',
+        options: ['Try again', 'Contact support', 'Back to diagnosis'],
+      };
+    }
+  }
+
+  private async getProductsByDiagnosis(
+    diagnosis: string,
+    animalType: string,
+    subCategory: string,
+    symptoms: string[],
+  ): Promise<any[]> {
+    try {
+      // Create a detailed query based on diagnosis and symptoms
+      const searchQuery = this.buildProductSearchQuery(
+        diagnosis,
+        animalType,
+        subCategory,
+        symptoms,
+      );
+
+      // Use the product service to search based on diagnosis context
+      const products =
+        await this.productLocationService.findProductsByDiagnosis({
+          diagnosis,
+          animalType,
+          subCategory,
+          symptoms,
+          searchQuery,
+        });
+
+      // If no direct matches, try broader search
+      if (products.length === 0) {
+        return await this.productLocationService.findProductsBySymptoms(
+          symptoms,
+          animalType,
+        );
+      }
+
+      return products;
+    } catch (error) {
+      this.logger.error('Error getting products by diagnosis:', error);
+      return [];
+    }
+  }
+
+  private buildProductSearchQuery(
+    diagnosis: string,
+    animalType: string,
+    subCategory: string,
+    symptoms: string[],
+  ): string {
+    void diagnosis;
+    void animalType;
+    // Extract key terms from diagnosis for product matching
+    const keyTerms = this.extractKeyTermsFromDiagnosis(diagnosis);
+    const symptomTerms = symptoms.join(' ');
+
+    return `
+    Products for ${subCategory} ${animalType} with:
+    Diagnosis: ${diagnosis}
+    Symptoms: ${symptomTerms}
+    Key issues: ${keyTerms.join(', ')}
+    Required: medications, supplements, treatments, preventive care
+    Target: Nigerian farmers, practical solutions
+  `.trim();
+  }
+
+  private extractKeyTermsFromDiagnosis(diagnosis: string): string[] {
+    const terms = [];
+    const lowerDiagnosis = diagnosis.toLowerCase();
+
+    // Medical conditions
+    const conditions = [
+      'infection',
+      'bacterial',
+      'viral',
+      'parasite',
+      'worm',
+      'fungal',
+      'deficiency',
+      'nutrition',
+      'vitamin',
+      'mineral',
+      'protein',
+      'respiratory',
+      'digestive',
+      'skin',
+      'foot',
+      'mouth',
+      'eye',
+      'fever',
+      'diarrhea',
+      'cough',
+      'lameness',
+      'weakness',
+      'inflammation',
+      'pain',
+      'swelling',
+      'lesion',
+      'wound',
+    ];
+
+    // Treatments and solutions
+    const solutions = [
+      'antibiotic',
+      'antimicrobial',
+      'antifungal',
+      'antiparasitic',
+      'vaccine',
+      'vitamin',
+      'mineral',
+      'supplement',
+      'additive',
+      'treatment',
+      'prevention',
+      'recovery',
+      'boost',
+      'strengthen',
+    ];
+
+    conditions.forEach((condition) => {
+      if (lowerDiagnosis.includes(condition)) {
+        terms.push(condition);
+      }
     });
 
-    if (products.length === 0) {
+    solutions.forEach((solution) => {
+      if (lowerDiagnosis.includes(solution)) {
+        terms.push(solution);
+      }
+    });
+
+    return [...new Set(terms)]; // Remove duplicates
+  }
+
+  private async formatProductResponse(
+    sessionId: string,
+    sessionData: any,
+    productLocations: any[],
+    isFallback: boolean,
+  ) {
+    const simplifiedProducts = productLocations.map((pl) => ({
+      id: pl.id,
+      productId: pl.product?.id,
+      name: pl.product?.name,
+      productSlug: pl.productSlug,
+      description: pl.product?.description,
+      category: pl.product?.category,
+      subCategory: pl.product?.subCategory,
+      brand: pl.product?.brand,
+      price: pl.price,
+      state: pl.state?.name,
+      country: pl.country?.name,
+      isAvailable: pl.isAvailable,
+      bestSeller: pl.bestSeller,
+      // Don't store the entire entity objects
+    }));
+    // Update session state
+    const updatedSession = {
+      ...sessionData,
+      currentState: 'REVIEW',
+      recommendedProducts: simplifiedProducts, // Store recommended products in session
+      recommendationTimestamp: new Date().toISOString(),
+    };
+
+    await this.saveSessionData(sessionId, updatedSession);
+
+    if (productLocations.length === 0) {
       return {
-        type: 'MESSAGE',
-        message: `No specific products found. Please consult a veterinarian for ${sessionData.animalType}.`,
-        sessionId,
+        type: 'NO_PRODUCTS',
+        message: `No specific products found for your ${sessionData.subCategory} ${sessionData.animalType} with the described symptoms. Please consult a veterinarian for specialized treatment.`,
+        options: [
+          'Try different symptoms',
+          'Contact veterinarian',
+          'Start over',
+        ],
       };
     }
 
-    sessionData.currentState = 'REVIEW';
-    await this.saveSessionData(sessionId, sessionData);
+    // Format products with their actual descriptions
+    const formattedProducts = productLocations.map((productLocation) => ({
+      id: productLocation.id,
+      productId: productLocation.product?.id,
+      name: productLocation.product?.name,
+      productSlug: productLocation.productSlug,
+      description:
+        productLocation.product?.description || 'No description available',
+      category: productLocation.product?.category,
+      subCategory: productLocation.product?.subCategory,
+      brand: productLocation.product?.brand,
+      price: productLocation.price,
+      state: productLocation.state?.name,
+      country: productLocation.country?.name,
+      images: productLocation.product?.images || [],
+      isAvailable: productLocation.isAvailable,
+      bestSeller: productLocation.bestSeller,
+      popularityScore: productLocation.popularityScore,
+      benefits: this.generateBenefitsFromDescription(
+        productLocation.product?.description,
+      ),
+      usage: 'Follow package instructions',
+      suitability: `Suitable for ${sessionData.animalType} - ${sessionData.subCategory}`,
+    }));
+
+    const message = isFallback
+      ? `Based on general recommendations for ${sessionData.subCategory} ${sessionData.animalType}, I suggest these products:`
+      : `Based on the diagnosis for your ${sessionData.subCategory} ${sessionData.animalType}, I recommend these products:`;
 
     return {
       type: 'PRODUCTS',
-      message: `For ${sessionData.subCategory} with ${sessionData.symptoms
-        .map((s) => s.description)
-        .join(',')}, I recommend:`,
-      products,
+      message: message,
+      products: formattedProducts,
+      productCount: formattedProducts.length,
+      diagnosisBased: !isFallback,
+      options: [
+        'Explain diagnosis again',
+        'How to use these products',
+        'Find cheaper alternatives',
+        'Contact supplier',
+        'Start new consultation',
+      ],
     };
+  }
+
+  private generateBenefitsFromDescription(description: string): string {
+    if (!description) return 'General livestock health support';
+
+    const lowerDesc = description.toLowerCase();
+
+    if (lowerDesc.includes('vitamin') || lowerDesc.includes('nutrit')) {
+      return 'Improves nutrition and overall health';
+    } else if (
+      lowerDesc.includes('antibiotic') ||
+      lowerDesc.includes('infection')
+    ) {
+      return 'Fights bacterial infections';
+    } else if (lowerDesc.includes('parasite') || lowerDesc.includes('worm')) {
+      return 'Controls parasites and worms';
+    } else if (lowerDesc.includes('growth') || lowerDesc.includes('weight')) {
+      return 'Promotes healthy growth and weight gain';
+    } else if (lowerDesc.includes('immune') || lowerDesc.includes('defense')) {
+      return 'Boosts immune system';
+    } else if (lowerDesc.includes('digest') || lowerDesc.includes('gut')) {
+      return 'Improves digestion and gut health';
+    }
+
+    return 'Supports livestock health and productivity';
   }
 
   private determineLifecycleStage(
     diagnosis: string,
     animalType: string,
   ): string {
+    void diagnosis;
+    void animalType;
     // Your logic to determine lifecycle stage based on diagnosis and animal type
     return 'Starter'; // Default
   }
@@ -1239,13 +1612,15 @@ export class AiChatService {
   }
 
   private async transitionToDiagnosis(sessionId: string, sessionData: any) {
+    const diagnosis = await this.generatePersonalizedDiagnosis(sessionData);
+
     const updatedSession = {
       ...sessionData,
       currentState: 'POST_DIAGNOSIS',
+      diagnosis: diagnosis,
     };
 
     await this.saveSessionData(sessionId, updatedSession);
-    const diagnosis = await this.generateDiagnosis(updatedSession);
 
     return {
       type: 'DIAGNOSIS',
@@ -1377,7 +1752,7 @@ export class AiChatService {
   }
 
   private getAvailableSymptoms(sessionData: any): string[] {
-    const { animalType, subCategory, symptoms = [] } = sessionData;
+    const { animalType } = sessionData;
     const mentionedSymptoms = (sessionData.symptoms || []).map((s) =>
       typeof s === 'string' ? s.toLowerCase() : s.description.toLowerCase(),
     );
@@ -1434,6 +1809,7 @@ export class AiChatService {
   }
 
   private getErrorResponse(sessionId: string, sessionData: any) {
+    void sessionData;
     return {
       type: 'ERROR_RECOVERY',
       message:
@@ -1462,13 +1838,13 @@ export class AiChatService {
 
     return groupedSymptoms;
   }
-
-  // TODO
-  // AI Product Recommendation Engine 🛒 – The system suggests the best feeds, drugs, or equipment tailored to a farmer’s livestock type, age, health condition, and budget.
-
-  // AI Credit Assessment 💳 – Uses farm history, purchase behavior, and alternative data to evaluate eligibility for credit facilities in real time.
-
-  // AI Price Prediction & Advisory 📈 – Analyzes market and historical price data to advise farmers on when and what to buy for maximum cost savings.
-
-  // AI Fraud & Mismanagement Detection 🔍 – Flags unusual buying/usage patterns that may indicate mismanagement or theft in farm operations.
 }
+
+// TODO
+// AI Product Recommendation Engine 🛒 – The system suggests the best feeds, drugs, or equipment tailored to a farmer’s livestock type, age, health condition, and budget.
+
+// AI Credit Assessment 💳 – Uses farm history, purchase behavior, and alternative data to evaluate eligibility for credit facilities in real time.
+
+// AI Price Prediction & Advisory 📈 – Analyzes market and historical price data to advise farmers on when and what to buy for maximum cost savings.
+
+// AI Fraud & Mismanagement Detection 🔍 – Flags unusual buying/usage patterns that may indicate mismanagement or theft in farm operations.

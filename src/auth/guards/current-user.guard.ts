@@ -9,6 +9,9 @@ export class CurrentUserGuard extends AuthGuard('jwt') {
     context: ExecutionContext,
     status?: any,
   ): TUser {
+    void info;
+    void context;
+    void status;
     if (user) return user;
 
     return null;

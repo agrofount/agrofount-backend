@@ -27,6 +27,8 @@ import {
 } from 'nestjs-paginate';
 import { STATE_PAGINATION_CONFIG } from './config/pagination.config';
 import { StateResponseDto } from './dto/state.dto';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 
 @Controller('state')
 @ApiTags('state')
@@ -35,7 +37,8 @@ export class StateController {
 
   @Post()
   @ApiOperation({ summary: 'Create State' })
-  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('create_states')
   @ApiBearerAuth()
   @ApiCreatedResponse({ type: StateResponseDto })
   create(@Body() createStateDto: CreateStateDto) {
@@ -58,12 +61,18 @@ export class StateController {
 
   @Put(':id')
   @ApiOperation({ summary: 'Update state' })
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_states')
+  @ApiBearerAuth()
   update(@Param('id') id: string, @Body() updateStateDto: UpdateStateDto) {
     return this.stateService.update(id, updateStateDto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'delete state' })
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('delete_states')
+  @ApiBearerAuth()
   remove(@Param('id') id: string) {
     return this.stateService.remove(id);
   }

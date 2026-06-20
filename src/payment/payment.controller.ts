@@ -3,12 +3,13 @@ import {
   Get,
   Body,
   Param,
-  Put,
   Post,
   Logger,
   UseGuards,
   Query,
   Patch,
+  DefaultValuePipe,
+  ParseEnumPipe,
 } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { WebhookGuard } from './guards/webhook.guard';
@@ -19,9 +20,12 @@ import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { PaymentEntity } from './entities/payment.entity';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
-import { CurrentUser } from 'src/utils/decorators/current-user.decorator';
-import { UserEntity } from 'src/user/entities/user.entity';
+import { CurrentUser } from '../utils/decorators/current-user.decorator';
+import { UserEntity } from '../user/entities/user.entity';
 import { PaymentStatus } from './enum/payment.enum';
+import { CreateRefundDto } from './dto/create-refund.dto';
+import { AdminEntity } from '../admins/entities/admin.entity';
+import { StepUpGuard } from '../auth/guards/step-up.guard';
 
 @ApiTags('Payment')
 @Controller('payment')
@@ -57,19 +61,50 @@ export class PaymentController {
 
   @Patch(':id/confirm')
   @UseGuards(JwtAuthGuard)
-  confirmTransfer(@Param('id') id: string, @CurrentUser() user: UserEntity) {
+  confirmTransfer(
+    @Param('id') id: string,
+    @CurrentUser() user: UserEntity,
+    @Body()
+    body?: {
+      selectedBankAccount?: {
+        bankName: string;
+        accountName: string;
+        accountNumber: string;
+      };
+    },
+  ) {
     this.logger.log('confirming transfer');
-    return this.paymentService.confirmTransfer(id, user.id);
+    return this.paymentService.confirmTransfer(
+      id,
+      user.id,
+      body?.selectedBankAccount,
+    );
   }
 
   @Patch(':id/confirm-transfer-received')
-  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard, StepUpGuard)
   @RequiredPermissions('update_payments')
   confirmTransferReceived(
     @Param('id') id: string,
-    @Query('status') status?: PaymentStatus,
+    @Query(
+      'status',
+      new DefaultValuePipe(PaymentStatus.Completed),
+      new ParseEnumPipe(PaymentStatus),
+    )
+    status: PaymentStatus,
   ) {
     this.logger.log('Confirming transfer received');
     return this.paymentService.confirmTransferReceived(id, status);
+  }
+
+  @Post(':id/refunds')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard, StepUpGuard)
+  @RequiredPermissions('refund_payments')
+  createRefund(
+    @Param('id') id: string,
+    @Body() dto: CreateRefundDto,
+    @CurrentUser() admin: AdminEntity,
+  ) {
+    return this.paymentService.createRefund(id, dto, admin.id);
   }
 }

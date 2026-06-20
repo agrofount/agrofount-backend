@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { UserModule } from '../user/user.module';
 import { AdminsModule } from '../admins/admins.module';
 import { AiChatController } from './ai-chat.controller';
-import { ProductLocationModule } from 'src/product-location/product-location.module';
+import { ProductLocationModule } from '../product-location/product-location.module';
 import { AiChatGateway } from './ai-chat.gateway';
 import { AiChatService } from './services/ai-chat.service';
 import { LangChainKendraService } from './services/langchain-kendra/langchain-kendra.service';
@@ -12,6 +12,8 @@ import { PromptTemplatesService } from './services/prompt-templates/prompt-templ
 import { RagKnowledgeService } from './services/rag-knowledge/rag-knowledge.service';
 import { RagContextService } from './services/rag-context/rag-context.service';
 import { HttpModule } from '@nestjs/axios';
+import { VectorRetrievalService } from './services/vector-retrieval/vector-retrieval.service';
+import { VeterinaryKnowledgeService } from './services/veterinary-knowledge/veternary-knowledge.service';
 
 @Module({
   imports: [ProductLocationModule, UserModule, AdminsModule, HttpModule],
@@ -24,6 +26,8 @@ import { HttpModule } from '@nestjs/axios';
     PromptTemplatesService,
     RagKnowledgeService,
     RagContextService,
+    VectorRetrievalService,
+    VeterinaryKnowledgeService,
   ],
   controllers: [AiChatController],
   exports: [
@@ -35,6 +39,8 @@ import { HttpModule } from '@nestjs/axios';
     PromptTemplatesService,
     RagKnowledgeService,
     RagContextService,
+    VectorRetrievalService,
+    VeterinaryKnowledgeService,
   ],
 })
 export class AiChatModule {}

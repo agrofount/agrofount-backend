@@ -1,10 +1,9 @@
-import { OrderEntity } from 'src/order/entities/order.entity';
+import { OrderEntity } from '../../order/entities/order.entity';
 import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
-  ManyToOne,
   UpdateDateColumn,
   OneToOne,
   JoinColumn,

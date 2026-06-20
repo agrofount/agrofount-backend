@@ -4,12 +4,16 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 
 @Entity('review')
+@Index('IDX_review_user_location', ['user', 'productLocation'], {
+  unique: true,
+})
 export class ReviewEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

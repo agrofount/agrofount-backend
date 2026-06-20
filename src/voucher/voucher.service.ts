@@ -4,11 +4,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { CreateVoucherDto } from './dto/create-voucher.dto';
-import { UpdateVoucherDto } from './dto/update-voucher.dto';
-import { UserEntity } from 'src/user/entities/user.entity';
+import { UserEntity } from '../user/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { VoucherEntity } from './entities/voucher.entity';
+import { VoucherEntity, VoucherStatus } from './entities/voucher.entity';
 import { Repository } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
 import {
@@ -17,8 +15,10 @@ import {
   Paginated,
   PaginateQuery,
 } from 'nestjs-paginate';
-import { AdminEntity } from 'src/admins/entities/admin.entity';
-import { UserTypes } from 'src/auth/enums/role.enum';
+import { AdminEntity } from '../admins/entities/admin.entity';
+import { UserTypes } from '../auth/enums/role.enum';
+import { randomBytes } from 'crypto';
+import { EntityManager } from 'typeorm';
 
 @Injectable()
 export class VoucherService {
@@ -31,22 +31,44 @@ export class VoucherService {
   async generateVoucher(
     user: UserEntity,
     amount: number = 1000,
+    sourceKey?: string,
+    manager?: EntityManager,
   ): Promise<VoucherEntity> {
-    const voucherCode = `${Math.random()
-      .toString(36)
-      .substring(2, 9)
-      .toUpperCase()}`;
+    const repository = manager
+      ? manager.getRepository(VoucherEntity)
+      : this.voucherRepo;
 
-    const voucherEntity = this.voucherRepo.create({
+    if (sourceKey) {
+      const existing = await repository.findOne({ where: { sourceKey } });
+      if (existing) return existing;
+    }
+
+    const voucherCode = randomBytes(9).toString('base64url').toUpperCase();
+
+    const voucherEntity = repository.create({
       user,
       amount,
       code: voucherCode,
       used: false,
+      status: VoucherStatus.Active,
+      currency: 'NGN',
+      minimumSpend: 0,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      sourceKey: sourceKey || null,
     });
 
-    await this.voucherRepo.save(voucherEntity);
+    if (sourceKey) {
+      await repository
+        .createQueryBuilder()
+        .insert()
+        .into(VoucherEntity)
+        .values(voucherEntity)
+        .orIgnore()
+        .execute();
+      return repository.findOneOrFail({ where: { sourceKey } });
+    }
 
-    return voucherEntity;
+    return repository.save(voucherEntity);
   }
 
   async findAll(
@@ -68,6 +90,8 @@ export class VoucherService {
             ? undefined
             : { user: { id: user.id } },
         relations: ['user'],
+        defaultLimit: 25,
+        maxLimit: 100,
       });
 
       result.data = plainToInstance(VoucherEntity, result.data);
@@ -84,7 +108,14 @@ export class VoucherService {
     user?: UserEntity | AdminEntity,
   ): Promise<VoucherEntity> {
     try {
-      const voucher = await this.voucherRepo.findOne({ where: { code } });
+      const voucher = await this.voucherRepo.findOne({
+        where: { code },
+        relations: ['user'],
+      });
+
+      if (!voucher) {
+        throw new NotFoundException(`Voucher with code ${code} not found`);
+      }
 
       if (
         user &&
@@ -96,12 +127,19 @@ export class VoucherService {
         );
       }
 
-      if (!voucher) {
-        throw new NotFoundException(`Voucher with code ${code} not found`);
-      }
-
       if (voucher.used) {
         throw new ConflictException(`Voucher with code ${code} already used`);
+      }
+
+      if (voucher.status !== VoucherStatus.Active) {
+        throw new ConflictException(`Voucher with code ${code} is not active`);
+      }
+
+      if (voucher.expiresAt.getTime() <= Date.now()) {
+        await this.voucherRepo.update(voucher.id, {
+          status: VoucherStatus.Expired,
+        });
+        throw new ConflictException(`Voucher with code ${code} has expired`);
       }
 
       return plainToInstance(VoucherEntity, voucher);
@@ -113,14 +151,33 @@ export class VoucherService {
     }
   }
 
-  async markAsUsed(code: string): Promise<VoucherEntity> {
-    const voucher = await this.findOne(code);
+  async markAsUsed(
+    code: string,
+    user: UserEntity,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const repository = manager
+      ? manager.getRepository(VoucherEntity)
+      : this.voucherRepo;
+    const result = await repository
+      .createQueryBuilder()
+      .update(VoucherEntity)
+      .set({
+        used: true,
+        status: VoucherStatus.Redeemed,
+        redeemedAt: new Date(),
+      })
+      .where('code = :code', { code })
+      .andWhere('used = false')
+      .andWhere('status = :status', { status: VoucherStatus.Active })
+      .andWhere('"expiresAt" > CURRENT_TIMESTAMP')
+      .andWhere('"userId" = :userId', { userId: user.id })
+      .execute();
 
-    if (voucher.used) {
-      throw new ConflictException(`Voucher with code ${code} already used`);
+    if (result.affected !== 1) {
+      throw new ConflictException(
+        `Voucher with code ${code} is invalid or already used`,
+      );
     }
-
-    voucher.used = true;
-    return this.voucherRepo.save(voucher);
   }
 }

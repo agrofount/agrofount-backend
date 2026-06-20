@@ -1,36 +1,40 @@
 import {
   IsString,
   IsNumber,
-  IsArray,
   ValidateNested,
   IsEnum,
   IsOptional,
   IsDateString,
   IsBoolean,
+  IsNotEmpty,
+  IsDefined,
+  IsUUID,
+  Matches,
+  MaxLength,
+  ValidateIf,
+  IsPositive,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentChannel, PaymentMethod } from '../../payment/enum/payment.enum';
 
-class OrderItemDto {
-  @ApiProperty({ description: 'ID of the product', example: '1234567890' })
-  @IsString()
+export class OrderItemDto {
+  @ApiProperty({ description: 'Product location ID' })
+  @IsUUID()
   id: string;
 
-  @ApiProperty({
-    description: 'Name of the product',
-    example: 'Sample Product',
-  })
+  @ApiProperty({ description: 'Unit of measure', example: 'kg' })
   @IsString()
-  name: string;
+  @IsNotEmpty()
+  @MaxLength(40)
+  unit: string;
 
   @ApiProperty({ description: 'Quantity of the product', example: 2 })
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @IsPositive()
+  @Max(1_000_000)
   quantity: number;
-
-  @ApiProperty({ description: 'Price of the product', example: 19.99 })
-  @IsNumber()
-  price: number;
 }
 
 class AddressDto {
@@ -39,17 +43,17 @@ class AddressDto {
     example: '123 Main St',
   })
   @IsString()
-  @IsOptional()
+  @IsNotEmpty()
   street: string;
 
   @ApiPropertyOptional({ description: 'City', example: 'Anytown' })
   @IsString()
-  @IsOptional()
+  @IsNotEmpty()
   city: string;
 
   @ApiPropertyOptional({ description: 'State', example: 'CA' })
   @IsString()
-  @IsOptional()
+  @IsNotEmpty()
   state: string;
 
   @ApiPropertyOptional({ description: 'State', example: 'CA' })
@@ -64,23 +68,16 @@ class AddressDto {
 
   @ApiPropertyOptional({ description: 'Country', example: 'USA' })
   @IsString()
-  @IsOptional()
+  @IsNotEmpty()
   country: string;
 }
 
 export class CreateOrderDto {
-  @ApiProperty({ description: 'Total price of the order', example: 39.98 })
-  @IsNumber()
-  totalPrice: number;
-
-  @ApiProperty({
-    type: [OrderItemDto],
-    description: 'List of items in the order',
-  })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => OrderItemDto)
-  items: OrderItemDto[];
+  @ApiProperty({ description: 'user full name', example: 'John Doe  ' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  fullName: string;
 
   @ApiProperty({
     type: AddressDto,
@@ -88,7 +85,9 @@ export class CreateOrderDto {
   })
   @ValidateNested()
   @Type(() => AddressDto)
-  address: AddressDto;
+  @ValidateIf((value) => !value.isPickup)
+  @IsDefined()
+  address?: AddressDto;
 
   @ApiProperty({
     enum: PaymentMethod,
@@ -118,16 +117,16 @@ export class CreateOrderDto {
     example: '2023-12-25',
   })
   @IsDateString()
-  @IsOptional()
-  pickupDate: Date;
+  @ValidateIf((value) => value.isPickup)
+  pickupDate: string;
 
   @ApiPropertyOptional({
     description: 'Pickup time for the order',
     example: '14:00:00',
   })
-  @IsDateString()
-  @IsOptional()
-  pickupTime: Date;
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/)
+  @ValidateIf((value) => value.isPickup)
+  pickupTime: string;
 
   @ApiPropertyOptional({
     description: 'Voucher code applied to the order',
@@ -136,4 +135,17 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   voucherCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Phone number associated with the order',
+    example: '+1234567890',
+  })
+  @IsString()
+  @IsOptional()
+  phoneNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsUUID()
+  idempotencyKey?: string;
 }

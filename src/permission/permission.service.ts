@@ -5,6 +5,7 @@ import { UpdatePermissionDto } from './dto/update-permission.dto';
 @Injectable()
 export class PermissionService {
   create(createPermissionDto: CreatePermissionDto) {
+    void createPermissionDto;
     return 'This action adds a new permission';
   }
 
@@ -17,6 +18,7 @@ export class PermissionService {
   }
 
   update(id: number, updatePermissionDto: UpdatePermissionDto) {
+    void updatePermissionDto;
     return `This action updates a #${id} permission`;
   }
 
