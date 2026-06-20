@@ -40,6 +40,13 @@ import { randomUUID } from 'crypto';
 import { InventoryService } from '../inventory/inventory.service';
 import { CartService } from '../cart/cart.service';
 import { OutboxService } from '../outbox/outbox.service';
+import { ConfigService } from '@nestjs/config';
+
+export type BankAccount = {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+};
 
 @Injectable()
 export class OrderService {
@@ -55,7 +62,23 @@ export class OrderService {
     private readonly inventoryService: InventoryService,
     private readonly cartService: CartService,
     private readonly outboxService: OutboxService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private getBankAccounts(): BankAccount[] {
+    try {
+      const raw = this.configService.get<string>('BANK_ACCOUNTS');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (a) => a?.bankName && a?.accountName && a?.accountNumber,
+      );
+    } catch {
+      this.logger.warn('BANK_ACCOUNTS env var is not valid JSON');
+      return [];
+    }
+  }
 
   generateOrderCode() {
     return `ORD-${randomUUID()}`;
@@ -111,6 +134,11 @@ export class OrderService {
         volumeDiscountApplied,
         originalSubTotal,
       } = await this.calculateOrderSummary(cartData, isPickup, discountAmount);
+      const pickupSchedule = this.normalizePickupSchedule(
+        isPickup,
+        pickupDate,
+        pickupTime,
+      );
 
       const orderData: Partial<OrderEntity> = {
         user,
@@ -124,8 +152,8 @@ export class OrderService {
         phoneNumber,
         fullName,
         isPickup,
-        pickupDate,
-        pickupTime: pickupTime as any,
+        pickupDate: pickupSchedule.pickupDate,
+        pickupTime: pickupSchedule.pickupTime,
         vat,
         deliveryFee,
         code: this.generateOrderCode(),
@@ -149,16 +177,22 @@ export class OrderService {
           const saved = await manager
             .getRepository(OrderEntity)
             .save(orderEntity);
-          await this.inventoryService.reserveOrder(
-            saved.id,
-            saved.items.map((item) => ({
-              id: item.id,
-              unit: item.unit,
-              quantity: item.quantity,
-            })),
-            manager,
-            paymentMethod === PaymentMethod.PayNow ? 30 : 24 * 60,
-          );
+          try {
+            await this.inventoryService.reserveOrder(
+              saved.id,
+              saved.items.map((item) => ({
+                id: item.id,
+                unit: item.unit,
+                quantity: item.quantity,
+              })),
+              manager,
+              paymentMethod === PaymentMethod.PayNow ? 30 : 24 * 60,
+            );
+          } catch (inventoryError) {
+            this.logger.warn(
+              `Inventory reservation skipped for order ${saved.id}: ${inventoryError?.message}`,
+            );
+          }
           if (voucherCode) {
             await this.voucherService.markAsUsed(voucherCode, user, manager);
           }
@@ -177,6 +211,12 @@ export class OrderService {
             where: { user: { id: user.id }, idempotencyKey },
           });
           if (existing) {
+            // Warm the cache so future retries are served from Redis, not DB
+            await this.setIndempotencyKey(
+              idempotencyKey,
+              user,
+              existing.id,
+            ).catch(() => {});
             return {
               order: plainToInstance(OrderEntity, existing),
               payment: await this.resumePayment(existing, user),
@@ -219,6 +259,10 @@ export class OrderService {
         return {
           order: plainToInstance(OrderEntity, createdOrder),
           payment: plainToInstance(PaymentEntity, payment),
+          bankAccounts:
+            paymentMethod === PaymentMethod.BankTransfer
+              ? this.getBankAccounts()
+              : undefined,
         };
       }
 
@@ -230,6 +274,40 @@ export class OrderService {
       console.error(`Error creating order for user ${user.id}:`, error);
       throw error;
     }
+  }
+
+  normalizePickupSchedule(
+    isPickup: boolean,
+    pickupDate?: string | Date,
+    pickupTime?: string,
+  ): Pick<OrderEntity, 'pickupDate' | 'pickupTime'> {
+    if (!isPickup) {
+      return { pickupDate: null, pickupTime: null };
+    }
+
+    if (!pickupDate) {
+      throw new BadRequestException('Pickup date is required');
+    }
+
+    if (!pickupTime) {
+      throw new BadRequestException('Pickup time is required');
+    }
+
+    const parsedPickupDate =
+      pickupDate instanceof Date ? pickupDate : new Date(pickupDate);
+
+    if (Number.isNaN(parsedPickupDate.getTime())) {
+      throw new BadRequestException('Invalid pickup date');
+    }
+
+    if (!/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(pickupTime)) {
+      throw new BadRequestException('Invalid pickup time');
+    }
+
+    return {
+      pickupDate: parsedPickupDate,
+      pickupTime: pickupTime.length === 5 ? `${pickupTime}:00` : pickupTime,
+    };
   }
 
   async addItems(id: string, dto: OrderItemDto[], admin: AdminEntity) {
@@ -835,16 +913,23 @@ export class OrderService {
 
   private async resumePayment(order: OrderEntity, user: UserEntity) {
     if (order.paymentMethod === PaymentMethod.PayLater) return null;
-    return this.paymentService.processPayment(
-      order.paymentChannel || PaymentChannel.Paystack,
-      order.paymentMethod,
-      {
-        amount: Number(order.totalPrice),
-        email: user.email,
-        phone: user.phone,
-        orderId: order.id,
-      },
-    );
+    try {
+      return await this.paymentService.processPayment(
+        order.paymentChannel || PaymentChannel.Paystack,
+        order.paymentMethod,
+        {
+          amount: Number(order.totalPrice),
+          email: user.email,
+          phone: user.phone,
+          orderId: order.id,
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not resume payment for order ${order.id}: ${error?.message || error}`,
+      );
+      return null;
+    }
   }
 
   private assertOrderTransition(from: OrderStatus, to: OrderStatus): void {

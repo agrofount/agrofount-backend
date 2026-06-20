@@ -85,10 +85,10 @@ export class OrderEntity {
   isPickup: boolean;
 
   @Column({ nullable: true })
-  pickupDate: Date;
+  pickupDate: Date | null;
 
-  @Column({ nullable: true })
-  pickupTime: Date;
+  @Column({ type: 'time', nullable: true })
+  pickupTime: string | null;
 
   @Column('json')
   address: addressInterface;

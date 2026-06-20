@@ -25,6 +25,8 @@ const REQUIRED_PRODUCTION_VARIABLES = [
   'AWS_BUCKET_NAME',
   'FRONTEND_URL',
   'ADMIN_FRONTEND_URL',
+  'AI_PROVIDER',
+  'AI_FARM_ASSISTANT_ENABLED',
 ] as const;
 
 export function validateEnvironment(
@@ -83,6 +85,17 @@ export function validateEnvironment(
     if (config.DB_SSL_REJECT_UNAUTHORIZED === 'false') {
       throw new Error(
         'Production DB_SSL_REJECT_UNAUTHORIZED must not be false',
+      );
+    }
+    if (
+      config.AI_FARM_ASSISTANT_ENABLED === 'true' &&
+      config.AI_PROVIDER === 'bedrock' &&
+      !config.AWS_ACCESS_KEY_ID &&
+      !process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI &&
+      !process.env.AWS_WEB_IDENTITY_TOKEN_FILE
+    ) {
+      throw new Error(
+        'AWS credentials (AWS_ACCESS_KEY_ID or an IAM role) are required when AI Farm Assistant is enabled with Bedrock',
       );
     }
     const jwtExpiration = String(config.JWT_EXPIRATION || '15m');

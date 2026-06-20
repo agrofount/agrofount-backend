@@ -80,6 +80,13 @@ export class PaymentEntity {
   @Column('boolean', { default: false })
   confirmTransfer: boolean;
 
+  @Column({ type: 'jsonb', nullable: true })
+  selectedBankAccount: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+  } | null;
+
   @Column('boolean', { default: false })
   referralProcessed: boolean;
 

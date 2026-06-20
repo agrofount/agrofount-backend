@@ -46,6 +46,7 @@ import { OutboxModule } from './outbox/outbox.module';
 import { RequestAuditInterceptor } from './common/interceptors/request-audit.interceptor';
 import { AppThrottlingModule } from './common/throttling/throttling.module';
 import { CareersModule } from './careers/careers.module';
+import { AiFarmAssistantModule } from './ai-farm-assistant/ai-farm-assistant.module';
 
 @Module({
   imports: [
@@ -123,6 +124,7 @@ import { CareersModule } from './careers/careers.module';
     InvoiceModule,
     VoucherModule,
     CareersModule,
+    AiFarmAssistantModule,
     // AiChatModule,
     DisbursementModule,
   ],
