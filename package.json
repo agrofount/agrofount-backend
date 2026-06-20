@@ -24,6 +24,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.864.0",
     "@aws-sdk/client-s3": "^3.1068.0",
     "@aws-sdk/lib-storage": "^3.1068.0",
     "@aws-sdk/s3-request-presigner": "^3.1068.0",
@@ -64,7 +65,6 @@
     "typeorm-extension": "^3.9.0"
   },
   "devDependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.864.0",
     "@aws-sdk/client-dynamodb": "^3.864.0",
     "@aws-sdk/client-lex-runtime-v2": "^3.864.0",
     "@aws-sdk/util-dynamodb": "^3.864.0",
