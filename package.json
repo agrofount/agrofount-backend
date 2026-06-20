@@ -115,5 +115,9 @@
     "setupFiles": [
       "<rootDir>/polyfills/node-buffer.ts"
     ]
+  },
+  "overrides": {
+    "multer": "^2.2.0",
+    "ws": "^8.21.0"
   }
 }
