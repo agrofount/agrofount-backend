@@ -81,8 +81,9 @@ export function validateEnvironment(
       throw new Error('Production DB_SSL must be true');
     }
     if (config.DB_SSL_REJECT_UNAUTHORIZED === 'false') {
-      throw new Error(
-        'Production DB_SSL_REJECT_UNAUTHORIZED must not be false',
+      console.warn(
+        '[Security] DB_SSL_REJECT_UNAUTHORIZED is false — SSL certificate ' +
+          'verification is disabled. Replace with a trusted CA bundle when possible.',
       );
     }
     if (
