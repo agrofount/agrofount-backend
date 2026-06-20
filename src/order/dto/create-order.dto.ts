@@ -118,7 +118,7 @@ export class CreateOrderDto {
   })
   @IsDateString()
   @ValidateIf((value) => value.isPickup)
-  pickupDate: Date;
+  pickupDate: string;
 
   @ApiPropertyOptional({
     description: 'Pickup time for the order',

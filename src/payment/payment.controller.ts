@@ -61,9 +61,24 @@ export class PaymentController {
 
   @Patch(':id/confirm')
   @UseGuards(JwtAuthGuard)
-  confirmTransfer(@Param('id') id: string, @CurrentUser() user: UserEntity) {
+  confirmTransfer(
+    @Param('id') id: string,
+    @CurrentUser() user: UserEntity,
+    @Body()
+    body?: {
+      selectedBankAccount?: {
+        bankName: string;
+        accountName: string;
+        accountNumber: string;
+      };
+    },
+  ) {
     this.logger.log('confirming transfer');
-    return this.paymentService.confirmTransfer(id, user.id);
+    return this.paymentService.confirmTransfer(
+      id,
+      user.id,
+      body?.selectedBankAccount,
+    );
   }
 
   @Patch(':id/confirm-transfer-received')

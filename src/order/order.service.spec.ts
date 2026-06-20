@@ -33,4 +33,35 @@ describe('OrderService pricing invariants', () => {
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('keeps pickup time as a database time string', () => {
+    const schedule = service.normalizePickupSchedule(
+      true,
+      '2026-06-30T23:00:00.000Z',
+      '01:15:00',
+    );
+
+    expect(schedule.pickupDate).toBeInstanceOf(Date);
+    expect(schedule.pickupTime).toBe('01:15:00');
+  });
+
+  it('normalizes short pickup time strings with seconds', () => {
+    const schedule = service.normalizePickupSchedule(
+      true,
+      '2026-06-30',
+      '01:15',
+    );
+
+    expect(schedule.pickupTime).toBe('01:15:00');
+  });
+
+  it('rejects invalid pickup schedule values before persistence', () => {
+    expect(() =>
+      service.normalizePickupSchedule(true, 'not-a-date', '01:15:00'),
+    ).toThrow(BadRequestException);
+
+    expect(() =>
+      service.normalizePickupSchedule(true, '2026-06-30', '25:99:00'),
+    ).toThrow(BadRequestException);
+  });
 });

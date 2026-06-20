@@ -123,7 +123,15 @@ export class PaymentService {
     return this.paymentRepository.findOne({ where: { orderId } });
   }
 
-  async confirmTransfer(paymentId: string, userId: string) {
+  async confirmTransfer(
+    paymentId: string,
+    userId: string,
+    selectedBankAccount?: {
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+    },
+  ) {
     const payment = await this.paymentRepository.findOne({
       where: { id: paymentId },
     });
@@ -147,6 +155,9 @@ export class PaymentService {
     }
 
     payment.confirmTransfer = true;
+    if (selectedBankAccount) {
+      payment.selectedBankAccount = selectedBankAccount;
+    }
     const updatedPayment = await this.paymentRepository.save(payment);
     this.logger.debug(
       `Payment ${updatedPayment.id} confirmed with status ${updatedPayment.paymentStatus}`,
@@ -256,11 +267,15 @@ export class PaymentService {
       const orderRepository = manager.getRepository(OrderEntity);
       const order = await orderRepository.findOne({
         where: { id: orderId },
-        relations: ['user'],
         lock: { mode: 'pessimistic_write' },
       });
       if (!order)
         throw new NotFoundException(`Order with ID ${orderId} not found`);
+
+      // Load user without lock — FOR UPDATE cannot be applied across a LEFT JOIN
+      order.user = await manager
+        .getRepository(UserEntity)
+        .findOne({ where: { id: order.userId } });
 
       const repository = manager.getRepository(PaymentEntity);
       let payment = await repository.findOne({ where: { orderId } });
