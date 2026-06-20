@@ -84,7 +84,9 @@ export class AiProviderService {
       ? input.products
           .map(
             (product) =>
-              `- ${product.name} (${product.category || 'Product'}) ₦${product.price}`,
+              `- ${product.name} (${product.category || 'Product'}) ₦${
+                product.price
+              }`,
           )
           .join('\n')
       : 'No matching Agrofount products were found for this message.';
@@ -98,7 +100,9 @@ export class AiProviderService {
     const imageFormat: 'jpeg' | 'png' | 'webp' | 'gif' =
       mimeToFormat[input.imageMimeType ?? ''] ?? 'jpeg';
 
-    const userContent = `Farm context: ${JSON.stringify(input.farmContext || {})}
+    const userContent = `Farm context: ${JSON.stringify(
+      input.farmContext || {},
+    )}
 
 Relevant Agrofount products:
 ${productContext}
@@ -109,7 +113,11 @@ ${input.history
   .map((message) => `${message.role}: ${message.content}`)
   .join('\n')}
 
-Farmer question: ${input.message}${input.imageBuffer ? '\n[The farmer has also attached an image for analysis. Describe what you can observe in the image and provide relevant advice.]' : ''}
+Farmer question: ${input.message}${
+      input.imageBuffer
+        ? '\n[The farmer has also attached an image for analysis. Describe what you can observe in the image and provide relevant advice.]'
+        : ''
+    }
 
 Safety precheck requires vet attention: ${input.requiresVetAttention}
 
@@ -118,15 +126,22 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
     const command = new ConverseCommand({
       modelId,
       system: [{ text: FARM_ASSISTANT_SYSTEM_INSTRUCTION }],
-      messages: [{
-        role: 'user',
-        content: input.imageBuffer
-          ? [
-              { image: { format: imageFormat, source: { bytes: new Uint8Array(input.imageBuffer) } } },
-              { text: userContent },
-            ]
-          : [{ text: userContent }],
-      }],
+      messages: [
+        {
+          role: 'user',
+          content: input.imageBuffer
+            ? [
+                {
+                  image: {
+                    format: imageFormat,
+                    source: { bytes: new Uint8Array(input.imageBuffer) },
+                  },
+                },
+                { text: userContent },
+              ]
+            : [{ text: userContent }],
+        },
+      ],
       inferenceConfig: { temperature: 0.4, maxTokens: 1024 },
     });
 

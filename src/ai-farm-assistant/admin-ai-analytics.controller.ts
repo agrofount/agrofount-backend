@@ -22,7 +22,8 @@ export class AdminAiAnalyticsController {
   @Get('summary')
   @RequiredPermissions('read_ai_analytics')
   @ApiOperation({
-    summary: 'KPI summary — total chats, active farmers, revenue influenced, orders from Ayo, vet escalations',
+    summary:
+      'KPI summary — total chats, active farmers, revenue influenced, orders from Ayo, vet escalations',
   })
   getSummary(@Query() query: AiAnalyticsQueryDto) {
     return this.analyticsService.getSummary(query.from, query.to);
@@ -68,7 +69,9 @@ export class AdminAiAnalyticsController {
 
   @Get('top-products')
   @RequiredPermissions('read_ai_analytics')
-  @ApiOperation({ summary: 'Top products recommended by Ayo with order attribution' })
+  @ApiOperation({
+    summary: 'Top products recommended by Ayo with order attribution',
+  })
   getTopProducts(@Query() query: AiAnalyticsTopQueryDto) {
     return this.analyticsService.getTopProducts(
       query.from,
@@ -79,7 +82,9 @@ export class AdminAiAnalyticsController {
 
   @Get('health-alerts')
   @RequiredPermissions('read_ai_analytics')
-  @ApiOperation({ summary: 'Disease and health alert reports from farmer conversations' })
+  @ApiOperation({
+    summary: 'Disease and health alert reports from farmer conversations',
+  })
   getHealthAlerts(@Query() query: AiAnalyticsQueryDto) {
     return this.analyticsService.getHealthAlerts(query.from, query.to);
   }
@@ -87,8 +92,8 @@ export class AdminAiAnalyticsController {
   @Get('satisfaction')
   @RequiredPermissions('read_ai_analytics')
   @ApiOperation({ summary: 'User satisfaction metrics' })
-  getSatisfaction(@Query() query: AiAnalyticsQueryDto) {
-    return this.analyticsService.getSatisfaction(query.from, query.to);
+  getSatisfaction() {
+    return this.analyticsService.getSatisfaction();
   }
 
   @Get('bird-type-breakdown')

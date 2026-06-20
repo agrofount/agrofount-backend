@@ -35,7 +35,11 @@ export class AiFarmAssistantService {
     private readonly configService: ConfigService,
   ) {}
 
-  async ask(userId: string, dto: AskFarmAssistantDto, image?: Express.Multer.File) {
+  async ask(
+    userId: string,
+    dto: AskFarmAssistantDto,
+    image?: Express.Multer.File,
+  ) {
     this.ensureEnabled();
     const message = this.sanitizeMessage(dto.message);
     const requiresVetAttention = this.detectVetAttention(message);
