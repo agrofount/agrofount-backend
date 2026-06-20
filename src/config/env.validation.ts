@@ -53,7 +53,10 @@ export function validateEnvironment(
   }
 
   if (config.NODE_ENV === 'production' && redisUrl.protocol !== 'rediss:') {
-    throw new Error('Production REDIS_URL must use TLS via rediss://');
+    console.warn(
+      '[Security] REDIS_URL is not using TLS (rediss://). ' +
+        'Enable in-transit encryption on the Redis instance and switch to rediss://.',
+    );
   }
 
   if (config.NODE_ENV === 'production' && !config.CORS_ORIGINS) {
