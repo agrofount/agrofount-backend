@@ -4,6 +4,10 @@ export class UserMissingColumns1782060000000 implements MigrationInterface {
   name = 'UserMissingColumns1782060000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    if (!(await queryRunner.hasTable('user'))) {
+      return;
+    }
+
     await queryRunner.query(`
       ALTER TABLE "user"
       ADD COLUMN IF NOT EXISTS "verificationTokenExpires" timestamp NULL,
@@ -15,6 +19,10 @@ export class UserMissingColumns1782060000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    if (!(await queryRunner.hasTable('user'))) {
+      return;
+    }
+
     await queryRunner.query(`
       ALTER TABLE "user"
       DROP COLUMN IF EXISTS "verificationTokenExpires",
