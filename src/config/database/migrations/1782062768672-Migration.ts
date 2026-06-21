@@ -29,20 +29,17 @@ export class Migration1782062768672 implements MigrationInterface {
 
     if (await queryRunner.hasTable('ai_settings')) {
       await queryRunner.query(
-        `ALTER TABLE "ai_settings" ALTER COLUMN "costPer1MInputTokensUSD" SET DEFAULT 0.06`,
+        `ALTER TABLE "ai_settings" ALTER COLUMN "costPer1MInputTokensUSD" SET DEFAULT '0.06'`,
       );
       await queryRunner.query(
-        `ALTER TABLE "ai_settings" ALTER COLUMN "costPer1MOutputTokensUSD" SET DEFAULT 0.24`,
+        `ALTER TABLE "ai_settings" ALTER COLUMN "costPer1MOutputTokensUSD" SET DEFAULT '0.24'`,
       );
     }
 
     if (
       (await queryRunner.hasTable('credit_history')) &&
       (await queryRunner.hasTable('user')) &&
-      !(await hasConstraint(
-        'credit_history',
-        'FK_7c689c904a5dadd63126a5c948f',
-      ))
+      !(await hasConstraint('credit_history', 'FK_7c689c904a5dadd63126a5c948f'))
     ) {
       await queryRunner.query(
         `ALTER TABLE "credit_history" ADD CONSTRAINT "FK_7c689c904a5dadd63126a5c948f" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`,
@@ -52,10 +49,7 @@ export class Migration1782062768672 implements MigrationInterface {
     if (
       (await queryRunner.hasTable('credit_history')) &&
       (await queryRunner.hasTable('credit_facility_request')) &&
-      !(await hasConstraint(
-        'credit_history',
-        'FK_10630eac10287778cf5f22af205',
-      ))
+      !(await hasConstraint('credit_history', 'FK_10630eac10287778cf5f22af205'))
     ) {
       await queryRunner.query(
         `ALTER TABLE "credit_history" ADD CONSTRAINT "FK_10630eac10287778cf5f22af205" FOREIGN KEY ("creditFacilityId") REFERENCES "credit_facility_request"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`,
