@@ -23,8 +23,12 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_auth_session" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_auth_session_principal" ON "auth_session" ("principalType", "principalId")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_auth_session_expires" ON "auth_session" ("expiresAt")`);
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_auth_session_principal" ON "auth_session" ("principalType", "principalId")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_auth_session_expires" ON "auth_session" ("expiresAt")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "inventory" (
@@ -42,7 +46,9 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "CHK_inventory_lte"      CHECK ("reservedQuantity"  <= "availableQuantity")
       )
     `);
-    await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "IDX_inventory_product_unit" ON "inventory" ("productLocationId", "unit")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "IDX_inventory_product_unit" ON "inventory" ("productLocationId", "unit")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "inventory_reservation" (
@@ -58,8 +64,12 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_inventory_reservation" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "IDX_inv_res_order_product_unit" ON "inventory_reservation" ("orderId", "productLocationId", "unit")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_inv_res_status_expires" ON "inventory_reservation" ("status", "expiresAt")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "IDX_inv_res_order_product_unit" ON "inventory_reservation" ("orderId", "productLocationId", "unit")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_inv_res_status_expires" ON "inventory_reservation" ("status", "expiresAt")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "outbox_event" (
@@ -76,7 +86,9 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_outbox_event" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_outbox_status_next" ON "outbox_event" ("status", "nextAttemptAt")`);
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_outbox_status_next" ON "outbox_event" ("status", "nextAttemptAt")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "upload_asset" (
@@ -96,8 +108,12 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "UQ_upload_asset_key"     UNIQUE ("objectKey")
       )
     `);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_upload_owner_created" ON "upload_asset" ("ownerId", "createdAt")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_upload_owner_checksum" ON "upload_asset" ("ownerId", "checksum")`);
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_upload_owner_created" ON "upload_asset" ("ownerId", "createdAt")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_upload_owner_checksum" ON "upload_asset" ("ownerId", "checksum")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "ledger_entry" (
@@ -116,9 +132,15 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_ledger_entry" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "UQ_ledger_operation_line" ON "ledger_entry" ("operationKey", "lineNumber")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ledger_account_created" ON "ledger_entry" ("accountType", "accountId", "createdAt")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_ledger_reference" ON "ledger_entry" ("referenceType", "referenceId")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_ledger_operation_line" ON "ledger_entry" ("operationKey", "lineNumber")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_ledger_account_created" ON "ledger_entry" ("accountType", "accountId", "createdAt")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_ledger_reference" ON "ledger_entry" ("referenceType", "referenceId")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "product_likes" (
@@ -130,7 +152,9 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "UQ_product_likes_user_product" UNIQUE ("userId", "productLocationId")
       )
     `);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_product_likes_product_created" ON "product_likes" ("productLocationId", "createdAt")`);
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_product_likes_product_created" ON "product_likes" ("productLocationId", "createdAt")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "seller_interest" (
@@ -156,8 +180,12 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_seller_interest" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_seller_interest_email"  ON "seller_interest" ("email", "createdAt")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_seller_interest_status" ON "seller_interest" ("status", "createdAt")`);
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_seller_interest_email"  ON "seller_interest" ("email", "createdAt")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_seller_interest_status" ON "seller_interest" ("status", "createdAt")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "payment_attempt" (
@@ -176,8 +204,12 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_payment_attempt" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "UQ_payment_attempt_number" ON "payment_attempt" ("paymentId", "attemptNumber")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_payment_attempt_status" ON "payment_attempt" ("status", "createdAt")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_payment_attempt_number" ON "payment_attempt" ("paymentId", "attemptNumber")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_payment_attempt_status" ON "payment_attempt" ("status", "createdAt")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "payment_refund" (
@@ -197,9 +229,15 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_payment_refund" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "UQ_payment_refund_op_key"   ON "payment_refund" ("operationKey")`);
-    await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "UQ_payment_refund_prov_id"  ON "payment_refund" ("providerRefundId") WHERE "providerRefundId" IS NOT NULL`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_payment_refund_payment"         ON "payment_refund" ("paymentId", "status")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_payment_refund_op_key"   ON "payment_refund" ("operationKey")`,
+    );
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_payment_refund_prov_id"  ON "payment_refund" ("providerRefundId") WHERE "providerRefundId" IS NOT NULL`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_payment_refund_payment"         ON "payment_refund" ("paymentId", "status")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "payment_webhook_event" (
@@ -216,18 +254,22 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_payment_webhook_event" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "UQ_payment_webhook_provider_key" ON "payment_webhook_event" ("provider", "eventKey")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_payment_webhook_provider_key" ON "payment_webhook_event" ("provider", "eventKey")`,
+    );
 
     // ── New columns on existing tables ──
 
-    await queryRunner.query(`
-      ALTER TABLE "Admin"
-      ADD COLUMN IF NOT EXISTS "tokenVersion"              integer   NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS "mfaEnabled"               boolean   NOT NULL DEFAULT false,
-      ADD COLUMN IF NOT EXISTS "mfaSecretEncrypted"        text      NULL,
-      ADD COLUMN IF NOT EXISTS "mfaRecoveryCodeHashes"     jsonb     NOT NULL DEFAULT '[]'::jsonb,
-      ADD COLUMN IF NOT EXISTS "verificationTokenExpires"  timestamp NULL
-    `);
+    if (await queryRunner.hasTable('Admin')) {
+      await queryRunner.query(`
+        ALTER TABLE "Admin"
+        ADD COLUMN IF NOT EXISTS "tokenVersion"              integer   NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS "mfaEnabled"               boolean   NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS "mfaSecretEncrypted"        text      NULL,
+        ADD COLUMN IF NOT EXISTS "mfaRecoveryCodeHashes"     jsonb     NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS "verificationTokenExpires"  timestamp NULL
+      `);
+    }
 
     // audit_logs may not exist at all if the module was not wired up during
     // initial sync — create it with every column so the table is always present.
@@ -254,9 +296,15 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
         CONSTRAINT "PK_audit_logs" PRIMARY KEY ("id")
       )
     `);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_audit_logs_created"        ON "audit_logs" ("createdAt")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_audit_logs_user_created"   ON "audit_logs" ("userId", "createdAt")`);
-    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_audit_logs_action_created" ON "audit_logs" ("action", "createdAt")`);
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_audit_logs_created"        ON "audit_logs" ("createdAt")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_audit_logs_user_created"   ON "audit_logs" ("userId", "createdAt")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_audit_logs_action_created" ON "audit_logs" ("action", "createdAt")`,
+    );
     // If the table already existed with old columns, add the new ones.
     await queryRunner.query(`
       ALTER TABLE "audit_logs"
@@ -271,42 +319,52 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
       ADD COLUMN IF NOT EXISTS "reason"      character varying(500) NULL
     `);
 
-    await queryRunner.query(`
-      ALTER TABLE "orders"
-      ADD COLUMN IF NOT EXISTS "userId"         uuid              NULL,
-      ADD COLUMN IF NOT EXISTS "fullName"        character varying NULL,
-      ADD COLUMN IF NOT EXISTS "isPickup"        boolean          NOT NULL DEFAULT false,
-      ADD COLUMN IF NOT EXISTS "pickupDate"      timestamp        NULL,
-      ADD COLUMN IF NOT EXISTS "phoneNumber"     character varying NULL,
-      ADD COLUMN IF NOT EXISTS "idempotencyKey"  character varying NULL,
-      ADD COLUMN IF NOT EXISTS "updatedByAdmin"  boolean          NOT NULL DEFAULT false
-    `);
+    if (await queryRunner.hasTable('orders')) {
+      await queryRunner.query(`
+        ALTER TABLE "orders"
+        ADD COLUMN IF NOT EXISTS "userId"         uuid              NULL,
+        ADD COLUMN IF NOT EXISTS "fullName"        character varying NULL,
+        ADD COLUMN IF NOT EXISTS "isPickup"        boolean          NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS "pickupDate"      timestamp        NULL,
+        ADD COLUMN IF NOT EXISTS "phoneNumber"     character varying NULL,
+        ADD COLUMN IF NOT EXISTS "idempotencyKey"  character varying NULL,
+        ADD COLUMN IF NOT EXISTS "updatedByAdmin"  boolean          NOT NULL DEFAULT false
+      `);
+    }
 
-    await queryRunner.query(`
-      ALTER TABLE "payments"
-      ADD COLUMN IF NOT EXISTS "amountMinor"              bigint               NULL,
-      ADD COLUMN IF NOT EXISTS "amountPaidMinor"          bigint               NULL,
-      ADD COLUMN IF NOT EXISTS "currency"                 character varying(3) NOT NULL DEFAULT 'NGN',
-      ADD COLUMN IF NOT EXISTS "providerStatus"           character varying(80) NULL,
-      ADD COLUMN IF NOT EXISTS "failureReason"            text                 NULL,
-      ADD COLUMN IF NOT EXISTS "initializationAttempts"   integer              NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS "initializedAt"            timestamp with time zone NULL,
-      ADD COLUMN IF NOT EXISTS "initializationLeaseUntil" timestamp with time zone NULL,
-      ADD COLUMN IF NOT EXISTS "completedAt"              timestamp with time zone NULL,
-      ADD COLUMN IF NOT EXISTS "referralProcessed"        boolean              NOT NULL DEFAULT false
-    `);
+    if (await queryRunner.hasTable('payments')) {
+      await queryRunner.query(`
+        ALTER TABLE "payments"
+        ADD COLUMN IF NOT EXISTS "amountMinor"              bigint               NULL,
+        ADD COLUMN IF NOT EXISTS "amountPaidMinor"          bigint               NULL,
+        ADD COLUMN IF NOT EXISTS "currency"                 character varying(3) NOT NULL DEFAULT 'NGN',
+        ADD COLUMN IF NOT EXISTS "providerStatus"           character varying(80) NULL,
+        ADD COLUMN IF NOT EXISTS "failureReason"            text                 NULL,
+        ADD COLUMN IF NOT EXISTS "initializationAttempts"   integer              NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS "initializedAt"            timestamp with time zone NULL,
+        ADD COLUMN IF NOT EXISTS "initializationLeaseUntil" timestamp with time zone NULL,
+        ADD COLUMN IF NOT EXISTS "completedAt"              timestamp with time zone NULL,
+        ADD COLUMN IF NOT EXISTS "referralProcessed"        boolean              NOT NULL DEFAULT false
+      `);
+    }
 
-    await queryRunner.query(`
-      ALTER TABLE "wallet_transaction"
-      ADD COLUMN IF NOT EXISTS "amountMinor"   bigint               NULL,
-      ADD COLUMN IF NOT EXISTS "operationKey"  character varying(160) NULL
-    `);
+    if (await queryRunner.hasTable('wallet_transaction')) {
+      await queryRunner.query(`
+        ALTER TABLE "wallet_transaction"
+        ADD COLUMN IF NOT EXISTS "amountMinor"   bigint               NULL,
+        ADD COLUMN IF NOT EXISTS "operationKey"  character varying(160) NULL
+      `);
+    }
 
-    await queryRunner.query(`
-      ALTER TABLE "shipment"
-      ADD COLUMN IF NOT EXISTS "orderId" uuid NULL
-    `);
-    await queryRunner.query(`CREATE UNIQUE INDEX IF NOT EXISTS "IDX_shipment_order" ON "shipment" ("orderId") WHERE "orderId" IS NOT NULL`);
+    if (await queryRunner.hasTable('shipment')) {
+      await queryRunner.query(`
+        ALTER TABLE "shipment"
+        ADD COLUMN IF NOT EXISTS "orderId" uuid NULL
+      `);
+      await queryRunner.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS "IDX_shipment_order" ON "shipment" ("orderId") WHERE "orderId" IS NOT NULL`,
+      );
+    }
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
