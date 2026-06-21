@@ -17,7 +17,8 @@ export class AdminAiSettingsController {
   @Get()
   @RequiredPermissions('read_ai_analytics')
   @ApiOperation({
-    summary: 'Get Ayo AI settings — active state, provider, model, monthly budget',
+    summary:
+      'Get Ayo AI settings — active state, provider, model, monthly budget',
   })
   getSettings() {
     return this.aiSettingsService.getSettings();
@@ -26,7 +27,8 @@ export class AdminAiSettingsController {
   @Patch()
   @RequiredPermissions('manage_ai_settings')
   @ApiOperation({
-    summary: 'Update Ayo AI settings — toggle active state, set budget or token cost rates',
+    summary:
+      'Update Ayo AI settings — toggle active state, set budget or token cost rates',
   })
   updateSettings(@Body() dto: UpdateAiSettingsDto) {
     return this.aiSettingsService.updateSettings(dto);

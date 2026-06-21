@@ -183,11 +183,21 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
         this.logger.warn(
           'Bedrock response did not contain valid JSON, falling back to rule-based reply',
         );
-        return this.generateRuleBasedReply(input, { inputTokens, outputTokens, latencyMs, modelId });
+        return this.generateRuleBasedReply(input, {
+          inputTokens,
+          outputTokens,
+          latencyMs,
+          modelId,
+        });
       }
 
       const parsed = JSON.parse(jsonMatch[0]);
-      return this.normalizeProviderOutput(parsed, input, { inputTokens, outputTokens, latencyMs, modelId });
+      return this.normalizeProviderOutput(parsed, input, {
+        inputTokens,
+        outputTokens,
+        latencyMs,
+        modelId,
+      });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
       this.logger.error(
@@ -202,7 +212,12 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
 
   private generateRuleBasedReply(
     input: FarmAssistantProviderInput,
-    usage?: { inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; modelId: string | null },
+    usage?: {
+      inputTokens: number | null;
+      outputTokens: number | null;
+      latencyMs: number | null;
+      modelId: string | null;
+    },
   ): FarmAssistantProviderOutput {
     const lowerMessage = input.message.toLowerCase();
     const age = Number(input.farmContext?.birdAgeWeeks);
@@ -256,7 +271,12 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
   private normalizeProviderOutput(
     value: Record<string, any>,
     input: FarmAssistantProviderInput,
-    usage: { inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; modelId: string | null },
+    usage: {
+      inputTokens: number | null;
+      outputTokens: number | null;
+      latencyMs: number | null;
+      modelId: string | null;
+    },
   ): FarmAssistantProviderOutput {
     const quickReplies = Array.isArray(value.quickReplies)
       ? value.quickReplies

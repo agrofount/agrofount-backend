@@ -8,7 +8,9 @@ export class AiStatusController {
   constructor(private readonly aiSettingsService: AiSettingsService) {}
 
   @Get('status')
-  @ApiOperation({ summary: 'Check whether Ayo AI is enabled on the marketplace' })
+  @ApiOperation({
+    summary: 'Check whether Ayo AI is enabled on the marketplace',
+  })
   async getStatus(): Promise<{ isActive: boolean }> {
     const isActive = await this.aiSettingsService.isAyoActive();
     return { isActive };

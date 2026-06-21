@@ -56,7 +56,10 @@ export class AiSettingsService {
       const settings = await this.getSettings();
       return settings.isActive;
     } catch (err) {
-      this.logger.warn('Could not read ai_settings — defaulting to active', err);
+      this.logger.warn(
+        'Could not read ai_settings — defaulting to active',
+        err,
+      );
       return true;
     }
   }
