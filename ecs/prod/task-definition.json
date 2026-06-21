@@ -15,8 +15,6 @@
         }
       ],
       "essential": true,
-      "readonlyRootFilesystem": true,
-      "user": "node",
       "healthCheck": {
         "command": [
           "CMD-SHELL",
