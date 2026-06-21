@@ -22,7 +22,11 @@ export class AiSettingsService {
 
     if (!settings) {
       settings = await this.settingsRepository.save(
-        this.settingsRepository.create({ id: SETTINGS_ID }),
+        this.settingsRepository.create({
+          id: SETTINGS_ID,
+          costPer1MInputTokensUSD: 0.06,
+          costPer1MOutputTokensUSD: 0.24,
+        }),
       );
     }
 
