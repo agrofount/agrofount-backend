@@ -125,7 +125,9 @@ export class AiFarmAssistantController {
   }
 
   @Post('conversations/:id/feedback')
-  @ApiOperation({ summary: 'Submit thumbs-up or thumbs-down for a conversation' })
+  @ApiOperation({
+    summary: 'Submit thumbs-up or thumbs-down for a conversation',
+  })
   submitFeedback(
     @CurrentUser() user: UserEntity,
     @Param('id', ParseUUIDPipe) id: string,

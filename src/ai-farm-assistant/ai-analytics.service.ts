@@ -458,9 +458,7 @@ export class AiAnalyticsService {
     const [current, previous, dailyRows, chatsRow] = await Promise.all([
       query(period.from, period.to),
       query(prev.from, prev.to),
-      this.dataSource.query<
-        { date: string; tokens: string }[]
-      >(
+      this.dataSource.query<{ date: string; tokens: string }[]>(
         `SELECT
            DATE_TRUNC('day', "createdAt") AS date,
            COALESCE(
@@ -492,8 +490,7 @@ export class AiAnalyticsService {
     const rateIn = Number(settings.costPer1MInputTokensUSD);
     const rateOut = Number(settings.costPer1MOutputTokensUSD);
     const totalCostUSD =
-      (inputTokens / 1_000_000) * rateIn +
-      (outputTokens / 1_000_000) * rateOut;
+      (inputTokens / 1_000_000) * rateIn + (outputTokens / 1_000_000) * rateOut;
     const avgCostPerChatUSD = totalChats > 0 ? totalCostUSD / totalChats : 0;
 
     const prevInput = Number(previous[0].input_tokens);
