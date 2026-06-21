@@ -12,6 +12,12 @@ export class Migration1782048405629 implements MigrationInterface {
     );
 
     if (await queryRunner.hasTable('Admin')) {
+      await queryRunner.query(`
+        ALTER TABLE "Admin"
+        ADD COLUMN IF NOT EXISTS "mfaEnabled" boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS "mfaSecretEncrypted" text NULL,
+        ADD COLUMN IF NOT EXISTS "mfaRecoveryCodeHashes" jsonb NOT NULL DEFAULT '[]'::jsonb
+      `);
       await queryRunner.query(
         `ALTER TABLE "Admin" ALTER COLUMN "mfaRecoveryCodeHashes" SET DEFAULT '[]'::jsonb`,
       );
