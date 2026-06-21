@@ -15,10 +15,16 @@ import {
   FarmAssistantMessageRole,
 } from './entities/farm-assistant-message.entity';
 import {
+  FarmAssistantFeedbackEntity,
+  FarmAssistantFeedbackRating,
+} from './entities/farm-assistant-feedback.entity';
+import {
   AiProviderService,
   FarmAssistantSuggestedProduct,
 } from './ai-provider.service';
+import { AiSettingsService } from './ai-settings.service';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
+import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 
 const MESSAGE_MAX_LENGTH = 2000;
 
@@ -29,9 +35,12 @@ export class AiFarmAssistantService {
     private readonly conversationRepository: Repository<FarmAssistantConversationEntity>,
     @InjectRepository(FarmAssistantMessageEntity)
     private readonly messageRepository: Repository<FarmAssistantMessageEntity>,
+    @InjectRepository(FarmAssistantFeedbackEntity)
+    private readonly feedbackRepository: Repository<FarmAssistantFeedbackEntity>,
     @InjectRepository(ProductLocationEntity)
     private readonly productLocationRepository: Repository<ProductLocationEntity>,
     private readonly aiProviderService: AiProviderService,
+    private readonly aiSettingsService: AiSettingsService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -40,7 +49,7 @@ export class AiFarmAssistantService {
     dto: AskFarmAssistantDto,
     image?: Express.Multer.File,
   ) {
-    this.ensureEnabled();
+    await this.ensureEnabled();
     const message = this.sanitizeMessage(dto.message);
     const requiresVetAttention = this.detectVetAttention(message);
     const suggestedProducts = await this.findSuggestedProducts(message);
@@ -105,6 +114,11 @@ export class AiFarmAssistantService {
           suggestedProducts,
           quickReplies: aiReply.quickReplies,
           requiresVetAttention: aiReply.requiresVetAttention,
+          inputTokens: aiReply.inputTokens,
+          outputTokens: aiReply.outputTokens,
+          latencyMs: aiReply.latencyMs,
+          modelId: aiReply.modelId,
+          provider: aiReply.modelId ? 'AWS Bedrock' : null,
         },
       }),
     );
@@ -143,10 +157,42 @@ export class AiFarmAssistantService {
     return { success: true, message: 'Conversation deleted successfully' };
   }
 
-  private ensureEnabled() {
+  async submitFeedback(
+    userId: string,
+    conversationId: string,
+    dto: SubmitFeedbackDto,
+  ) {
+    await this.findOwnedConversation(conversationId, userId);
+    const existing = await this.feedbackRepository.findOne({
+      where: { conversationId, userId },
+    });
+    if (existing) {
+      existing.rating = dto.rating as FarmAssistantFeedbackRating;
+      existing.messageId = dto.messageId ?? null;
+      await this.feedbackRepository.save(existing);
+    } else {
+      await this.feedbackRepository.save(
+        this.feedbackRepository.create({
+          conversationId,
+          messageId: dto.messageId ?? null,
+          userId,
+          rating: dto.rating as FarmAssistantFeedbackRating,
+        }),
+      );
+    }
+    return { success: true };
+  }
+
+  private async ensureEnabled(): Promise<void> {
     if (
       this.configService.get<string>('AI_FARM_ASSISTANT_ENABLED') === 'false'
     ) {
+      throw new ServiceUnavailableException(
+        'AI farm assistant is temporarily unavailable',
+      );
+    }
+    const active = await this.aiSettingsService.isAyoActive();
+    if (!active) {
       throw new ServiceUnavailableException(
         'AI farm assistant is temporarily unavailable',
       );

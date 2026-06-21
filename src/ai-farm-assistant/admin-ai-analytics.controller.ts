@@ -92,8 +92,17 @@ export class AdminAiAnalyticsController {
   @Get('satisfaction')
   @RequiredPermissions('read_ai_analytics')
   @ApiOperation({ summary: 'User satisfaction metrics' })
-  getSatisfaction() {
-    return this.analyticsService.getSatisfaction();
+  getSatisfaction(@Query() query: AiAnalyticsQueryDto) {
+    return this.analyticsService.getSatisfaction(query.from, query.to);
+  }
+
+  @Get('resource-consumption')
+  @RequiredPermissions('read_ai_analytics')
+  @ApiOperation({
+    summary: 'AI provider resource consumption — tokens, cost, daily usage',
+  })
+  getResourceConsumption(@Query() query: AiAnalyticsQueryDto) {
+    return this.analyticsService.getResourceConsumption(query.from, query.to);
   }
 
   @Get('bird-type-breakdown')
