@@ -63,16 +63,7 @@ jobs:
           DB_NAME: agrofount
           DB_SSL: 'false'
           DB_SYNCHRONIZE: 'false'
-        run: |
-          if npm run migration:generate -- src/config/database/migrations/_drift_check 2>&1; then
-            echo ""
-            echo "ERROR: Entity changes detected without a migration file."
-            echo "Run: npm run migration:generate -- src/config/database/migrations/YourMigrationName"
-            rm -f src/config/database/migrations/_drift_check*.ts
-            exit 1
-          else
-            echo "No schema drift — all entity changes have migrations."
-          fi
+        run: npm run migration:check
 
   deploy-dev:
     needs: [check-migrations]
