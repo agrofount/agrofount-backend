@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { ChartGranularity } from './dto/ai-analytics-query.dto';
+import { AiSettingsService } from './ai-settings.service';
 
 const DISEASE_KEYWORDS: { label: string; keywords: string[] }[] = [
   {
@@ -33,7 +34,10 @@ const DISEASE_KEYWORDS: { label: string; keywords: string[] }[] = [
 
 @Injectable()
 export class AiAnalyticsService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly aiSettingsService: AiSettingsService,
+  ) {}
 
   // ── date helpers ──────────────────────────────────────────────────────────
 
@@ -105,13 +109,13 @@ export class AiAnalyticsService {
       this.dataSource.query<{ count: number }[]>(
         `SELECT COUNT(*)::int AS count
          FROM farm_assistant_conversation
-         WHERE created_at BETWEEN $1 AND $2`,
+         WHERE "createdAt" BETWEEN $1 AND $2`,
         [from, to],
       ),
       this.dataSource.query<{ count: number }[]>(
-        `SELECT COUNT(DISTINCT user_id)::int AS count
+        `SELECT COUNT(DISTINCT "userId")::int AS count
          FROM farm_assistant_conversation
-         WHERE created_at BETWEEN $1 AND $2`,
+         WHERE "createdAt" BETWEEN $1 AND $2`,
         [from, to],
       ),
       this.dataSource.query<{ count: number }[]>(
@@ -119,7 +123,7 @@ export class AiAnalyticsService {
          FROM farm_assistant_message
          WHERE role = 'assistant'
            AND (metadata->>'requiresVetAttention')::boolean = true
-           AND created_at BETWEEN $1 AND $2`,
+           AND "createdAt" BETWEEN $1 AND $2`,
         [from, to],
       ),
       // Attribution: orders placed within 24 h of an AI conversation by the same user
@@ -131,9 +135,9 @@ export class AiAnalyticsService {
            AND EXISTS (
              SELECT 1
              FROM farm_assistant_conversation c
-             WHERE c.user_id = o."userId"::uuid
-               AND c.updated_at >= o."createdAt" - INTERVAL '24 hours'
-               AND c.updated_at <= o."createdAt"
+             WHERE c."userId" = o."userId"::uuid
+               AND c."updatedAt" >= o."createdAt" - INTERVAL '24 hours'
+               AND c."updatedAt" <= o."createdAt"
            )`,
         [from, to],
       ),
@@ -159,10 +163,10 @@ export class AiAnalyticsService {
     const trunc = granularity === ChartGranularity.Week ? 'week' : 'day';
 
     const rows = await this.dataSource.query<{ date: string; count: number }[]>(
-      `SELECT DATE_TRUNC($1, created_at) AS date, COUNT(*)::int AS count
+      `SELECT DATE_TRUNC($1, "createdAt") AS date, COUNT(*)::int AS count
        FROM farm_assistant_conversation
-       WHERE created_at BETWEEN $2 AND $3
-       GROUP BY DATE_TRUNC($1, created_at)
+       WHERE "createdAt" BETWEEN $2 AND $3
+       GROUP BY DATE_TRUNC($1, "createdAt")
        ORDER BY date ASC`,
       [trunc, period.from, period.to],
     );
@@ -179,15 +183,15 @@ export class AiAnalyticsService {
       this.dataSource.query<{ count: number }[]>(
         `SELECT COUNT(*)::int AS count
          FROM farm_assistant_conversation
-         WHERE created_at BETWEEN $1 AND $2`,
+         WHERE "createdAt" BETWEEN $1 AND $2`,
         [period.from, period.to],
       ),
       this.dataSource.query<{ count: number }[]>(
-        `SELECT COUNT(DISTINCT conversation_id)::int AS count
+        `SELECT COUNT(DISTINCT "conversationId")::int AS count
          FROM farm_assistant_message
          WHERE role = 'assistant'
            AND jsonb_array_length(COALESCE(metadata->'suggestedProducts', '[]'::jsonb)) > 0
-           AND created_at BETWEEN $1 AND $2`,
+           AND "createdAt" BETWEEN $1 AND $2`,
         [period.from, period.to],
       ),
       this.dataSource.query<{ count: number }[]>(
@@ -197,9 +201,9 @@ export class AiAnalyticsService {
            AND EXISTS (
              SELECT 1
              FROM farm_assistant_conversation c
-             WHERE c.user_id = o."userId"::uuid
-               AND c.updated_at >= o."createdAt" - INTERVAL '24 hours'
-               AND c.updated_at <= o."createdAt"
+             WHERE c."userId" = o."userId"::uuid
+               AND c."updatedAt" >= o."createdAt" - INTERVAL '24 hours'
+               AND c."updatedAt" <= o."createdAt"
            )`,
         [period.from, period.to],
       ),
@@ -239,7 +243,7 @@ export class AiAnalyticsService {
       `SELECT content, COUNT(*)::int AS count
        FROM farm_assistant_message
        WHERE role = 'user'
-         AND created_at BETWEEN $1 AND $2
+         AND "createdAt" BETWEEN $1 AND $2
        GROUP BY content
        ORDER BY count DESC
        LIMIT $3`,
@@ -268,7 +272,7 @@ export class AiAnalyticsService {
          AND metadata->'suggestedProducts' IS NOT NULL
          AND jsonb_typeof(metadata->'suggestedProducts') = 'array'
          AND elem->>'category' IS NOT NULL
-         AND created_at BETWEEN $1 AND $2
+         AND "createdAt" BETWEEN $1 AND $2
        GROUP BY elem->>'category'
        ORDER BY count DESC`,
       [period.from, period.to],
@@ -300,7 +304,7 @@ export class AiAnalyticsService {
        WHERE role = 'assistant'
          AND metadata->'suggestedProducts' IS NOT NULL
          AND jsonb_typeof(metadata->'suggestedProducts') = 'array'
-         AND created_at BETWEEN $1 AND $2
+         AND "createdAt" BETWEEN $1 AND $2
        GROUP BY elem->>'id', elem->>'name'
        ORDER BY recommendations DESC
        LIMIT $3`,
@@ -315,13 +319,13 @@ export class AiAnalyticsService {
           `SELECT COUNT(DISTINCT o.id)::int AS count
            FROM orders o
            WHERE o."createdAt" BETWEEN $1 AND $2
-             AND o.items @> $3
+             AND o.items::jsonb @> $3::jsonb
              AND EXISTS (
                SELECT 1
                FROM farm_assistant_conversation c
-               WHERE c.user_id = o."userId"::uuid
-                 AND c.updated_at >= o."createdAt" - INTERVAL '24 hours'
-                 AND c.updated_at <= o."createdAt"
+               WHERE c."userId" = o."userId"::uuid
+                 AND c."updatedAt" >= o."createdAt" - INTERVAL '24 hours'
+                 AND c."updatedAt" <= o."createdAt"
              )`,
           [
             period.from,
@@ -358,10 +362,10 @@ export class AiAnalyticsService {
           .join(' OR ');
 
         const result = await this.dataSource.query<{ count: number }[]>(
-          `SELECT COUNT(DISTINCT conversation_id)::int AS count
+          `SELECT COUNT(DISTINCT "conversationId")::int AS count
            FROM farm_assistant_message
            WHERE role = 'user'
-             AND created_at BETWEEN $1 AND $2
+             AND "createdAt" BETWEEN $1 AND $2
              AND (${conditions})`,
           params,
         );
@@ -375,7 +379,7 @@ export class AiAnalyticsService {
        FROM farm_assistant_message
        WHERE role = 'assistant'
          AND (metadata->>'requiresVetAttention')::boolean = true
-         AND created_at BETWEEN $1 AND $2`,
+         AND "createdAt" BETWEEN $1 AND $2`,
       [period.from, period.to],
     );
 
@@ -387,15 +391,144 @@ export class AiAnalyticsService {
 
   // ── user satisfaction ─────────────────────────────────────────────────────
 
-  async getSatisfaction() {
-    // Satisfaction requires explicit thumbs-up / thumbs-down feedback which is
-    // not yet stored. Return a zero-state so the frontend can render the widget
-    // gracefully until a feedback entity is added.
+  async getSatisfaction(from?: string, to?: string) {
+    const period = this.parseDateRange(from, to);
+
+    const [feedback, latency] = await Promise.all([
+      this.dataSource.query<{ positive: number; negative: number }[]>(
+        `SELECT
+           SUM(CASE WHEN rating = 'positive' THEN 1 ELSE 0 END)::int AS positive,
+           SUM(CASE WHEN rating = 'negative' THEN 1 ELSE 0 END)::int AS negative
+         FROM farm_assistant_feedback
+         WHERE "createdAt" BETWEEN $1 AND $2`,
+        [period.from, period.to],
+      ),
+      this.dataSource.query<{ avg_ms: number | null }[]>(
+        `SELECT AVG((metadata->>'latencyMs')::float) AS avg_ms
+         FROM farm_assistant_message
+         WHERE role = 'assistant'
+           AND metadata->>'latencyMs' IS NOT NULL
+           AND "createdAt" BETWEEN $1 AND $2`,
+        [period.from, period.to],
+      ),
+    ]);
+
+    const positive = feedback[0].positive ?? 0;
+    const negative = feedback[0].negative ?? 0;
+    const total = positive + negative;
+    const satisfactionRate =
+      total > 0 ? parseFloat(((positive / total) * 100).toFixed(1)) : null;
+
     return {
-      positive: 0,
-      negative: 0,
-      satisfactionRate: null as number | null,
-      avgResponseTimeMs: null as number | null,
+      positive,
+      negative,
+      satisfactionRate,
+      avgResponseTimeMs: latency[0].avg_ms
+        ? parseFloat(Number(latency[0].avg_ms).toFixed(0))
+        : null,
+    };
+  }
+
+  // ── resource consumption ──────────────────────────────────────────────────
+
+  async getResourceConsumption(from?: string, to?: string) {
+    const period = this.parseDateRange(from, to);
+    const prev = this.previousPeriod(period.from, period.to);
+    const settings = await this.aiSettingsService.getSettings();
+
+    const query = (f: Date, t: Date) =>
+      this.dataSource.query<
+        {
+          input_tokens: string;
+          output_tokens: string;
+          total_requests: number;
+        }[]
+      >(
+        `SELECT
+           COALESCE(SUM((metadata->>'inputTokens')::bigint), 0)::bigint  AS input_tokens,
+           COALESCE(SUM((metadata->>'outputTokens')::bigint), 0)::bigint AS output_tokens,
+           COUNT(*)::int                                                  AS total_requests
+         FROM farm_assistant_message
+         WHERE role = 'assistant'
+           AND metadata->>'inputTokens' IS NOT NULL
+           AND "createdAt" BETWEEN $1 AND $2`,
+        [f, t],
+      );
+
+    const [current, previous, dailyRows, chatsRow] = await Promise.all([
+      query(period.from, period.to),
+      query(prev.from, prev.to),
+      this.dataSource.query<
+        { date: string; tokens: string }[]
+      >(
+        `SELECT
+           DATE_TRUNC('day', "createdAt") AS date,
+           COALESCE(
+             SUM((metadata->>'inputTokens')::bigint + (metadata->>'outputTokens')::bigint),
+             0
+           )::bigint AS tokens
+         FROM farm_assistant_message
+         WHERE role = 'assistant'
+           AND metadata->>'inputTokens' IS NOT NULL
+           AND "createdAt" BETWEEN $1 AND $2
+         GROUP BY DATE_TRUNC('day', "createdAt")
+         ORDER BY date ASC`,
+        [period.from, period.to],
+      ),
+      this.dataSource.query<{ count: number }[]>(
+        `SELECT COUNT(*)::int AS count
+         FROM farm_assistant_conversation
+         WHERE "createdAt" BETWEEN $1 AND $2`,
+        [period.from, period.to],
+      ),
+    ]);
+
+    const inputTokens = Number(current[0].input_tokens);
+    const outputTokens = Number(current[0].output_tokens);
+    const totalTokens = inputTokens + outputTokens;
+    const totalRequests = current[0].total_requests;
+    const totalChats = chatsRow[0].count;
+
+    const rateIn = Number(settings.costPer1MInputTokensUSD);
+    const rateOut = Number(settings.costPer1MOutputTokensUSD);
+    const totalCostUSD =
+      (inputTokens / 1_000_000) * rateIn +
+      (outputTokens / 1_000_000) * rateOut;
+    const avgCostPerChatUSD = totalChats > 0 ? totalCostUSD / totalChats : 0;
+
+    const prevInput = Number(previous[0].input_tokens);
+    const prevOutput = Number(previous[0].output_tokens);
+    const prevTotal = prevInput + prevOutput;
+    const prevCost =
+      (prevInput / 1_000_000) * rateIn + (prevOutput / 1_000_000) * rateOut;
+
+    const budgetUsedPercent = settings.monthlyBudgetUSD
+      ? parseFloat(
+          ((totalCostUSD / Number(settings.monthlyBudgetUSD)) * 100).toFixed(1),
+        )
+      : null;
+
+    return {
+      provider: settings.provider,
+      model: settings.model,
+      monthlyBudgetUSD: settings.monthlyBudgetUSD
+        ? Number(settings.monthlyBudgetUSD)
+        : null,
+      totalTokens,
+      inputTokens,
+      outputTokens,
+      totalRequests,
+      totalCostUSD: parseFloat(totalCostUSD.toFixed(4)),
+      avgCostPerChatUSD: parseFloat(avgCostPerChatUSD.toFixed(6)),
+      budgetUsedPercent,
+      dailyUsage: dailyRows.map((r) => ({
+        date: r.date,
+        tokens: Number(r.tokens),
+      })),
+      change: {
+        totalTokens: this.pct(totalTokens, prevTotal),
+        totalCostUSD: this.pct(totalCostUSD, prevCost),
+      },
     };
   }
 
@@ -407,11 +540,11 @@ export class AiAnalyticsService {
     const rows = await this.dataSource.query<
       { bird_type: string; count: number }[]
     >(
-      `SELECT COALESCE(farm_context->>'birdType', 'Unknown') AS bird_type,
+      `SELECT COALESCE("farmContext"->>'birdType', 'Unknown') AS bird_type,
               COUNT(*)::int AS count
        FROM farm_assistant_conversation
-       WHERE created_at BETWEEN $1 AND $2
-       GROUP BY farm_context->>'birdType'
+       WHERE "createdAt" BETWEEN $1 AND $2
+       GROUP BY "farmContext"->>'birdType'
        ORDER BY count DESC`,
       [period.from, period.to],
     );
