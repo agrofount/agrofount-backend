@@ -229,6 +229,35 @@ export class NewTablesCatchup1782070000000 implements MigrationInterface {
       ADD COLUMN IF NOT EXISTS "verificationTokenExpires"  timestamp NULL
     `);
 
+    // audit_logs may not exist at all if the module was not wired up during
+    // initial sync — create it with every column so the table is always present.
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "audit_logs" (
+        "id"          uuid                    NOT NULL DEFAULT uuid_generate_v4(),
+        "action"      character varying       NOT NULL,
+        "entityId"    character varying       NULL,
+        "entityType"  character varying       NULL,
+        "changes"     jsonb                   NULL,
+        "userId"      character varying       NULL,
+        "userEmail"   character varying       NULL,
+        "ipAddress"   character varying       NULL,
+        "actorType"   character varying(20)   NULL,
+        "requestId"   character varying(100)  NULL,
+        "method"      character varying(10)   NULL,
+        "route"       character varying(300)  NULL,
+        "payloadHash" character varying(64)   NULL,
+        "outcome"     character varying(20)   NULL,
+        "statusCode"  integer                 NULL,
+        "userAgent"   character varying(512)  NULL,
+        "reason"      character varying(500)  NULL,
+        "createdAt"   TIMESTAMP               NOT NULL DEFAULT now(),
+        CONSTRAINT "PK_audit_logs" PRIMARY KEY ("id")
+      )
+    `);
+    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_audit_logs_created"        ON "audit_logs" ("createdAt")`);
+    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_audit_logs_user_created"   ON "audit_logs" ("userId", "createdAt")`);
+    await queryRunner.query(`CREATE INDEX IF NOT EXISTS "IDX_audit_logs_action_created" ON "audit_logs" ("action", "createdAt")`);
+    // If the table already existed with old columns, add the new ones.
     await queryRunner.query(`
       ALTER TABLE "audit_logs"
       ADD COLUMN IF NOT EXISTS "actorType"   character varying(20)  NULL,
