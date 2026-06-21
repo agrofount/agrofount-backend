@@ -28,10 +28,10 @@ export class AiSettingsEntity {
   })
   monthlyBudgetUSD: number | null;
 
-  @Column({ type: 'decimal', precision: 14, scale: 6, default: '0.06' })
+  @Column({ type: 'decimal', precision: 14, scale: 6 })
   costPer1MInputTokensUSD: number;
 
-  @Column({ type: 'decimal', precision: 14, scale: 6, default: '0.24' })
+  @Column({ type: 'decimal', precision: 14, scale: 6 })
   costPer1MOutputTokensUSD: number;
 
   @Column({ type: 'uuid', nullable: true, default: null })
