@@ -42,8 +42,23 @@ export type FarmAssistantProviderOutput = {
   modelId: string | null;
 };
 
-const FARM_ASSISTANT_SYSTEM_INSTRUCTION =
-  'You are Agrofount AI Farm Assistant. Help Nigerian farmers make better poultry and livestock decisions. Give practical, simple, and safe guidance. When symptoms suggest disease, high mortality, severe weakness, bleeding, paralysis, or unusual deaths, advise the farmer to contact a veterinarian immediately. Do not claim to provide final veterinary diagnosis. When recommending products, only suggest categories or products available on Agrofount if product data is provided. Always respond with a JSON object with exactly these keys: reply (string), quickReplies (array of up to 5 strings), requiresVetAttention (boolean).';
+const FARM_ASSISTANT_SYSTEM_INSTRUCTION = `You are Ayo, Agrofount's AI Farm Assistant. You help Nigerian poultry and livestock farmers with warm, practical, and educative guidance.
+
+RESPONSE FORMAT — follow these rules strictly:
+- Write the reply in markdown so it renders beautifully in the app
+- Open every response with a fitting emoji that matches the topic (e.g. 🐔 birds, 🌾 feed, 💊 medicine, 🌡️ temperature, 💧 water, 🏥 vet care, 📋 schedule, 💰 cost)
+- Use **bold** for key terms, dosage figures, critical warnings, and product names
+- Use bullet lists or numbered steps whenever giving multiple items, symptoms, or instructions
+- Use ## headings only for structured multi-section responses
+- Use ⚠️ to highlight warnings and ✅ to highlight positive signs or correct practices
+- Keep language simple, direct, and relevant to Nigerian farming conditions
+- End every response with 1–2 short encouraging sentences unless the situation is an emergency
+
+SAFETY: When symptoms suggest high mortality, severe weakness, bleeding, paralysis, twisted neck, greenish diarrhoea, or sudden unexplained deaths — add a clear 🚨 emergency block advising immediate veterinary contact. Never claim to provide a final veterinary diagnosis.
+
+PRODUCTS: Only recommend products or categories available on Agrofount when product data is provided in the prompt.
+
+Always respond with a valid JSON object with exactly these keys: reply (markdown string), quickReplies (array of up to 5 short action strings), requiresVetAttention (boolean).`;
 
 @Injectable()
 export class AiProviderService {
@@ -146,7 +161,7 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
             : [{ text: userContent }],
         },
       ],
-      inferenceConfig: { temperature: 0.4, maxTokens: 1024 },
+      inferenceConfig: { temperature: 0.5, maxTokens: 1536 },
     });
 
     const startMs = Date.now();
@@ -192,25 +207,26 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
     const lowerMessage = input.message.toLowerCase();
     const age = Number(input.farmContext?.birdAgeWeeks);
     const productLine = input.products.length
-      ? `\n\nAgrofount products that may help: ${input.products
+      ? `\n\n---\n🛒 **Available on Agrofount:**\n${input.products
           .slice(0, 3)
-          .map((product) => product.name)
-          .join(', ')}.`
+          .map((p) => `- **${p.name}** — ₦${p.price.toLocaleString()}`)
+          .join('\n')}`
       : '';
+
     let reply =
-      'Thanks for the details. Please share the bird type, age, quantity, location, and any symptoms so I can guide you better.';
+      '🐔 Thanks for reaching out!\n\nTo give you the best advice, please share a few more details:\n\n- **Bird type** (broilers, layers, cockerels, turkey, etc.)\n- **Age** of your birds (days or weeks)\n- **Flock size**\n- **Location** (state or region)\n- Any **symptoms** you are currently observing\n\nThe more you share, the better I can help you protect your farm. 💪';
 
     if (lowerMessage.includes('feed') || lowerMessage.includes('starter')) {
       reply =
         Number.isFinite(age) && age <= 3
-          ? 'For broilers around 3 weeks old, you can usually continue quality starter feed until the end of week 3, then gradually move to grower feed from week 4. Make any feed change slowly over 2 to 3 days and keep clean water available at all times.'
-          : 'Use feed based on bird type and age: starter for early brooding, grower for the middle phase, and finisher close to market age. Choose clean, fresh feed and avoid sudden changes.';
+          ? '🌾 **Broiler Feeding — Week 3 Transition**\n\nAt around **3 weeks old**, your broilers are approaching the end of the starter phase:\n\n- ✅ Continue with quality **starter feed** through the end of week 3\n- 🔄 Begin transitioning to **grower feed** from **week 4** onwards\n- ⚠️ Make the switch gradually over **2–3 days** — sudden changes cause digestive stress and slow growth\n- 💧 Always provide **clean, fresh water** at all times\n\nGood feed management at this stage sets up your birds for strong growth. Keep it up! 🚀'
+          : '🌾 **Poultry Feeding Guide**\n\nChoose feed based on **bird type and age**:\n\n| Phase | Age | Feed Type |\n|-------|-----|-----------|\n| Brooding | 0–3 wks | **Starter** (high protein) |\n| Growing | 4–6 wks | **Grower** |\n| Finishing | 7 wks+ | **Finisher** |\n\n**Key tips:**\n- ✅ Always use fresh, well-stored feed — mouldy feed is dangerous\n- ⚠️ Never make sudden feed changes; transition over 2–3 days\n- 💧 Water intake drops before feed intake — watch your drinkers\n\nInvesting in quality feed pays off at market! 💰';
     } else if (
       lowerMessage.includes('vaccine') ||
       lowerMessage.includes('vaccination')
     ) {
       reply =
-        'Vaccination depends on your farm history, bird age, and local disease risk. Common poultry schedules include Newcastle and Gumboro protection, but confirm timing with your vet or hatchery schedule before giving any vaccine.';
+        '💊 **Poultry Vaccination Guidance**\n\nVaccination schedules depend on your **farm history**, **bird age**, and **local disease pressure**.\n\n**Common vaccines for Nigerian poultry farms:**\n- 🐔 **Newcastle Disease (ND/Lasota)** — Day 7, Day 21, then every 6–8 weeks\n- 🦠 **Gumboro (IBD)** — Day 14 and Day 28\n- 🐣 **Fowl Pox** — Week 6 (endemic areas)\n\n⚠️ **Important:**\n- Always confirm your schedule with your **vet or hatchery**\n- Store vaccines properly — most require refrigeration (2–8°C)\n- Vaccinate only **healthy birds**; stressed or sick birds respond poorly\n\nA consistent vaccination programme is one of the best investments for your farm! ✅';
     } else if (
       lowerMessage.includes('weak') ||
       lowerMessage.includes('sick') ||
@@ -218,12 +234,12 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       lowerMessage.includes('death')
     ) {
       reply =
-        'Weakness or deaths can come from disease, heat stress, poor brooding, water issues, or feed problems. Separate very weak birds, check temperature and water immediately, and contact a qualified veterinarian if deaths are happening or symptoms are severe.';
+        '⚠️ **Birds Showing Weakness or Deaths**\n\nWeakness and deaths can have several causes:\n\n- 🦠 **Infectious disease** (Newcastle, Gumboro, Coccidiosis)\n- 🌡️ **Heat or cold stress** — check brooding temperature\n- 💧 **Water deprivation** — check drinkers immediately\n- 🌾 **Feed problems** — mouldy or wrong-age feed\n- 🏠 **Overcrowding or poor ventilation**\n\n**Take these steps now:**\n1. **Isolate** very weak or dead birds from the flock immediately\n2. Check and fix **temperature, water, and ventilation**\n3. Record the **number affected**, symptoms, and timeline\n4. Contact a **qualified veterinarian** if deaths continue or worsen\n\nDo not delay — early action saves birds and profit. 🏥';
     }
 
     if (input.requiresVetAttention) {
       reply +=
-        '\n\nThis may need urgent veterinary attention. Please contact a qualified veterinarian immediately, especially if mortality is high, birds are paralysed, bleeding, or dying suddenly.';
+        '\n\n---\n🚨 **Urgent Veterinary Attention Required**\n\nThe symptoms you described are serious. Please **contact a qualified veterinarian immediately** — do not wait.\n\n- Isolate affected birds right away\n- Do not administer random drugs without vet guidance\n- Record symptoms, mortality numbers, and timeline to share with the vet';
     }
 
     return {
@@ -269,16 +285,19 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
   private defaultQuickReplies(requiresVetAttention: boolean): string[] {
     if (requiresVetAttention) {
       return [
-        'What should I do before the vet arrives?',
-        'How do I isolate sick birds?',
-        'What symptoms should I record?',
+        '🏥 What should I do before the vet arrives?',
+        '🔒 How do I isolate sick birds safely?',
+        '📋 What symptoms should I record for the vet?',
+        '💊 Can I give any medication now?',
       ];
     }
 
     return [
-      'How much feed do I need?',
-      'What vaccination should I give next?',
-      'Why are my birds weak?',
+      '🌾 How much feed do I need per bird?',
+      '💊 What vaccination should I give next?',
+      '⚠️ Why are my birds looking weak?',
+      '💧 How much water do broilers need daily?',
+      "📈 How do I improve my flock's growth rate?",
     ];
   }
 }
