@@ -11,8 +11,8 @@ export class AiSettingsAndFeedback1782080000000 implements MigrationInterface {
         "provider"                 character varying(80)       NOT NULL DEFAULT 'AWS Bedrock',
         "model"                    character varying(120)      NOT NULL DEFAULT 'amazon.nova-lite-v1:0',
         "monthlyBudgetUSD"         numeric(14,2)                        DEFAULT NULL,
-        "costPer1MInputTokensUSD"  numeric(14,6)               NOT NULL DEFAULT 0.06,
-        "costPer1MOutputTokensUSD" numeric(14,6)               NOT NULL DEFAULT 0.24,
+        "costPer1MInputTokensUSD"  numeric(14,6)               NOT NULL DEFAULT '0.06',
+        "costPer1MOutputTokensUSD" numeric(14,6)               NOT NULL DEFAULT '0.24',
         "updatedBy"                uuid                                 DEFAULT NULL,
         "updatedAt"                TIMESTAMP                   NOT NULL DEFAULT now(),
         CONSTRAINT "PK_ai_settings" PRIMARY KEY ("id")
