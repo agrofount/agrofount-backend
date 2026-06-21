@@ -22,7 +22,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/config/database/data-source.ts",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/config/database/data-source.ts src/config/database/migrations/Migration",
+    "migration:check": "typeorm-ts-node-commonjs migration:generate --check -d src/config/database/data-source.ts src/config/database/migrations/_check",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/config/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/config/database/data-source.ts",
     "migration:show": "typeorm-ts-node-commonjs migration:show -d src/config/database/data-source.ts"
