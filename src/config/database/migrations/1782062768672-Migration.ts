@@ -29,10 +29,10 @@ export class Migration1782062768672 implements MigrationInterface {
 
     if (await queryRunner.hasTable('ai_settings')) {
       await queryRunner.query(
-        `ALTER TABLE "ai_settings" ALTER COLUMN "costPer1MInputTokensUSD" SET DEFAULT '0.06'`,
+        `ALTER TABLE "ai_settings" ALTER COLUMN "costPer1MInputTokensUSD" SET DEFAULT 0.06`,
       );
       await queryRunner.query(
-        `ALTER TABLE "ai_settings" ALTER COLUMN "costPer1MOutputTokensUSD" SET DEFAULT '0.24'`,
+        `ALTER TABLE "ai_settings" ALTER COLUMN "costPer1MOutputTokensUSD" SET DEFAULT 0.24`,
       );
     }
 
