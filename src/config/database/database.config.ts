@@ -24,6 +24,11 @@ export const pgConfig: DataSourceOptions = {
   database: process.env.DB_NAME,
   schema: process.env.DB_SCHEMA,
   synchronize: process.env.DB_SYNCHRONIZE === 'true',
+  migrations:
+    process.env.DB_SYNCHRONIZE !== 'true'
+      ? [`${__dirname}/migrations/*.js`]
+      : [],
+  migrationsRun: process.env.DB_SYNCHRONIZE !== 'true',
   logging: process.env.DB_LOGGING === 'true',
   ...(process.env.DB_SSL === 'true'
     ? {
