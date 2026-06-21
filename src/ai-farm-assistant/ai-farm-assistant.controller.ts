@@ -11,6 +11,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -121,6 +122,16 @@ export class AiFarmAssistantController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.farmAssistantService.deleteConversation(user.id, id);
+  }
+
+  @Post('conversations/:id/feedback')
+  @ApiOperation({ summary: 'Submit thumbs-up or thumbs-down for a conversation' })
+  submitFeedback(
+    @CurrentUser() user: UserEntity,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SubmitFeedbackDto,
+  ) {
+    return this.farmAssistantService.submitFeedback(user.id, id, dto);
   }
 
   private writeSse(res: Response, event: string, data: unknown): void {

@@ -36,6 +36,10 @@ export type FarmAssistantProviderOutput = {
   reply: string;
   quickReplies: string[];
   requiresVetAttention: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  latencyMs: number | null;
+  modelId: string | null;
 };
 
 const FARM_ASSISTANT_SYSTEM_INSTRUCTION =
@@ -145,8 +149,12 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       inferenceConfig: { temperature: 0.4, maxTokens: 1024 },
     });
 
+    const startMs = Date.now();
     try {
       const response = await this.getBedrockClient().send(command);
+      const latencyMs = Date.now() - startMs;
+      const inputTokens = response.usage?.inputTokens ?? null;
+      const outputTokens = response.usage?.outputTokens ?? null;
       const rawContent = response.output?.message?.content?.[0]?.text;
 
       if (!rawContent) {
@@ -160,11 +168,11 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
         this.logger.warn(
           'Bedrock response did not contain valid JSON, falling back to rule-based reply',
         );
-        return this.generateRuleBasedReply(input);
+        return this.generateRuleBasedReply(input, { inputTokens, outputTokens, latencyMs, modelId });
       }
 
       const parsed = JSON.parse(jsonMatch[0]);
-      return this.normalizeProviderOutput(parsed, input);
+      return this.normalizeProviderOutput(parsed, input, { inputTokens, outputTokens, latencyMs, modelId });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
       this.logger.error(
@@ -179,6 +187,7 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
 
   private generateRuleBasedReply(
     input: FarmAssistantProviderInput,
+    usage?: { inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; modelId: string | null },
   ): FarmAssistantProviderOutput {
     const lowerMessage = input.message.toLowerCase();
     const age = Number(input.farmContext?.birdAgeWeeks);
@@ -221,12 +230,17 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       reply: `${reply}${productLine}`,
       quickReplies: this.defaultQuickReplies(input.requiresVetAttention),
       requiresVetAttention: input.requiresVetAttention,
+      inputTokens: usage?.inputTokens ?? null,
+      outputTokens: usage?.outputTokens ?? null,
+      latencyMs: usage?.latencyMs ?? null,
+      modelId: usage?.modelId ?? null,
     };
   }
 
   private normalizeProviderOutput(
     value: Record<string, any>,
     input: FarmAssistantProviderInput,
+    usage: { inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; modelId: string | null },
   ): FarmAssistantProviderOutput {
     const quickReplies = Array.isArray(value.quickReplies)
       ? value.quickReplies
@@ -245,6 +259,10 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
           : this.defaultQuickReplies(input.requiresVetAttention),
       requiresVetAttention:
         Boolean(value.requiresVetAttention) || input.requiresVetAttention,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      latencyMs: usage.latencyMs,
+      modelId: usage.modelId,
     };
   }
 

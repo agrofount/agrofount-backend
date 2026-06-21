@@ -86,11 +86,21 @@ describe('AiFarmAssistantService', () => {
       ),
       ...overrides.configService,
     };
+    const feedbackRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      save: jest.fn().mockImplementation((v) => Promise.resolve(v)),
+      create: jest.fn().mockImplementation((v) => v),
+    };
+    const aiSettingsService = {
+      isAyoActive: jest.fn().mockResolvedValue(true),
+    };
     const service = new AiFarmAssistantService(
       conversationRepository as any,
       messageRepository as any,
+      feedbackRepository as any,
       productLocationRepository as any,
       aiProviderService as any,
+      aiSettingsService as any,
       configService as any,
     );
 
