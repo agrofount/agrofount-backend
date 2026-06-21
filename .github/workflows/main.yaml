@@ -4,6 +4,10 @@ on:
     branches:
       - dev
       - main
+  pull_request:
+    branches:
+      - dev
+      - main
   workflow_dispatch:
     inputs:
       deploy_production:
@@ -16,8 +20,63 @@ permissions:
   contents: read
 
 jobs:
+  check-migrations:
+    name: Check for schema drift
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: agrofount
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Apply existing migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: agrofount
+          DB_SSL: 'false'
+          DB_SYNCHRONIZE: 'false'
+        run: npm run migration:run
+      - name: Fail if entity changes have no migration
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: agrofount
+          DB_SSL: 'false'
+          DB_SYNCHRONIZE: 'false'
+        run: |
+          if npm run migration:generate -- src/config/database/migrations/_drift_check 2>&1; then
+            echo ""
+            echo "ERROR: Entity changes detected without a migration file."
+            echo "Run: npm run migration:generate -- src/config/database/migrations/YourMigrationName"
+            rm -f src/config/database/migrations/_drift_check*.ts
+            exit 1
+          else
+            echo "No schema drift — all entity changes have migrations."
+          fi
+
   deploy-dev:
-    if: github.ref == 'refs/heads/dev'
+    needs: [check-migrations]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
     uses: ./.github/workflows/template.yaml
     with:
       environment: dev
@@ -26,9 +85,11 @@ jobs:
       container-name: agrofount-port
 
   deploy-prod:
+    needs: [check-migrations]
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_production)
+      github.event_name != 'pull_request' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_production))
     uses: ./.github/workflows/template.yaml
     with:
       environment: prod
