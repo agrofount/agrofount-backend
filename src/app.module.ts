@@ -47,6 +47,7 @@ import { RequestAuditInterceptor } from './common/interceptors/request-audit.int
 import { AppThrottlingModule } from './common/throttling/throttling.module';
 import { CareersModule } from './careers/careers.module';
 import { AiFarmAssistantModule } from './ai-farm-assistant/ai-farm-assistant.module';
+import { BullModule } from '@nestjs/bullmq';
 
 @Module({
   imports: [
@@ -55,6 +56,14 @@ import { AiFarmAssistantModule } from './ai-farm-assistant/ai-farm-assistant.mod
       isGlobal: true,
       cache: true,
       validate: validateEnvironment,
+    }),
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: { url: config.getOrThrow<string>('REDIS_URL') },
+        prefix: '{bull}',
+      }),
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],

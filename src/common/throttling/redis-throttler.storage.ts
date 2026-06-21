@@ -52,7 +52,7 @@ export class RedisThrottlerStorage
     throttlerName: string,
   ): Promise<ThrottlerStorageRecord> {
     if (this.redis.status === 'wait') await this.redis.connect();
-    const baseKey = `throttle:${throttlerName}:${key}`;
+    const baseKey = `throttle:{${throttlerName}:${key}}`;
     const result = (await this.redis.eval(
       INCREMENT_SCRIPT,
       2,

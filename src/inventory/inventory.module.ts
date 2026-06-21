@@ -5,23 +5,17 @@ import { InventoryService } from './inventory.service';
 import { InventoryEntity } from './entities/inventory.entity';
 import { InventoryReservationEntity } from './entities/inventory-reservation.entity';
 import { BullModule } from '@nestjs/bullmq';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { InventoryProcessor } from './inventory.processor';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([InventoryEntity, InventoryReservationEntity]),
-    BullModule.registerQueueAsync({
+    BullModule.registerQueue({
       name: 'inventory-maintenance',
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: { url: config.getOrThrow<string>('REDIS_URL') },
-        defaultJobOptions: {
-          attempts: 5,
-          backoff: { type: 'exponential', delay: 1_000 },
-        },
-      }),
+      defaultJobOptions: {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 1_000 },
+      },
     }),
   ],
   controllers: [InventoryController],

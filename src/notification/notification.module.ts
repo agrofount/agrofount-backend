@@ -7,7 +7,7 @@ import { SendInBlueModule } from './modules/sendinblue.module';
 import { HttpModule } from '@nestjs/axios';
 import { TeamsService } from './services/teams.service';
 import { BullModule } from '@nestjs/bullmq';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { PriceUpdatesProcessor } from './notification.processor';
 import { ProductLikeModule } from '../product-like/product-like.module';
 
@@ -17,21 +17,7 @@ import { ProductLikeModule } from '../product-like/product-like.module';
     SendInBlueModule,
     HttpModule.register({ timeout: 10_000, maxRedirects: 3 }),
     ConfigModule,
-    BullModule.registerQueueAsync({
-      name: 'price-updates',
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const redisUrl = config.get('REDIS_URL');
-        return {
-          connection: {
-            // host: config.get('REDIS_HOST'),
-            // port: config.get('REDIS_PORT'),
-            url: redisUrl,
-          },
-        };
-      },
-    }),
+    BullModule.registerQueue({ name: 'price-updates' }),
     ProductLikeModule, // Import ProductLikeModule to use ProductLike entity
   ],
   controllers: [NotificationController],
