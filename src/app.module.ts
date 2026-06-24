@@ -47,6 +47,7 @@ import { RequestAuditInterceptor } from './common/interceptors/request-audit.int
 import { AppThrottlingModule } from './common/throttling/throttling.module';
 import { CareersModule } from './careers/careers.module';
 import { AiFarmAssistantModule } from './ai-farm-assistant/ai-farm-assistant.module';
+import { AiPlatformModule } from './ai-platform/ai-platform.module';
 import { BullModule } from '@nestjs/bullmq';
 
 @Module({
@@ -123,6 +124,7 @@ import { BullModule } from '@nestjs/bullmq';
     ProductLocationModule,
     InventoryModule,
     OutboxModule,
+    AiPlatformModule,
     AiFarmAssistantModule,
     AdminsModule,
     ContactModule,
