@@ -46,6 +46,10 @@ export class UomDto {
   platformPrice: number;
 
   @ApiProperty({ type: [VtpDto], description: 'Volume tier prices' })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => VtpDto)
   vtp?: VtpDto[];
 
   @ApiPropertyOptional({
