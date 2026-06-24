@@ -78,7 +78,15 @@ export class CampaignService {
     const openRate =
       totalSent > 0 ? Math.round((totalDelivered / totalSent) * 100) : 0;
 
-    return { campaigns: total, scheduled, sent, failed, totalSent, totalDelivered, openRate };
+    return {
+      campaigns: total,
+      scheduled,
+      sent,
+      failed,
+      totalSent,
+      totalDelivered,
+      openRate,
+    };
   }
 
   async resolveAudience(audience: CampaignAudience): Promise<UserEntity[]> {
@@ -88,7 +96,9 @@ export class CampaignService {
 
     if (!audience?.all) {
       if (audience?.states?.length) {
-        query.andWhere('user.state IN (:...states)', { states: audience.states });
+        query.andWhere('user.state IN (:...states)', {
+          states: audience.states,
+        });
       }
       const validBT = Object.values(BusinessType);
       const safeBT = (audience.businessTypes ?? []).filter((t) =>
@@ -139,14 +149,18 @@ export class CampaignService {
     await this.campaignRepo.update(id, { status: CampaignStatus.FAILED });
   }
 
-  async estimateAudience(audience: CampaignAudience): Promise<{ count: number }> {
+  async estimateAudience(
+    audience: CampaignAudience,
+  ): Promise<{ count: number }> {
     const query = this.dataSource
       .createQueryBuilder(UserEntity, 'user')
       .where('user.deletedAt IS NULL');
 
     if (!audience?.all) {
       if (audience?.states?.length) {
-        query.andWhere('user.state IN (:...states)', { states: audience.states });
+        query.andWhere('user.state IN (:...states)', {
+          states: audience.states,
+        });
       }
       const validBT = Object.values(BusinessType);
       const safeBT = (audience.businessTypes ?? []).filter((t) =>

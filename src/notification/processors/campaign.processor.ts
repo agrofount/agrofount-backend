@@ -26,7 +26,9 @@ export class CampaignProcessor extends WorkerHost {
     this.logger.log(`Processing campaign: ${campaignId}`);
 
     const campaign = await this.campaignService.findOne(campaignId);
-    const recipients = await this.campaignService.resolveAudience(campaign.audience);
+    const recipients = await this.campaignService.resolveAudience(
+      campaign.audience,
+    );
 
     let totalSent = 0;
     let totalDelivered = 0;
