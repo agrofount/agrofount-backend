@@ -37,7 +37,7 @@ export class AiKnowledgeChunkEntity {
   @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, unknown>;
 
-  @Column({ type: 'text', array: true, default: () => 'ARRAY[]' })
+  @Column({ type: 'text', array: true, default: () => "'{}'" })
   tags: string[];
 
   @Column({ type: 'int', default: 0 })

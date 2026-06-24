@@ -40,7 +40,7 @@ export class AiKnowledgeDocumentEntity {
   @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, unknown>;
 
-  @Column({ type: 'text', array: true, default: () => 'ARRAY[]' })
+  @Column({ type: 'text', array: true, default: () => "'{}'" })
   tags: string[];
 
   @Column({ type: 'varchar', length: 80, nullable: true })
