@@ -216,6 +216,7 @@ export const PERMISSION_SETS = {
         ACTIONS.CREATE,
         ACTIONS.READ,
         ACTIONS.UPDATE,
+        ACTIONS.DELETE,
         ACTIONS.BLOCK_USER,
         ACTIONS.VERIFY_USER,
       ],

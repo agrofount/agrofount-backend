@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -27,6 +28,11 @@ import {
 } from './dto/create-profile.dto';
 import { UpdateLivestockFarmerDto } from './dto/update-profile.dto';
 import { UpdateBasicUserDetailDto } from './dto/UpdateBasicUserDetail.dto';
+import { AdminEntity } from '../admins/entities/admin.entity';
+import { Role, UserTypes } from '../auth/enums/role.enum';
+import { ACTIONS, RESOURCES } from '../permission/Enum/permissions.enum';
+
+type UserRemovalActor = UserEntity | AdminEntity;
 
 @Injectable()
 export class UserService {
@@ -220,10 +226,13 @@ export class UserService {
     });
   }
 
-  async remove(id: string, actor: UserEntity): Promise<void> {
-    if (actor.id !== id) {
+  async remove(id: string, actor: UserRemovalActor): Promise<void> {
+    if (this.isAdminActor(actor)) {
+      this.assertAdminCanDeleteUsers(actor);
+    } else if (actor.id !== id) {
       throw new UnauthorizedException('You can only delete your own account');
     }
+
     const user = await this.userRepo.findOneBy({ id });
 
     if (!user) {
@@ -231,6 +240,38 @@ export class UserService {
     }
 
     await this.userRepo.softDelete(id);
+  }
+
+  private isAdminActor(actor: UserRemovalActor): actor is AdminEntity {
+    return (
+      (actor as AdminEntity & { principalType?: string }).principalType ===
+      'admin'
+    );
+  }
+
+  private assertAdminCanDeleteUsers(actor: AdminEntity): void {
+    if (actor.userType !== UserTypes.System || !actor.isVerified) {
+      throw new UnauthorizedException(
+        'You are not authorized to call this API',
+      );
+    }
+
+    const roles = actor.roles || [];
+    const isSuperAdmin = roles.some((role) => role.name === Role.SuperAdmin);
+    if (isSuperAdmin) return;
+
+    const canDeleteUsers = roles
+      .flatMap((role) => role.permissions || [])
+      .some((permission) => {
+        if (permission.resource !== RESOURCES.USERS) return false;
+        return permission.actions.some(
+          (action) => action === ACTIONS.DELETE || action === ACTIONS.MANAGE,
+        );
+      });
+
+    if (!canDeleteUsers) {
+      throw new ForbiddenException('Access Denied: Insufficient permissions');
+    }
   }
 
   async updateProfile(
