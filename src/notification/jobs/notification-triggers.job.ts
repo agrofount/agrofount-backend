@@ -17,9 +17,14 @@ export class NotificationTriggersJob {
     private readonly notificationGateway: NotificationGateway,
   ) {}
 
+  private get cronEnabled(): boolean {
+    return process.env.ENABLE_NOTIFICATION_CRONS === 'true';
+  }
+
   // Runs daily at 10 AM — sends feedback request for orders delivered 24-48h ago
   @Cron('0 10 * * *')
   async sendOrderFeedbackRequests() {
+    if (!this.cronEnabled) return;
     this.logger.log('Running order feedback trigger...');
     const cutoffStart = new Date(Date.now() - 48 * 60 * 60 * 1000);
     const cutoffEnd = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -62,7 +67,7 @@ export class NotificationTriggersJob {
         sent++;
       } catch (err) {
         this.logger.warn(
-          `Order feedback failed for order ${order.id}: ${err.message}`,
+          `Order feedback failed for order ${order.id}: ${(err as Error).message}`,
         );
       }
     }
@@ -72,6 +77,7 @@ export class NotificationTriggersJob {
   // Runs every Monday at 9 AM — re-engages users inactive for 14+ days
   @Cron('0 9 * * 1')
   async sendLoginInactivityReminders() {
+    if (!this.cronEnabled) return;
     this.logger.log('Running login inactivity reminder...');
     const inactiveSince = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 
@@ -111,7 +117,7 @@ export class NotificationTriggersJob {
         }
       } catch (err) {
         this.logger.warn(
-          `Inactivity reminder failed for user ${user.id}: ${err.message}`,
+          `Inactivity reminder failed for user ${user.id}: ${(err as Error).message}`,
         );
       }
     }
@@ -121,6 +127,7 @@ export class NotificationTriggersJob {
   // Runs daily at 8 AM — reminds unverified users at day 3, 7, and 14
   @Cron('0 8 * * *')
   async sendUnverifiedAccountReminders() {
+    if (!this.cronEnabled) return;
     this.logger.log('Running unverified account reminder...');
     const windows = [3, 7, 14].map((days) => ({
       days,
@@ -160,7 +167,7 @@ export class NotificationTriggersJob {
           sent++;
         } catch (err) {
           this.logger.warn(
-            `Unverified reminder (day ${window.days}) failed for user ${user.id}: ${err.message}`,
+            `Unverified reminder (day ${window.days}) failed for user ${user.id}: ${(err as Error).message}`,
           );
         }
       }
@@ -173,6 +180,7 @@ export class NotificationTriggersJob {
   // Runs every Wednesday at 10 AM — sends a weekly farming/educational tip
   @Cron('0 10 * * 3')
   async sendEducationalContent() {
+    if (!this.cronEnabled) return;
     this.logger.log('Running educational content broadcast...');
     const users = await this.dataSource
       .createQueryBuilder(UserEntity, 'user')
@@ -202,7 +210,7 @@ export class NotificationTriggersJob {
         sent++;
       } catch (err) {
         this.logger.warn(
-          `Educational content failed for user ${user.id}: ${err.message}`,
+          `Educational content failed for user ${user.id}: ${(err as Error).message}`,
         );
       }
     }
