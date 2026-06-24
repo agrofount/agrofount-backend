@@ -580,10 +580,24 @@ export class NotificationService {
     }
   }
 
+  async sendSmsForCampaign(
+    phone: string,
+    userId: string,
+    message: string,
+  ): Promise<any> {
+    const result = await this.sendSmsMessage(message, phone);
+    await this.create({
+      messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+      userId,
+      sender: 'Agrofount',
+      message,
+    });
+    return result;
+  }
+
   private async sendPushNotification(recipient: string, message: MessageTypes) {
     void recipient;
     void message;
-    // Implementation for sending push notification
     return {};
   }
 
@@ -593,7 +607,6 @@ export class NotificationService {
   ) {
     void recipient;
     void message;
-    // Implementation for sending in-app notification
     return {};
   }
 }

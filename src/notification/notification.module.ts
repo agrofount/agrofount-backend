@@ -2,26 +2,40 @@ import { Module } from '@nestjs/common';
 import { NotificationService } from './notification.service';
 import { NotificationController } from './notification.controller';
 import { MessageEntity } from './entities/message.entity';
+import { NotificationCampaignEntity } from './entities/notification-campaign.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SendInBlueModule } from './modules/sendinblue.module';
 import { HttpModule } from '@nestjs/axios';
 import { TeamsService } from './services/teams.service';
+import { CampaignService } from './services/campaign.service';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule } from '@nestjs/config';
 import { PriceUpdatesProcessor } from './notification.processor';
+import { CampaignProcessor } from './processors/campaign.processor';
+import { NotificationGateway } from './gateways/notification.gateway';
+import { NotificationTriggersJob } from './jobs/notification-triggers.job';
 import { ProductLikeModule } from '../product-like/product-like.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([MessageEntity]),
+    TypeOrmModule.forFeature([MessageEntity, NotificationCampaignEntity]),
     SendInBlueModule,
     HttpModule.register({ timeout: 10_000, maxRedirects: 3 }),
     ConfigModule,
     BullModule.registerQueue({ name: 'price-updates' }),
-    ProductLikeModule, // Import ProductLikeModule to use ProductLike entity
+    BullModule.registerQueue({ name: 'notification-campaigns' }),
+    ProductLikeModule,
   ],
   controllers: [NotificationController],
-  providers: [NotificationService, TeamsService, PriceUpdatesProcessor],
-  exports: [NotificationService],
+  providers: [
+    NotificationService,
+    TeamsService,
+    CampaignService,
+    PriceUpdatesProcessor,
+    CampaignProcessor,
+    NotificationGateway,
+    NotificationTriggersJob,
+  ],
+  exports: [NotificationService, CampaignService, NotificationGateway],
 })
 export class NotificationModule {}
