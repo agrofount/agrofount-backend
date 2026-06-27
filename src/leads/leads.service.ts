@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Repository } from 'typeorm';
-import * as XLSX from 'xlsx';
+import { Workbook } from 'exceljs';
 import { LeadEntity, LeadSource, LeadStatus } from './entities/lead.entity';
 import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
 import { NotifyLeadDto } from './dto/notify-lead.dto';
@@ -20,39 +20,46 @@ export class LeadsService {
     private readonly notificationService: NotificationService,
   ) {}
 
-  private isExcelBuffer(buffer: Buffer): boolean {
-    // .xlsx: ZIP magic bytes PK (50 4B 03 04)
-    if (
+  private isXlsxBuffer(buffer: Buffer): boolean {
+    return (
       buffer.length >= 4 &&
       buffer[0] === 0x50 &&
       buffer[1] === 0x4b &&
       buffer[2] === 0x03 &&
       buffer[3] === 0x04
-    )
-      return true;
-    // .xls: OLE2 magic bytes (D0 CF 11 E0)
-    if (
+    );
+  }
+
+  private isXlsBuffer(buffer: Buffer): boolean {
+    return (
       buffer.length >= 4 &&
       buffer[0] === 0xd0 &&
       buffer[1] === 0xcf &&
       buffer[2] === 0x11 &&
       buffer[3] === 0xe0
-    )
-      return true;
-    return false;
+    );
   }
 
-  private parseToRows(buffer: Buffer): string[][] {
-    if (this.isExcelBuffer(buffer)) {
-      const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-        header: 1,
-        defval: '',
-      });
-      return raw.map((r) =>
-        (r as unknown[]).map((v) => String(v ?? '').trim()),
+  private async parseToRows(buffer: Buffer): Promise<string[][]> {
+    if (this.isXlsBuffer(buffer)) {
+      throw new BadRequestException(
+        'Legacy .xls format is not supported. Please convert your file to .xlsx or CSV.',
       );
+    }
+    if (this.isXlsxBuffer(buffer)) {
+      const workbook = new Workbook();
+      await workbook.xlsx.load(buffer);
+      const sheet = workbook.worksheets[0];
+      if (!sheet) return [];
+      const rows: string[][] = [];
+      sheet.eachRow({ includeEmpty: false }, (row) => {
+        rows.push(
+          (row.values as (string | number | boolean | null | undefined)[])
+            .slice(1)
+            .map((v) => String(v ?? '').trim()),
+        );
+      });
+      return rows;
     }
     const text = buffer.toString('utf-8');
     const sep = text.split('\n')[0]?.includes('\t') ? '\t' : ',';
@@ -66,7 +73,7 @@ export class LeadsService {
     fileBuffer: Buffer,
     adminId: string,
   ): Promise<{ inserted: number; skipped: number; total: number }> {
-    const rows = this.parseToRows(fileBuffer);
+    const rows = await this.parseToRows(fileBuffer);
     if (rows.length < 2) throw new BadRequestException('File has no data rows');
 
     const headers = rows[0].map((h) =>
