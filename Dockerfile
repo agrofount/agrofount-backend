@@ -5,7 +5,7 @@ FROM node:24.14.0-alpine AS builder
 
 WORKDIR /app
 
-# Install build tools
+# Build tools needed for native modules (e.g. sharp)
 RUN apk add --no-cache python3 make g++
 
 # Copy dependency files
@@ -20,6 +20,9 @@ COPY . .
 # Build the NestJS app
 RUN npm run build
 
+# Remove devDependencies in-place so we can copy a lean node_modules
+RUN npm prune --omit=dev
+
 # -------------------------------
 # Stage 2: Production
 # -------------------------------
@@ -31,13 +34,10 @@ ENV NODE_ENV=production
 
 RUN apk upgrade --no-cache && apk add --no-cache dumb-init
 
-# Copy only package files first
-COPY package*.json ./
+# Copy the pruned node_modules from builder (native binaries already resolved)
+COPY --chown=node:node --from=builder /app/node_modules ./node_modules
 
-# Install only production dependencies
-RUN npm ci --omit=dev
-
-# Copy built app from builder stage
+# Copy built app and package manifests from builder
 COPY --chown=node:node --from=builder /app/dist ./dist
 COPY --chown=node:node package*.json ./
 
