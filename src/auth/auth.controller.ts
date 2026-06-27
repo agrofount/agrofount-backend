@@ -165,6 +165,19 @@ export class AuthController extends BaseController {
     };
   }
 
+  @Post('verify-email')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async verifyEmailPost(
+    @Query('token') queryToken: string,
+    @Body('token') bodyToken: string,
+  ) {
+    await this.authService.verifyEmail(queryToken || bodyToken);
+    return {
+      success: true,
+      message: 'Email verified successfully',
+    };
+  }
+
   @Post('verify-phone')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async verifyPhone(@Body() payload: VerifyPhoneDto) {
