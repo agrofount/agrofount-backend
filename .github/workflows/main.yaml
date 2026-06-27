@@ -3,6 +3,11 @@ on:
   push:
     branches:
       - dev
+      - main
+  pull_request:
+    branches:
+      - dev
+      - main
   workflow_dispatch:
     inputs:
       deploy_production:
@@ -15,8 +20,54 @@ permissions:
   contents: read
 
 jobs:
+  check-migrations:
+    name: Check for schema drift
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: agrofount
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - name: Bootstrap schema for migration validation
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: agrofount
+          DB_SSL: 'false'
+          DB_SYNCHRONIZE: 'false'
+        run: npx typeorm-ts-node-commonjs schema:sync -d src/config/database/data-source.ts
+      - name: Fail if entity changes have no migration
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: agrofount
+          DB_SSL: 'false'
+          DB_SYNCHRONIZE: 'false'
+        run: npm run migration:check
+
   deploy-dev:
-    if: github.ref == 'refs/heads/dev'
+    needs: [check-migrations]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
     uses: ./.github/workflows/template.yaml
     with:
       environment: dev
@@ -25,10 +76,11 @@ jobs:
       container-name: agrofount-port
 
   deploy-prod:
+    needs: [check-migrations]
     if: >-
-      github.event_name == 'workflow_dispatch' &&
-      github.ref == 'refs/heads/main' &&
-      inputs.deploy_production
+      github.event_name != 'pull_request' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_production))
     uses: ./.github/workflows/template.yaml
     with:
       environment: prod

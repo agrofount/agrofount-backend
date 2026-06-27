@@ -64,7 +64,7 @@ export class AdminEntity {
   @Exclude()
   mfaSecretEncrypted: string | null;
 
-  @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
+  @Column({ type: 'jsonb', default: () => "'[]'" })
   @Exclude()
   mfaRecoveryCodeHashes: string[];
 

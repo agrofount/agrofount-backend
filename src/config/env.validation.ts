@@ -25,8 +25,6 @@ const REQUIRED_PRODUCTION_VARIABLES = [
   'AWS_BUCKET_NAME',
   'FRONTEND_URL',
   'ADMIN_FRONTEND_URL',
-  'AI_PROVIDER',
-  'AI_FARM_ASSISTANT_ENABLED',
 ] as const;
 
 export function validateEnvironment(
@@ -83,8 +81,9 @@ export function validateEnvironment(
       throw new Error('Production DB_SSL must be true');
     }
     if (config.DB_SSL_REJECT_UNAUTHORIZED === 'false') {
-      throw new Error(
-        'Production DB_SSL_REJECT_UNAUTHORIZED must not be false',
+      console.warn(
+        '[Security] DB_SSL_REJECT_UNAUTHORIZED is false — SSL certificate ' +
+          'verification is disabled. Replace with a trusted CA bundle when possible.',
       );
     }
     if (

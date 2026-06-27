@@ -458,6 +458,22 @@ export class NotificationService {
 
         return orderUpdateSmsRes;
 
+      case MessageTypes.PENDING_ORDER_REMINDER:
+        const pendingOrderMessage = `Hi ${params.customer_name}, your Agrofount order ${params.order_id} is still pending. Complete payment by ${params.due_date} to secure your items: ${params.order_link}`;
+        const pendingOrderSmsRes = await this.sendSmsMessage(
+          pendingOrderMessage,
+          recipient,
+        );
+
+        await this.create({
+          messageType,
+          userId: params.userId,
+          sender: sender_id,
+          message: pendingOrderMessage,
+        });
+
+        return pendingOrderSmsRes;
+
       default:
         throw new Error(`Unsupported SMS message type: ${messageType}`);
     }
@@ -580,10 +596,24 @@ export class NotificationService {
     }
   }
 
+  async sendSmsForCampaign(
+    phone: string,
+    userId: string,
+    message: string,
+  ): Promise<any> {
+    const result = await this.sendSmsMessage(message, phone);
+    await this.create({
+      messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+      userId,
+      sender: 'Agrofount',
+      message,
+    });
+    return result;
+  }
+
   private async sendPushNotification(recipient: string, message: MessageTypes) {
     void recipient;
     void message;
-    // Implementation for sending push notification
     return {};
   }
 
@@ -593,7 +623,6 @@ export class NotificationService {
   ) {
     void recipient;
     void message;
-    // Implementation for sending in-app notification
     return {};
   }
 }
