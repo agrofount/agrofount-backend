@@ -56,6 +56,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
     "cookie-parser": "^1.4.7",
+    "exceljs": "^4.4.0",
     "helmet": "^8.2.0",
     "ioredis": "^5.10.1",
     "nestjs-paginate": "^11.1.1",
@@ -68,8 +69,7 @@
     "slugify": "^1.6.6",
     "socket.io": "^4.8.3",
     "typeorm": "^0.3.27",
-    "typeorm-extension": "^3.9.0",
-    "xlsx": "^0.18.5"
+    "typeorm-extension": "^3.9.0"
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.864.0",
