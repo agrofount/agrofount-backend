@@ -71,6 +71,13 @@ export class CreateCampaignDto {
   @IsString()
   bannerImageUrl?: string;
 
+  @ApiPropertyOptional({
+    description: 'Pre-built email HTML for rich email sends',
+  })
+  @IsOptional()
+  @IsString()
+  emailContent?: string;
+
   @ApiPropertyOptional({ description: 'ISO 8601 datetime string' })
   @IsOptional()
   @IsDateString()

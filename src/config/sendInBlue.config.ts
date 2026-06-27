@@ -34,8 +34,8 @@ export const configureSendInBlue = (configService: ConfigService) => {
         if (!response.ok) {
           throw new Error(`Brevo returned HTTP ${response.status}`);
         }
-      } catch {
-        throw new Error('Failed to send email');
+      } catch (err) {
+        throw new Error(`Failed to send email: ${(err as Error).message}`);
       }
     },
     sendCustomEmail: async (
@@ -69,8 +69,8 @@ export const configureSendInBlue = (configService: ConfigService) => {
         if (!response.ok) {
           throw new Error(`Brevo returned HTTP ${response.status}`);
         }
-      } catch {
-        throw new Error('Failed to send email');
+      } catch (err) {
+        throw new Error(`Failed to send email: ${(err as Error).message}`);
       }
     },
   };
