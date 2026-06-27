@@ -46,6 +46,7 @@ import { OutboxModule } from './outbox/outbox.module';
 import { RequestAuditInterceptor } from './common/interceptors/request-audit.interceptor';
 import { AppThrottlingModule } from './common/throttling/throttling.module';
 import { CareersModule } from './careers/careers.module';
+import { LeadsModule } from './leads/leads.module';
 import { AiFarmAssistantModule } from './ai-farm-assistant/ai-farm-assistant.module';
 import { AiPlatformModule } from './ai-platform/ai-platform.module';
 import { BullModule } from '@nestjs/bullmq';
@@ -136,6 +137,7 @@ import { BullModule } from '@nestjs/bullmq';
     InvoiceModule,
     VoucherModule,
     CareersModule,
+    LeadsModule,
     // AiChatModule,
     DisbursementModule,
   ],
