@@ -27,6 +27,14 @@ import { ProductLocationEntity } from '../product-location/entities/product-loca
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 
 const MESSAGE_MAX_LENGTH = 2000;
+const TOKEN_LIMIT_PER_USER = 10_000;
+const FEEDBACK_PROMPT =
+  "You've reached your 10,000 token limit for Ayo AI. Thank you for exploring Ayo!\n\n" +
+  'Before you go, we would love to hear about your experience:\n' +
+  '• How helpful was Ayo today?\n' +
+  '• Did you get the answers you were looking for?\n' +
+  '• What could we do better?\n\n' +
+  'Please share your thoughts using the feedback button below — your input helps us improve Ayo for farmers across Africa.';
 
 @Injectable()
 export class AiFarmAssistantService {
@@ -51,6 +59,47 @@ export class AiFarmAssistantService {
   ) {
     await this.ensureEnabled();
     const message = this.sanitizeMessage(dto.message);
+
+    const tokensUsed = await this.getUserTokensUsed(userId);
+    if (tokensUsed >= TOKEN_LIMIT_PER_USER) {
+      const conversation = dto.conversationId
+        ? await this.findOwnedConversation(dto.conversationId, userId)
+        : await this.createConversation(userId, message, null);
+
+      await this.messageRepository.save(
+        this.messageRepository.create({
+          conversationId: conversation.id,
+          conversation,
+          role: FarmAssistantMessageRole.User,
+          content: message,
+          metadata: { hasImage: !!image },
+        }),
+      );
+
+      await this.messageRepository.save(
+        this.messageRepository.create({
+          conversationId: conversation.id,
+          conversation,
+          role: FarmAssistantMessageRole.Assistant,
+          content: FEEDBACK_PROMPT,
+          metadata: { tokenLimitReached: true },
+        }),
+      );
+
+      conversation.updatedAt = new Date();
+      await this.conversationRepository.save(conversation);
+
+      return {
+        success: true,
+        conversationId: conversation.id,
+        reply: FEEDBACK_PROMPT,
+        suggestedProducts: [],
+        quickReplies: ['Rate my experience', 'Give feedback'],
+        requiresVetAttention: false,
+        tokenLimitReached: true,
+      };
+    }
+
     const requiresVetAttention = this.detectVetAttention(message);
     const suggestedProducts = await this.findSuggestedProducts(message);
     const conversation = dto.conversationId
@@ -181,6 +230,21 @@ export class AiFarmAssistantService {
       );
     }
     return { success: true };
+  }
+
+  private async getUserTokensUsed(userId: string): Promise<number> {
+    const result = await this.messageRepository
+      .createQueryBuilder('msg')
+      .innerJoin('msg.conversation', 'conv')
+      .where('conv.userId = :userId', { userId })
+      .andWhere("msg.role = 'assistant'")
+      .andWhere("msg.metadata->>'inputTokens' IS NOT NULL")
+      .select(
+        `COALESCE(SUM((msg.metadata->>'inputTokens')::int + (msg.metadata->>'outputTokens')::int), 0)`,
+        'total',
+      )
+      .getRawOne<{ total: string }>();
+    return parseInt(result?.total ?? '0', 10);
   }
 
   private async ensureEnabled(): Promise<void> {
