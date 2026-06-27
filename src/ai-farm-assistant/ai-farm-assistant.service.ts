@@ -29,12 +29,12 @@ import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 const MESSAGE_MAX_LENGTH = 2000;
 const TOKEN_LIMIT_PER_USER = 10_000;
 const FEEDBACK_PROMPT =
-  "You've reached your 10,000 token limit for Ayo AI. Thank you for exploring Ayo!\n\n" +
+  "Your free trial of Ayo AI has been reached. Thank you for exploring Ayo!\n\n" +
   'Before you go, we would love to hear about your experience:\n' +
-  '• How helpful was Ayo today?\n' +
+  '• How helpful was Ayo during your trial?\n' +
   '• Did you get the answers you were looking for?\n' +
-  '• What could we do better?\n\n' +
-  'Please share your thoughts using the feedback button below — your input helps us improve Ayo for farmers across Africa.';
+  '• Would you be willing to pay for a premium version of Ayo AI with more features and unlimited access?\n\n' +
+  'Please share your thoughts using the feedback button below — your input helps us build a better Ayo for farmers across Africa.';
 
 @Injectable()
 export class AiFarmAssistantService {
