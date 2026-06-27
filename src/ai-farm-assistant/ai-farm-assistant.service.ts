@@ -23,6 +23,7 @@ import {
   FarmAssistantSuggestedProduct,
 } from './ai-provider.service';
 import { AiSettingsService } from './ai-settings.service';
+import { AiRagService } from '../ai-platform/services/ai-rag.service';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 
@@ -49,6 +50,7 @@ export class AiFarmAssistantService {
     private readonly productLocationRepository: Repository<ProductLocationEntity>,
     private readonly aiProviderService: AiProviderService,
     private readonly aiSettingsService: AiSettingsService,
+    private readonly aiRagService: AiRagService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -137,9 +139,21 @@ export class AiFarmAssistantService {
       }),
     );
 
+    const ragResult = await this.aiRagService.search(
+      { query: message, limit: 4 },
+      userId,
+    );
+    const ragContext =
+      ragResult.results.length > 0
+        ? ragResult.results
+            .map((r, i) => `[${i + 1}] ${r.title}\n${r.content}`)
+            .join('\n\n')
+        : null;
+
     const aiReply = await this.aiProviderService.generateFarmAssistantReply({
       message,
       farmContext: conversation.farmContext,
+      ragContext,
       history: history.map((item) => ({
         role:
           item.role === FarmAssistantMessageRole.Assistant

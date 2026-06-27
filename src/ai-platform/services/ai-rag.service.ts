@@ -1,7 +1,8 @@
 import { createHash } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { DataSource } from 'typeorm';
 import {
   AiKnowledgeDocumentEntity,
   AiKnowledgeDocumentStatus,
@@ -10,6 +11,7 @@ import { AiKnowledgeChunkEntity } from '../entities/ai-knowledge-chunk.entity';
 import { AiRagQueryEntity } from '../entities/ai-rag-query.entity';
 import { IngestKnowledgeDocumentDto, RagSearchDto } from '../dto/knowledge.dto';
 import { AiSecurityService } from './ai-security.service';
+import { AiEmbeddingService } from './ai-embedding.service';
 
 export type RagSearchResult = {
   chunkId: string;
@@ -28,6 +30,11 @@ export type RagSearchResult = {
   };
 };
 
+const CHUNK_TARGET_CHARS = 1_600;
+const CHUNK_OVERLAP_CHARS = 200;
+const RRF_K = 60;
+const CANDIDATE_LIMIT = 20;
+
 @Injectable()
 export class AiRagService {
   constructor(
@@ -37,7 +44,9 @@ export class AiRagService {
     private readonly chunkRepository: Repository<AiKnowledgeChunkEntity>,
     @InjectRepository(AiRagQueryEntity)
     private readonly ragQueryRepository: Repository<AiRagQueryEntity>,
+    private readonly dataSource: DataSource,
     private readonly aiSecurityService: AiSecurityService,
+    private readonly embeddingService: AiEmbeddingService,
   ) {}
 
   async ingestDocument(dto: IngestKnowledgeDocumentDto) {
@@ -65,8 +74,15 @@ export class AiRagService {
         }),
       );
 
-      await this.chunkRepository.save(
-        this.chunkText(body).map((content, index) =>
+      const textChunks = this.chunkText(body);
+      const chunkEntities: AiKnowledgeChunkEntity[] = [];
+
+      for (let index = 0; index < textChunks.length; index++) {
+        const content = textChunks[index];
+        const embedding = await this.embeddingService.generateEmbedding(
+          `${document.title}\n\n${content}`,
+        );
+        chunkEntities.push(
           this.chunkRepository.create({
             documentId: document.id,
             document,
@@ -76,10 +92,12 @@ export class AiRagService {
             metadata: document.metadata,
             tags,
             tokenEstimate: Math.ceil(content.length / 4),
-            embedding: null,
+            embedding,
           }),
-        ),
-      );
+        );
+      }
+
+      await this.chunkRepository.save(chunkEntities);
     }
 
     const chunkCount = await this.chunkRepository.count({
@@ -93,59 +111,159 @@ export class AiRagService {
     const startedAt = Date.now();
     const query = this.aiSecurityService.sanitizeInput(dto.query, 500);
     const limit = Math.min(Math.max(Number(dto.limit) || 5, 1), 12);
-    const terms = this.extractTerms(query);
+    const sourceType = dto.sourceType || null;
 
-    const candidates = await this.chunkRepository.find({
-      where: [
-        { content: ILike(`%${query}%`) },
-        ...terms.map((term) => ({ content: ILike(`%${term}%`) })),
-      ],
+    const queryEmbedding = await this.embeddingService.generateEmbedding(query);
+
+    const [semanticRows, ftsRows] = await Promise.all([
+      queryEmbedding
+        ? this.semanticSearch(queryEmbedding, sourceType, CANDIDATE_LIMIT)
+        : Promise.resolve([] as { id: string }[]),
+      this.ftsSearch(query, sourceType, CANDIDATE_LIMIT),
+    ]);
+
+    const allIds = Array.from(
+      new Set([...semanticRows.map((r) => r.id), ...ftsRows.map((r) => r.id)]),
+    );
+
+    if (allIds.length === 0) {
+      await this.logQuery(userId, query, sourceType, limit, [], startedAt);
+      return { success: true, query, results: [], citations: [] };
+    }
+
+    const chunks = await this.chunkRepository.find({
+      where: { id: In(allIds) },
       relations: ['document'],
-      take: 80,
-      order: { createdAt: 'DESC' },
     });
 
-    const filtered = dto.sourceType
-      ? candidates.filter((chunk) => chunk.sourceType === dto.sourceType)
-      : candidates;
-    const results = filtered
-      .map((chunk) => this.toSearchResult(chunk, terms))
+    const semanticRank = new Map(semanticRows.map((r, i) => [r.id, i + 1]));
+    const ftsRank = new Map(ftsRows.map((r, i) => [r.id, i + 1]));
+
+    const scored = chunks
+      .map((chunk) => {
+        const sr = semanticRank.get(chunk.id);
+        const fr = ftsRank.get(chunk.id);
+        const score =
+          (sr ? 1 / (RRF_K + sr) : 0) + (fr ? 1 / (RRF_K + fr) : 0);
+        return { chunk, score };
+      })
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
 
-    await this.ragQueryRepository.save(
-      this.ragQueryRepository.create({
-        userId: userId || null,
-        sourceType: dto.sourceType || null,
-        query,
-        topK: limit,
-        resultChunkIds: results.map((result) => result.chunkId),
-        latencyMs: Date.now() - startedAt,
-      }),
+    const results = scored.map(({ chunk, score }) =>
+      this.toSearchResult(chunk, score),
+    );
+
+    await this.logQuery(
+      userId,
+      query,
+      sourceType,
+      limit,
+      results.map((r) => r.chunkId),
+      startedAt,
     );
 
     return {
       success: true,
       query,
       results,
-      citations: results.map((result) => result.citation),
+      citations: results.map((r) => r.citation),
     };
+  }
+
+  private async semanticSearch(
+    embedding: number[],
+    sourceType: string | null,
+    limit: number,
+  ): Promise<{ id: string }[]> {
+    const vector = `[${embedding.join(',')}]`;
+    try {
+      if (sourceType) {
+        return this.dataSource.query<{ id: string }[]>(
+          `SELECT id FROM ai_knowledge_chunk
+           WHERE embedding IS NOT NULL AND "sourceType" = $2
+           ORDER BY (embedding::text::vector(1024)) <=> ($1::vector(1024))
+           LIMIT $3`,
+          [vector, sourceType, limit],
+        );
+      }
+      return this.dataSource.query<{ id: string }[]>(
+        `SELECT id FROM ai_knowledge_chunk
+         WHERE embedding IS NOT NULL
+         ORDER BY (embedding::text::vector(1024)) <=> ($1::vector(1024))
+         LIMIT $2`,
+        [vector, limit],
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  private async ftsSearch(
+    query: string,
+    sourceType: string | null,
+    limit: number,
+  ): Promise<{ id: string }[]> {
+    try {
+      if (sourceType) {
+        return this.dataSource.query<{ id: string }[]>(
+          `SELECT id FROM ai_knowledge_chunk
+           WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
+             AND "sourceType" = $2
+           ORDER BY ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) DESC
+           LIMIT $3`,
+          [query, sourceType, limit],
+        );
+      }
+      return this.dataSource.query<{ id: string }[]>(
+        `SELECT id FROM ai_knowledge_chunk
+         WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
+         ORDER BY ts_rank(to_tsvector('english', content), plainto_tsquery('english', $1)) DESC
+         LIMIT $2`,
+        [query, limit],
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  private async logQuery(
+    userId: string | null | undefined,
+    query: string,
+    sourceType: string | null,
+    limit: number,
+    resultChunkIds: string[],
+    startedAt: number,
+  ) {
+    await this.ragQueryRepository.save(
+      this.ragQueryRepository.create({
+        userId: userId || null,
+        sourceType: sourceType || null,
+        query,
+        topK: limit,
+        resultChunkIds,
+        latencyMs: Date.now() - startedAt,
+      }),
+    );
   }
 
   private chunkText(body: string): string[] {
     const paragraphs = body
       .split(/\n{2,}/)
-      .map((paragraph) => paragraph.trim())
+      .map((p) => p.trim())
       .filter(Boolean);
+
     const chunks: string[] = [];
     let current = '';
 
-    for (const paragraph of paragraphs.length ? paragraphs : [body]) {
-      if ((current + '\n\n' + paragraph).length > 1400 && current) {
+    for (const para of paragraphs.length ? paragraphs : [body]) {
+      const candidate = current ? `${current}\n\n${para}` : para;
+      if (candidate.length > CHUNK_TARGET_CHARS && current) {
         chunks.push(current);
-        current = paragraph;
+        const overlap = current.slice(-CHUNK_OVERLAP_CHARS);
+        current = overlap ? `${overlap}\n\n${para}` : para;
       } else {
-        current = current ? `${current}\n\n${paragraph}` : paragraph;
+        current = candidate;
       }
     }
 
@@ -153,29 +271,10 @@ export class AiRagService {
     return chunks;
   }
 
-  private extractTerms(query: string): string[] {
-    return Array.from(
-      new Set(
-        query
-          .toLowerCase()
-          .split(/[^a-z0-9]+/i)
-          .filter((term) => term.length >= 3)
-          .slice(0, 12),
-      ),
-    );
-  }
-
   private toSearchResult(
     chunk: AiKnowledgeChunkEntity,
-    terms: string[],
+    score: number,
   ): RagSearchResult {
-    const lowerContent = chunk.content.toLowerCase();
-    const score =
-      terms.reduce(
-        (total, term) => total + (lowerContent.includes(term) ? 1 : 0),
-        0,
-      ) + (chunk.tags.some((tag) => terms.includes(tag)) ? 2 : 0);
-
     return {
       chunkId: chunk.id,
       documentId: chunk.documentId,

@@ -25,6 +25,7 @@ export type FarmAssistantProviderMessage = {
 export type FarmAssistantProviderInput = {
   message: string;
   farmContext?: Record<string, unknown> | null;
+  ragContext?: string | null;
   history: FarmAssistantProviderMessage[];
   products: FarmAssistantSuggestedProduct[];
   requiresVetAttention: boolean;
@@ -125,7 +126,11 @@ export class AiProviderService {
 
 Relevant Agrofount products:
 ${productContext}
-
+${
+  input.ragContext
+    ? `\nKnowledge base context:\n${input.ragContext}\n`
+    : ''
+}
 Recent conversation:
 ${input.history
   .slice(-8)
