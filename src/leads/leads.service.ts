@@ -22,13 +22,23 @@ export class LeadsService {
 
   private isExcelBuffer(buffer: Buffer): boolean {
     // .xlsx: ZIP magic bytes PK (50 4B 03 04)
-    if (buffer.length >= 4 &&
-      buffer[0] === 0x50 && buffer[1] === 0x4b &&
-      buffer[2] === 0x03 && buffer[3] === 0x04) return true;
+    if (
+      buffer.length >= 4 &&
+      buffer[0] === 0x50 &&
+      buffer[1] === 0x4b &&
+      buffer[2] === 0x03 &&
+      buffer[3] === 0x04
+    )
+      return true;
     // .xls: OLE2 magic bytes (D0 CF 11 E0)
-    if (buffer.length >= 4 &&
-      buffer[0] === 0xd0 && buffer[1] === 0xcf &&
-      buffer[2] === 0x11 && buffer[3] === 0xe0) return true;
+    if (
+      buffer.length >= 4 &&
+      buffer[0] === 0xd0 &&
+      buffer[1] === 0xcf &&
+      buffer[2] === 0x11 &&
+      buffer[3] === 0xe0
+    )
+      return true;
     return false;
   }
 
@@ -36,8 +46,13 @@ export class LeadsService {
     if (this.isExcelBuffer(buffer)) {
       const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' });
-      return raw.map((r) => (r as unknown[]).map((v) => String(v ?? '').trim()));
+      const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+        header: 1,
+        defval: '',
+      });
+      return raw.map((r) =>
+        (r as unknown[]).map((v) => String(v ?? '').trim()),
+      );
     }
     const text = buffer.toString('utf-8');
     const sep = text.split('\n')[0]?.includes('\t') ? '\t' : ',';
@@ -55,7 +70,10 @@ export class LeadsService {
     if (rows.length < 2) throw new BadRequestException('File has no data rows');
 
     const headers = rows[0].map((h) =>
-      h.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''),
+      h
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, ''),
     );
 
     const col = (row: string[], name: string) => {
@@ -70,12 +88,20 @@ export class LeadsService {
       const row = rows[i];
       const phone = col(row, 'phone_number') || col(row, 'phone');
       const name = col(row, 'name');
-      if (!phone || !name) { skipped++; continue; }
+      if (!phone || !name) {
+        skipped++;
+        continue;
+      }
 
       const sourceLeadId = col(row, 'lead_id');
       if (sourceLeadId) {
-        const existing = await this.leadRepo.findOne({ where: { sourceLeadId } });
-        if (existing) { skipped++; continue; }
+        const existing = await this.leadRepo.findOne({
+          where: { sourceLeadId },
+        });
+        if (existing) {
+          skipped++;
+          continue;
+        }
       }
 
       const rawTime = col(row, 'created_time');
