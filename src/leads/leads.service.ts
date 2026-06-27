@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Repository } from 'typeorm';
+import * as XLSX from 'xlsx';
 import { LeadEntity, LeadSource, LeadStatus } from './entities/lead.entity';
 import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
 import { NotifyLeadDto } from './dto/notify-lead.dto';
@@ -19,22 +20,42 @@ export class LeadsService {
     private readonly notificationService: NotificationService,
   ) {}
 
+  private isExcelBuffer(buffer: Buffer): boolean {
+    // .xlsx: ZIP magic bytes PK (50 4B 03 04)
+    if (buffer.length >= 4 &&
+      buffer[0] === 0x50 && buffer[1] === 0x4b &&
+      buffer[2] === 0x03 && buffer[3] === 0x04) return true;
+    // .xls: OLE2 magic bytes (D0 CF 11 E0)
+    if (buffer.length >= 4 &&
+      buffer[0] === 0xd0 && buffer[1] === 0xcf &&
+      buffer[2] === 0x11 && buffer[3] === 0xe0) return true;
+    return false;
+  }
+
+  private parseToRows(buffer: Buffer): string[][] {
+    if (this.isExcelBuffer(buffer)) {
+      const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' });
+      return raw.map((r) => (r as unknown[]).map((v) => String(v ?? '').trim()));
+    }
+    const text = buffer.toString('utf-8');
+    const sep = text.split('\n')[0]?.includes('\t') ? '\t' : ',';
+    return text
+      .split(/\r?\n/)
+      .filter((l) => l.trim())
+      .map((l) => l.split(sep).map((v) => v.trim().replace(/^"|"$/g, '')));
+  }
+
   async uploadBulk(
-    csvBuffer: Buffer,
+    fileBuffer: Buffer,
     adminId: string,
   ): Promise<{ inserted: number; skipped: number; total: number }> {
-    const text = csvBuffer.toString('utf-8');
-    const lines = text.split(/\r?\n/).filter((l) => l.trim());
-    if (lines.length < 2) throw new BadRequestException('CSV has no data rows');
+    const rows = this.parseToRows(fileBuffer);
+    if (rows.length < 2) throw new BadRequestException('File has no data rows');
 
-    const rawHeader = lines[0];
-    const sep = rawHeader.includes('\t') ? '\t' : ',';
-    const headers = rawHeader.split(sep).map((h) =>
-      h
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, '_')
-        .replace(/[^a-z0-9_]/g, ''),
+    const headers = rows[0].map((h) =>
+      h.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''),
     );
 
     const col = (row: string[], name: string) => {
@@ -45,26 +66,16 @@ export class LeadsService {
     let inserted = 0;
     let skipped = 0;
 
-    for (let i = 1; i < lines.length; i++) {
-      const row = lines[i]
-        .split(sep)
-        .map((v) => v.trim().replace(/^"|"$/g, ''));
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
       const phone = col(row, 'phone_number') || col(row, 'phone');
       const name = col(row, 'name');
-      if (!phone || !name) {
-        skipped++;
-        continue;
-      }
+      if (!phone || !name) { skipped++; continue; }
 
       const sourceLeadId = col(row, 'lead_id');
       if (sourceLeadId) {
-        const existing = await this.leadRepo.findOne({
-          where: { sourceLeadId },
-        });
-        if (existing) {
-          skipped++;
-          continue;
-        }
+        const existing = await this.leadRepo.findOne({ where: { sourceLeadId } });
+        if (existing) { skipped++; continue; }
       }
 
       const rawTime = col(row, 'created_time');
@@ -96,7 +107,7 @@ export class LeadsService {
       inserted++;
     }
 
-    return { inserted, skipped, total: lines.length - 1 };
+    return { inserted, skipped, total: rows.length - 1 };
   }
 
   async findAll(params: {
