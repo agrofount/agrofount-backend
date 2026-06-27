@@ -125,12 +125,17 @@ export class CampaignProcessor extends WorkerHost {
         });
         break;
 
+      case 'WHATSAPP':
+        throw new Error('WhatsApp channel is not yet integrated');
+
       default:
         this.logger.warn(`Unknown channel: ${channel}`);
     }
   }
 
   private buildEmailHtml(campaign: NotificationCampaignEntity): string {
+    if (campaign.emailContent) return campaign.emailContent;
+
     const banner = campaign.bannerImageUrl
       ? `<img src="${campaign.bannerImageUrl}" alt="" style="width:100%;max-width:600px;border-radius:8px;margin-bottom:16px;display:block;" />`
       : '';

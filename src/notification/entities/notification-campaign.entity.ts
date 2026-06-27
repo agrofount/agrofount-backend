@@ -70,6 +70,9 @@ export class NotificationCampaignEntity {
   @Column({ nullable: true })
   bannerImageUrl?: string;
 
+  @Column({ type: 'text', nullable: true })
+  emailContent?: string;
+
   @Column({
     type: 'enum',
     enum: CampaignStatus,

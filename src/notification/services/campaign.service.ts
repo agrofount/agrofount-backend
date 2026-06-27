@@ -33,6 +33,7 @@ export class CampaignService {
       ctaText: dto.ctaText,
       ctaLink: dto.ctaLink,
       bannerImageUrl: dto.bannerImageUrl,
+      emailContent: dto.emailContent,
       scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
       frequency: dto.frequency,
       status: CampaignStatus.DRAFT,
