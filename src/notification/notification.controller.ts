@@ -23,6 +23,7 @@ import { RequiredPermissions } from '../auth/decorator/required-permission.decor
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CampaignService } from './services/campaign.service';
 import { CronMonitorService } from './services/cron-monitor.service';
+import { NotificationTriggersJob } from './jobs/notification-triggers.job';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import type { CampaignAudience } from './entities/notification-campaign.entity';
@@ -36,6 +37,7 @@ export class NotificationController {
     private readonly notificationService: NotificationService,
     private readonly campaignService: CampaignService,
     private readonly cronMonitorService: CronMonitorService,
+    private readonly triggersJob: NotificationTriggersJob,
   ) {}
 
   // ── Campaign endpoints (must be before :id to avoid route shadowing) ────
@@ -105,6 +107,20 @@ export class NotificationController {
       dto.enabled,
       user.id,
     );
+  }
+
+  @Post('cron-jobs/pending-order-reminders/test')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      'Send pending order reminders for specific order IDs (test/manual trigger)',
+  })
+  testPendingOrderReminders(@Body() body: { orderIds: string[] }) {
+    const { orderIds } = body;
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      throw new BadRequestException('orderIds must be a non-empty array');
+    }
+    return this.triggersJob.sendReminderForOrders(orderIds);
   }
 
   @Get('cron-jobs/:name/runs')

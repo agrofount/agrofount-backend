@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { createHash, randomBytes } from 'crypto';
 import { DataSource } from 'typeorm';
 import { NotificationService } from '../notification.service';
 import { NotificationGateway } from '../gateways/notification.gateway';
@@ -202,19 +203,7 @@ export class NotificationTriggersJob {
         for (const user of users) {
           if (!user.email) continue;
           try {
-            const name = user.firstname ?? 'there';
-            await this.notificationService.sendCustomEmail(
-              { userId: user.id, email: user.email },
-              'Verify your Agrofount account',
-              this.buildSimpleEmail(
-                'Your account is almost ready',
-                `Hi ${name}, please verify your email address to unlock all Agrofount features. This is your day-${window.days} reminder.`,
-                'Verify Email',
-                `${process.env.FRONTEND_URL ?? ''}/verify-email`,
-              ),
-              `Verify your Agrofount account. Day ${window.days} reminder.`,
-              MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
-            );
+            await this.dispatchUnverifiedReminder(user);
             windowSent++;
           } catch (err) {
             this.logger.warn(
@@ -239,6 +228,67 @@ export class NotificationTriggersJob {
       });
       throw err;
     }
+  }
+
+  async sendUnverifiedReminderForUsers(
+    userIds: string[],
+  ): Promise<{ sent: number; total: number }> {
+    const users = await this.dataSource
+      .createQueryBuilder(UserEntity, 'user')
+      .where('user.isVerified = false')
+      .andWhere('user.deletedAt IS NULL')
+      .andWhere('user.id IN (:...userIds)', { userIds })
+      .select(['user.id', 'user.email', 'user.firstname'])
+      .getMany();
+
+    let sent = 0;
+    for (const user of users) {
+      if (!user.email) continue;
+      try {
+        await this.dispatchUnverifiedReminder(user);
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Unverified reminder (test) failed for user ${user.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+    return { sent, total: users.length };
+  }
+
+  private async dispatchUnverifiedReminder(user: {
+    id: string;
+    email: string;
+    firstname: string;
+  }): Promise<void> {
+    const rawToken = randomBytes(32).toString('hex');
+    const hashedToken = createHash('sha256').update(rawToken).digest('hex');
+    const expires = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
+    await this.dataSource
+      .createQueryBuilder()
+      .update(UserEntity)
+      .set({
+        verificationToken: hashedToken,
+        verificationTokenExpires: expires,
+      })
+      .where('id = :id', { id: user.id })
+      .execute();
+
+    await this.notificationService.sendNotification(
+      'EMAIL',
+      { userId: user.id, email: user.email },
+      MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+      {
+        customer_name: user.firstname ?? 'there',
+        verification_link: `${
+          process.env.FRONTEND_URL ?? ''
+        }/verify-email?token=${rawToken}`,
+        account_link: `${process.env.FRONTEND_URL ?? ''}/account`,
+      },
+    );
   }
 
   @Cron('0 10 * * 3')
@@ -297,6 +347,172 @@ export class NotificationTriggersJob {
       });
       throw err;
     }
+  }
+
+  @Cron('0 9 * * *')
+  async sendPendingOrderReminders() {
+    if (
+      !(await this.cronMonitor.isEnabled(CronJobName.PENDING_ORDER_REMINDERS))
+    )
+      return;
+    const run = await this.cronMonitor.startRun(
+      CronJobName.PENDING_ORDER_REMINDERS,
+    );
+
+    // Target orders pending for 24–48 h so each order gets exactly one reminder
+    const cutoffStart = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const cutoffEnd = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    try {
+      const result = await this.dispatchPendingOrderReminders({
+        cutoffStart,
+        cutoffEnd,
+      });
+      await this.cronMonitor.finishRun(run, result);
+    } catch (err) {
+      await this.cronMonitor.finishRun(run, {
+        sent: 0,
+        total: 0,
+        error: (err as Error).message,
+      });
+      throw err;
+    }
+  }
+
+  async sendReminderForOrders(
+    orderIds: string[],
+  ): Promise<{ sent: number; total: number }> {
+    return this.dispatchPendingOrderReminders({ orderIds });
+  }
+
+  private async dispatchPendingOrderReminders(filter: {
+    cutoffStart?: Date;
+    cutoffEnd?: Date;
+    orderIds?: string[];
+  }): Promise<{ sent: number; total: number }> {
+    const qb = this.dataSource
+      .createQueryBuilder(OrderEntity, 'order')
+      .leftJoinAndSelect('order.user', 'user')
+      .where('order.status = :status', { status: 'pending' })
+      .select([
+        'order.id',
+        'order.code',
+        'order.status',
+        'order.totalPrice',
+        'order.items',
+        'order.address',
+        'order.createdAt',
+        'user.id',
+        'user.email',
+        'user.phone',
+        'user.firstname',
+      ]);
+
+    if (filter.orderIds?.length) {
+      qb.andWhere('order.id IN (:...orderIds)', { orderIds: filter.orderIds });
+    } else {
+      qb.andWhere('order.createdAt BETWEEN :start AND :end', {
+        start: filter.cutoffStart,
+        end: filter.cutoffEnd,
+      });
+    }
+
+    const orders = await qb.getMany();
+    let sent = 0;
+    const total = orders.length;
+
+    for (const order of orders) {
+      const user = order.user;
+      if (!user?.email && !user?.phone) continue;
+      try {
+        const name = user.firstname ?? 'there';
+        const dueDate = new Date(
+          order.createdAt.getTime() + 48 * 60 * 60 * 1000,
+        );
+        const fmt = (d: Date) =>
+          d.toLocaleDateString('en-NG', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+          });
+        const orderLink = `${
+          process.env.FRONTEND_URL ?? ''
+        }/account?tab=orders`;
+        const sharedParams = {
+          customer_name: name,
+          order_id: order.code,
+          order_status: order.status,
+          order_date: fmt(order.createdAt),
+          due_date: fmt(dueDate),
+          order_link: orderLink,
+          userId: user.id,
+        };
+
+        try {
+          this.notificationGateway.emitToUser(user.id, 'notification', {
+            title: 'Your order is pending',
+            message: `Order ${order.code} is still pending. Complete payment to secure your items.`,
+            ctaLink: orderLink,
+          });
+        } catch {
+          // Gateway may be unavailable (e.g. no WS server in script context)
+        }
+
+        if (user.email) {
+          const addr = order.address;
+          const deliveryAddress = addr
+            ? [addr.street, addr.city, addr.state].filter(Boolean).join(', ')
+            : 'N/A';
+          const item1 = order.items?.[0];
+          const item2 = order.items?.[1];
+          await this.notificationService.sendNotification(
+            'EMAIL',
+            { userId: user.id, email: user.email },
+            MessageTypes.PENDING_ORDER_REMINDER,
+            {
+              ...sharedParams,
+              order_amount: `₦${Number(order.totalPrice).toLocaleString(
+                'en-NG',
+                { minimumFractionDigits: 2 },
+              )}`,
+              delivery_address: deliveryAddress,
+              item_1_name: item1?.name ?? '',
+              item_1_description: item1?.unit ?? '',
+              item_1_quantity: item1?.quantity ?? '',
+              item_1_price: item1
+                ? `₦${Number(item1.price).toLocaleString('en-NG', {
+                    minimumFractionDigits: 2,
+                  })}`
+                : '',
+              item_2_name: item2?.name ?? '',
+              item_2_description: item2?.unit ?? '',
+              item_2_quantity: item2?.quantity ?? '',
+              item_2_price: item2
+                ? `₦${Number(item2.price).toLocaleString('en-NG', {
+                    minimumFractionDigits: 2,
+                  })}`
+                : '',
+            },
+          );
+        } else {
+          await this.notificationService.sendNotification(
+            'SMS',
+            { userId: user.id, phoneNumber: user.phone },
+            MessageTypes.PENDING_ORDER_REMINDER,
+            sharedParams,
+          );
+        }
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Pending order reminder failed for order ${order.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+
+    return { sent, total };
   }
 
   private buildSimpleEmail(
