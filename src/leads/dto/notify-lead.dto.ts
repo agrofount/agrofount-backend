@@ -10,7 +10,9 @@ export class NotifyLeadDto {
   @IsString()
   message: string;
 
-  @ApiPropertyOptional({ description: 'Email subject (required when channel is email)' })
+  @ApiPropertyOptional({
+    description: 'Email subject (required when channel is email)',
+  })
   @IsOptional()
   @IsString()
   subject?: string;

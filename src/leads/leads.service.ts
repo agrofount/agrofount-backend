@@ -29,7 +29,13 @@ export class LeadsService {
 
     const rawHeader = lines[0];
     const sep = rawHeader.includes('\t') ? '\t' : ',';
-    const headers = rawHeader.split(sep).map((h) => h.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''));
+    const headers = rawHeader.split(sep).map((h) =>
+      h
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, ''),
+    );
 
     const col = (row: string[], name: string) => {
       const idx = headers.indexOf(name);
@@ -40,15 +46,25 @@ export class LeadsService {
     let skipped = 0;
 
     for (let i = 1; i < lines.length; i++) {
-      const row = lines[i].split(sep).map((v) => v.trim().replace(/^"|"$/g, ''));
+      const row = lines[i]
+        .split(sep)
+        .map((v) => v.trim().replace(/^"|"$/g, ''));
       const phone = col(row, 'phone_number') || col(row, 'phone');
       const name = col(row, 'name');
-      if (!phone || !name) { skipped++; continue; }
+      if (!phone || !name) {
+        skipped++;
+        continue;
+      }
 
       const sourceLeadId = col(row, 'lead_id');
       if (sourceLeadId) {
-        const existing = await this.leadRepo.findOne({ where: { sourceLeadId } });
-        if (existing) { skipped++; continue; }
+        const existing = await this.leadRepo.findOne({
+          where: { sourceLeadId },
+        });
+        if (existing) {
+          skipped++;
+          continue;
+        }
       }
 
       const rawTime = col(row, 'created_time');
@@ -60,7 +76,11 @@ export class LeadsService {
           name,
           phone,
           gender: col(row, 'gender') || undefined,
-          state: col(row, 'province/state') || col(row, 'province_state') || col(row, 'state') || undefined,
+          state:
+            col(row, 'province/state') ||
+            col(row, 'province_state') ||
+            col(row, 'state') ||
+            undefined,
           adId: col(row, 'ad_id') || undefined,
           adName: col(row, 'ad_name') || undefined,
           campaignId: col(row, 'campaign_id') || undefined,
@@ -93,10 +113,16 @@ export class LeadsService {
     const where: Record<string, unknown>[] = [];
     const baseFilter: Record<string, unknown> = {};
 
-    if (params.status && Object.values(LeadStatus).includes(params.status as LeadStatus)) {
+    if (
+      params.status &&
+      Object.values(LeadStatus).includes(params.status as LeadStatus)
+    ) {
       baseFilter.status = params.status;
     }
-    if (params.source && Object.values(LeadSource).includes(params.source as LeadSource)) {
+    if (
+      params.source &&
+      Object.values(LeadSource).includes(params.source as LeadSource)
+    ) {
       baseFilter.source = params.source;
     }
 
@@ -140,7 +166,8 @@ export class LeadsService {
     for (const row of byStatus) statusMap[row.status] = Number(row.count);
 
     const converted = statusMap[LeadStatus.Converted] ?? 0;
-    const conversionRate = total > 0 ? Math.round((converted / total) * 100 * 10) / 10 : 0;
+    const conversionRate =
+      total > 0 ? Math.round((converted / total) * 100 * 10) / 10 : 0;
 
     return {
       total,
@@ -185,14 +212,16 @@ export class LeadsService {
     const lead = await this.findOne(id);
 
     if (dto.channel === 'sms') {
-      if (!lead.phone) throw new BadRequestException('Lead has no phone number');
+      if (!lead.phone)
+        throw new BadRequestException('Lead has no phone number');
       await this.notificationService.sendSmsForCampaign(
         lead.phone,
         adminId,
         dto.message,
       );
     } else {
-      if (!lead.email) throw new BadRequestException('Lead has no email address');
+      if (!lead.email)
+        throw new BadRequestException('Lead has no email address');
       await this.notificationService.sendCustomEmail(
         { userId: adminId, email: lead.email },
         dto.subject ?? 'Message from Agrofount',
