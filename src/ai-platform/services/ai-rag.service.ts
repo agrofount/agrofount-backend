@@ -1,15 +1,20 @@
 import { createHash } from 'crypto';
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { DataSource } from 'typeorm';
+import pdfParse = require('pdf-parse');
 import {
   AiKnowledgeDocumentEntity,
   AiKnowledgeDocumentStatus,
 } from '../entities/ai-knowledge-document.entity';
 import { AiKnowledgeChunkEntity } from '../entities/ai-knowledge-chunk.entity';
 import { AiRagQueryEntity } from '../entities/ai-rag-query.entity';
-import { IngestKnowledgeDocumentDto, RagSearchDto } from '../dto/knowledge.dto';
+import {
+  IngestKnowledgeDocumentDto,
+  PdfIngestDto,
+  RagSearchDto,
+} from '../dto/knowledge.dto';
 import { AiSecurityService } from './ai-security.service';
 import { AiEmbeddingService } from './ai-embedding.service';
 
@@ -105,6 +110,60 @@ export class AiRagService {
     });
 
     return { success: true, documentId: document.id, chunkCount };
+  }
+
+  async ingestPdfDocument(buffer: Buffer, dto: PdfIngestDto, filename: string) {
+    let parsed: Awaited<ReturnType<typeof pdfParse>>;
+    try {
+      parsed = await pdfParse(buffer);
+    } catch {
+      throw new BadRequestException(
+        'Could not parse the PDF. Make sure it is a valid, non-encrypted text-based PDF.',
+      );
+    }
+
+    const rawText = parsed.text || '';
+    if (rawText.trim().length < 20) {
+      throw new BadRequestException(
+        'No text could be extracted from this PDF. It may be a scanned image PDF, which is not supported.',
+      );
+    }
+
+    const body = this.cleanPdfText(rawText);
+    const title = (dto.title?.trim() || filename.replace(/\.pdf$/i, '').trim()).slice(0, 220);
+
+    let tags: string[] = [];
+    if (dto.tagsJson) {
+      try {
+        const parsed = JSON.parse(dto.tagsJson);
+        tags = Array.isArray(parsed) ? parsed.map(String) : [];
+      } catch {
+        tags = [];
+      }
+    }
+
+    let metadata: Record<string, unknown> = {
+      pages: parsed.numpages,
+      source: 'pdf_upload',
+      originalFilename: filename,
+    };
+    if (dto.metadataJson) {
+      try {
+        const extra = JSON.parse(dto.metadataJson);
+        if (extra && typeof extra === 'object') metadata = { ...metadata, ...extra };
+      } catch {
+        // ignore malformed metadata JSON
+      }
+    }
+
+    return this.ingestDocument({
+      sourceType: dto.sourceType,
+      title,
+      body,
+      tags,
+      metadata,
+      externalId: dto.externalId,
+    });
   }
 
   async search(dto: RagSearchDto, userId?: string | null) {
@@ -245,6 +304,15 @@ export class AiRagService {
         latencyMs: Date.now() - startedAt,
       }),
     );
+  }
+
+  private cleanPdfText(raw: string): string {
+    return raw
+      .replace(/\f/g, '\n\n')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/(\S)-\n(\S)/g, '$1$2')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   private chunkText(body: string): string[] {
