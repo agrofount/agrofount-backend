@@ -13,6 +13,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomUUID } from 'crypto';
+import sharp from 'sharp';
 import { Server } from 'socket.io';
 import { MoreThan, Repository } from 'typeorm';
 import {
@@ -27,6 +28,8 @@ const MAX_UPLOADS_PER_DAY = 50;
 export class UploadService {
   private readonly s3Client: S3Client;
   private readonly bucketName: string;
+  private readonly region: string;
+  private readonly cdnUrl: string | null;
 
   constructor(
     configService: ConfigService,
@@ -34,9 +37,9 @@ export class UploadService {
     private readonly assetRepository: Repository<UploadAssetEntity>,
   ) {
     this.bucketName = configService.getOrThrow<string>('AWS_BUCKET_NAME');
-    this.s3Client = new S3Client({
-      region: configService.getOrThrow<string>('AWS_S3_REGION'),
-    });
+    this.region = configService.getOrThrow<string>('AWS_S3_REGION');
+    this.cdnUrl = configService.get<string>('CLOUDFRONT_URL') ?? null;
+    this.s3Client = new S3Client({ region: this.region });
   }
 
   async upload(
@@ -47,14 +50,21 @@ export class UploadService {
     server?: Server,
   ) {
     this.assertFileSize(buffer);
+    this.detectImage(buffer); // validate format before conversion
+    const webpBuffer = await this.toWebP(buffer);
+    const webpName = originalName.replace(/\.[^.]+$/, '') + '.webp';
     return this.uploadVerifiedFile(
       ownerId,
       purpose,
-      originalName,
-      buffer,
-      this.detectImage(buffer),
+      webpName,
+      webpBuffer,
+      { contentType: 'image/webp', extension: 'webp' },
       server,
     );
+  }
+
+  private async toWebP(buffer: Buffer): Promise<Buffer> {
+    return sharp(buffer).webp({ quality: 82, effort: 4 }).toBuffer();
   }
 
   async uploadDocument(
@@ -96,7 +106,7 @@ export class UploadService {
 
     const checksum = createHash('sha256').update(buffer).digest('hex');
     const assetId = randomUUID();
-    const objectKey = `private/${ownerId}/${purpose}/${new Date()
+    const objectKey = `uploads/${purpose}/${new Date()
       .toISOString()
       .slice(0, 10)}/${assetId}.${detected.extension}`;
     const asset = await this.assetRepository.save(
@@ -123,7 +133,7 @@ export class UploadService {
           ContentType: detected.contentType,
           ContentLength: buffer.length,
           ServerSideEncryption: 'AES256',
-          CacheControl: 'private, max-age=300',
+          CacheControl: 'public, max-age=31536000, immutable',
           ContentDisposition: `inline; filename="${asset.originalName}"`,
           Metadata: { ownerId, assetId, checksum, purpose },
         },
@@ -150,7 +160,10 @@ export class UploadService {
     } catch (error) {
       await this.assetRepository.update(asset.id, {
         status: UploadAssetStatus.Failed,
-        failureReason: String(error?.message || error).slice(0, 2_000),
+        failureReason: String((error as Error)?.message || error).slice(
+          0,
+          2_000,
+        ),
       });
       throw error;
     }
@@ -284,6 +297,13 @@ export class UploadService {
     return normalized || 'upload';
   }
 
+  private getPublicUrl(objectKey: string): string {
+    if (this.cdnUrl) {
+      return `${this.cdnUrl.replace(/\/$/, '')}/${objectKey}`;
+    }
+    return `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${objectKey}`;
+  }
+
   private response(asset: UploadAssetEntity) {
     return {
       id: asset.id,
@@ -293,6 +313,7 @@ export class UploadService {
       checksum: asset.checksum,
       status: asset.status,
       createdAt: asset.createdAt,
+      publicUrl: this.getPublicUrl(asset.objectKey),
     };
   }
 }
