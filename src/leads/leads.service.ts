@@ -84,6 +84,7 @@ export class LeadsService {
     const headers = rows[0].map((h) =>
       h
         .toLowerCase()
+        .replace(/[/\\]+/g, '_')
         .replace(/\s+/g, '_')
         .replace(/[^a-z0-9_]/g, ''),
     );
