@@ -52,6 +52,13 @@ describe('AiFarmAssistantService', () => {
       find: jest.fn(async ({ where }: any) =>
         messages.filter((item) => item.conversationId === where.conversationId),
       ),
+      createQueryBuilder: jest.fn(() => ({
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        getRawOne: jest.fn().mockResolvedValue({ total: '0' }),
+      })),
       ...overrides.messageRepository,
     };
     const productLocationRepository = {
@@ -94,6 +101,10 @@ describe('AiFarmAssistantService', () => {
     const aiSettingsService = {
       isAyoActive: jest.fn().mockResolvedValue(true),
     };
+    const aiRagService = {
+      search: jest.fn().mockResolvedValue({ results: [] }),
+      ...overrides.aiRagService,
+    };
     const service = new AiFarmAssistantService(
       conversationRepository as any,
       messageRepository as any,
@@ -101,6 +112,7 @@ describe('AiFarmAssistantService', () => {
       productLocationRepository as any,
       aiProviderService as any,
       aiSettingsService as any,
+      aiRagService as any,
       configService as any,
     );
 
