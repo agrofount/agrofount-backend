@@ -7,13 +7,13 @@ import {
   ParseUUIDPipe,
   Post,
   Res,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 import { Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiConsumes,
@@ -40,20 +40,38 @@ export class AiFarmAssistantController {
   @ApiOperation({ summary: 'Ask the AI farm assistant a question' })
   @ApiConsumes('multipart/form-data', 'application/json')
   @UseInterceptors(
-    FileInterceptor('image', {
-      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
-      fileFilter: (_req, file, cb) => {
-        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-        cb(null, allowed.includes(file.mimetype));
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'document', maxCount: 1 },
+      ],
+      {
+        limits: { fileSize: 10 * 1024 * 1024 },
+        fileFilter: (_req, file, cb) => {
+          const allowed = [
+            'image/jpeg',
+            'image/png',
+            'image/webp',
+            'image/gif',
+            'application/pdf',
+          ];
+          cb(null, allowed.includes(file.mimetype));
+        },
       },
-    }),
+    ),
   )
   ask(
     @CurrentUser() user: UserEntity,
     @Body() dto: AskFarmAssistantDto,
-    @UploadedFile() image?: Express.Multer.File,
+    @UploadedFiles()
+    files?: { image?: Express.Multer.File[]; document?: Express.Multer.File[] },
   ) {
-    return this.farmAssistantService.ask(user, dto, image);
+    return this.farmAssistantService.ask(
+      user,
+      dto,
+      files?.image?.[0],
+      files?.document?.[0],
+    );
   }
 
   @Post('ask/stream')

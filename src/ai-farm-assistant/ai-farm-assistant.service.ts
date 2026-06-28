@@ -25,6 +25,7 @@ import {
 import { AiSettingsService } from './ai-settings.service';
 import { AiRagService } from '../ai-platform/services/ai-rag.service';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
+import pdfParse = require('pdf-parse');
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 import { TOKEN_LIMIT_PER_USER } from './ai-farm-assistant.constants';
 
@@ -65,11 +66,15 @@ export class AiFarmAssistantService {
     },
     dto: AskFarmAssistantDto,
     image?: Express.Multer.File,
+    document?: Express.Multer.File,
   ) {
     const userId = user.id;
     const userName = user.firstname || user.username || null;
     const userLocation =
       [user.city, user.state].filter(Boolean).join(', ') || null;
+    const documentContext = document
+      ? await this.extractPdfText(document.buffer)
+      : null;
 
     await this.ensureEnabled();
     const message = this.sanitizeMessage(dto.message);
@@ -170,6 +175,7 @@ export class AiFarmAssistantService {
       message,
       farmContext: conversation.farmContext,
       ragContext,
+      documentContext,
       userName,
       userLocation,
       history: history.map((item) => ({
@@ -262,6 +268,22 @@ export class AiFarmAssistantService {
       );
     }
     return { success: true };
+  }
+
+  private async extractPdfText(buffer: Buffer): Promise<string | null> {
+    try {
+      const result = await pdfParse(buffer);
+      const text = (result.text || '').trim();
+      if (!text) return null;
+      return text.length > 4_000
+        ? `${text.slice(
+            0,
+            4_000,
+          )}\n\n[Document truncated — showing first portion only]`
+        : text;
+    } catch {
+      return null;
+    }
   }
 
   private async getUserTokensUsed(userId: string): Promise<number> {
