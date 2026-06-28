@@ -130,7 +130,7 @@ describe('AiFarmAssistantService', () => {
   it('asks a new question and stores user and assistant messages', async () => {
     const { service, messages } = setup();
 
-    const result = await service.ask(userId, {
+    const result = await service.ask({ id: userId }, {
       message: 'My broilers are 3 weeks old. What feed should I use?',
       farmContext: { birdType: 'broiler', birdAgeWeeks: 3 },
     });
@@ -160,7 +160,7 @@ describe('AiFarmAssistantService', () => {
       farmContext: null,
     });
 
-    await service.ask(userId, {
+    await service.ask({ id: userId }, {
       conversationId,
       message: 'What vaccination should I give next?',
     });
@@ -187,7 +187,7 @@ describe('AiFarmAssistantService', () => {
   it('returns product suggestions when the question mentions feed', async () => {
     const { service, productLocationRepository } = setup();
 
-    const result = await service.ask(userId, {
+    const result = await service.ask({ id: userId }, {
       message: 'I need broiler starter feed',
     });
 
@@ -204,7 +204,7 @@ describe('AiFarmAssistantService', () => {
   it('sets requiresVetAttention for severe disease symptoms', async () => {
     const { service } = setup();
 
-    const result = await service.ask(userId, {
+    const result = await service.ask({ id: userId }, {
       message: 'Many are dying suddenly and some cannot stand',
     });
 
@@ -224,7 +224,7 @@ describe('AiFarmAssistantService', () => {
     });
 
     await expect(
-      service.ask(userId, { message: 'What feed should I use?' }),
+      service.ask({ id: userId }, { message: 'What feed should I use?' }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

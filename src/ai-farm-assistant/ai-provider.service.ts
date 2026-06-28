@@ -26,6 +26,8 @@ export type FarmAssistantProviderInput = {
   message: string;
   farmContext?: Record<string, unknown> | null;
   ragContext?: string | null;
+  userName?: string | null;
+  userLocation?: string | null;
   history: FarmAssistantProviderMessage[];
   products: FarmAssistantSuggestedProduct[];
   requiresVetAttention: boolean;
@@ -43,7 +45,19 @@ export type FarmAssistantProviderOutput = {
   modelId: string | null;
 };
 
-const FARM_ASSISTANT_SYSTEM_INSTRUCTION = `You are Ayo, Agrofount's AI Farm Assistant. You help Nigerian poultry and livestock farmers with warm, practical, and educative guidance.
+const FARM_ASSISTANT_SYSTEM_INSTRUCTION = `You are Ayo, Agrofount's AI Farm Assistant. You help Nigerian poultry and livestock farmers like a friendly farm buddy: warm, practical, conversational, and easy to talk to.
+
+PERSONALITY & PERSONALIZATION:
+- Sound human, friendly, and relaxed — less like a formal report and more like a helpful farm advisor chatting with the farmer
+- When the farmer's name is provided, use it naturally but sparingly — only in the first message of a conversation or occasionally when it genuinely fits (e.g. a moment of encouragement). Never open every reply with their name; that feels robotic
+- Use "you", "your birds", "your flock", or "your farm" throughout so the answer feels personal
+- Use the farmer's farm context when available, such as bird type, bird age, flock size, current feed, and location
+- When the farmer's location is known, reference it where relevant — mention common diseases in that region, local climate effects, or nearby market considerations
+- Acknowledge what the farmer said before giving advice, especially if they mention stress, losses, cost, or uncertainty
+- Be interactive: when important details are missing, ask 1 clear follow-up question at the end instead of overwhelming the farmer with many questions
+- Keep responses concise unless the farmer asks for a detailed plan
+- Avoid stiff phrases like "Dear user", "as an AI", "it is recommended that", or long textbook-style paragraphs
+- Use light encouragement naturally, but do not overdo hype
 
 RESPONSE FORMAT — follow these rules strictly:
 - Write the reply in markdown so it renders beautifully in the app
@@ -53,7 +67,7 @@ RESPONSE FORMAT — follow these rules strictly:
 - Use ## headings only for structured multi-section responses
 - Use ⚠️ to highlight warnings and ✅ to highlight positive signs or correct practices
 - Keep language simple, direct, and relevant to Nigerian farming conditions
-- End every response with 1–2 short encouraging sentences unless the situation is an emergency
+- End every response with a friendly next step, a short question, or 1 encouraging sentence unless the situation is an emergency
 
 SAFETY: When symptoms suggest high mortality, severe weakness, bleeding, paralysis, twisted neck, greenish diarrhoea, or sudden unexplained deaths — add a clear 🚨 emergency block advising immediate veterinary contact. Never claim to provide a final veterinary diagnosis.
 
@@ -120,9 +134,16 @@ export class AiProviderService {
     const imageFormat: 'jpeg' | 'png' | 'webp' | 'gif' =
       mimeToFormat[input.imageMimeType ?? ''] ?? 'jpeg';
 
-    const userContent = `Farm context: ${JSON.stringify(
-      input.farmContext || {},
-    )}
+    const farmerProfile = [
+      input.userName ? `Farmer name: ${input.userName}` : null,
+      input.userLocation ? `Farmer location: ${input.userLocation}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const userContent = `${
+      farmerProfile ? farmerProfile + '\n\n' : ''
+    }Farm context: ${JSON.stringify(input.farmContext || {})}
 
 Relevant Agrofount products:
 ${productContext}
@@ -162,7 +183,7 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
             : [{ text: userContent }],
         },
       ],
-      inferenceConfig: { temperature: 0.5, maxTokens: 1536 },
+      inferenceConfig: { temperature: 0.65, maxTokens: 1536 },
     });
 
     const startMs = Date.now();
@@ -192,7 +213,24 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
         });
       }
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      let parsed: Record<string, any>;
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        try {
+          parsed = JSON.parse(this.sanitizeJsonString(jsonMatch[0]));
+        } catch {
+          this.logger.warn(
+            'Bedrock response JSON could not be parsed after sanitization, falling back to rule-based reply',
+          );
+          return this.generateRuleBasedReply(input, {
+            inputTokens,
+            outputTokens,
+            latencyMs,
+            modelId,
+          });
+        }
+      }
       return this.normalizeProviderOutput(parsed, input, {
         inputTokens,
         outputTokens,
@@ -230,19 +268,19 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       : '';
 
     let reply =
-      '🐔 Thanks for reaching out!\n\nTo give you the best advice, please share a few more details:\n\n- **Bird type** (broilers, layers, cockerels, turkey, etc.)\n- **Age** of your birds (days or weeks)\n- **Flock size**\n- **Location** (state or region)\n- Any **symptoms** you are currently observing\n\nThe more you share, the better I can help you protect your farm. 💪';
+      '🐔 I’m with you. To guide you properly, I need one quick detail first:\n\n**What type of birds or livestock are we talking about, and how old are they?**\n\nIf you can also share your **flock size**, **location**, and what you’re noticing, I’ll make the advice more specific to your farm. 💪';
 
     if (lowerMessage.includes('feed') || lowerMessage.includes('starter')) {
       reply =
         Number.isFinite(age) && age <= 3
-          ? '🌾 **Broiler Feeding — Week 3 Transition**\n\nAt around **3 weeks old**, your broilers are approaching the end of the starter phase:\n\n- ✅ Continue with quality **starter feed** through the end of week 3\n- 🔄 Begin transitioning to **grower feed** from **week 4** onwards\n- ⚠️ Make the switch gradually over **2–3 days** — sudden changes cause digestive stress and slow growth\n- 💧 Always provide **clean, fresh water** at all times\n\nGood feed management at this stage sets up your birds for strong growth. Keep it up! 🚀'
-          : '🌾 **Poultry Feeding Guide**\n\nChoose feed based on **bird type and age**:\n\n| Phase | Age | Feed Type |\n|-------|-----|-----------|\n| Brooding | 0–3 wks | **Starter** (high protein) |\n| Growing | 4–6 wks | **Grower** |\n| Finishing | 7 wks+ | **Finisher** |\n\n**Key tips:**\n- ✅ Always use fresh, well-stored feed — mouldy feed is dangerous\n- ⚠️ Never make sudden feed changes; transition over 2–3 days\n- 💧 Water intake drops before feed intake — watch your drinkers\n\nInvesting in quality feed pays off at market! 💰';
+          ? '🌾 **For your 3-week broilers**, you’re right at the starter-to-grower transition point.\n\nHere’s what I’d do:\n\n- ✅ Keep them on good **starter feed** until the end of week 3\n- 🔄 Start moving to **grower feed** from **week 4**\n- ⚠️ Mix the old and new feed gradually over **2–3 days** so their stomachs adjust\n- 💧 Keep clean water available all day — water issues quickly affect growth\n\nYou’re at an important stage, but you’re not late. What feed are they currently eating?'
+          : '🌾 Let’s match the feed to your birds’ age so you don’t waste money or slow growth.\n\nA simple poultry guide:\n\n| Phase | Age | Feed Type |\n|-------|-----|-----------|\n| Brooding | 0–3 wks | **Starter** |\n| Growing | 4–6 wks | **Grower** |\n| Finishing | 7 wks+ | **Finisher** |\n\nQuick tips for your farm:\n- ✅ Use fresh, well-stored feed — mouldy feed can cause serious losses\n- ⚠️ Change feed gradually over **2–3 days**\n- 💧 Watch water intake too; birds often reduce water before feed\n\nHow old are your birds now? I’ll help you pick the right feed stage.';
     } else if (
       lowerMessage.includes('vaccine') ||
       lowerMessage.includes('vaccination')
     ) {
       reply =
-        '💊 **Poultry Vaccination Guidance**\n\nVaccination schedules depend on your **farm history**, **bird age**, and **local disease pressure**.\n\n**Common vaccines for Nigerian poultry farms:**\n- 🐔 **Newcastle Disease (ND/Lasota)** — Day 7, Day 21, then every 6–8 weeks\n- 🦠 **Gumboro (IBD)** — Day 14 and Day 28\n- 🐣 **Fowl Pox** — Week 6 (endemic areas)\n\n⚠️ **Important:**\n- Always confirm your schedule with your **vet or hatchery**\n- Store vaccines properly — most require refrigeration (2–8°C)\n- Vaccinate only **healthy birds**; stressed or sick birds respond poorly\n\nA consistent vaccination programme is one of the best investments for your farm! ✅';
+        '💊 Vaccination is a smart move. The right schedule depends on your **bird age**, **farm history**, and disease pressure around your area.\n\nFor many Nigerian poultry farms, common vaccines include:\n\n- 🐔 **Newcastle Disease (ND/Lasota)** — Day 7, Day 21, then every 6–8 weeks\n- 🦠 **Gumboro (IBD)** — Day 14 and Day 28\n- 🐣 **Fowl Pox** — around Week 6 in areas where it is common\n\n⚠️ A few important notes:\n- Confirm timing with your **vet or hatchery**\n- Keep vaccines cold, usually **2–8°C**\n- Vaccinate only birds that look healthy and stable\n\nHow old are your birds right now? I can help you map the next vaccine step.';
     } else if (
       lowerMessage.includes('weak') ||
       lowerMessage.includes('sick') ||
@@ -250,12 +288,12 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       lowerMessage.includes('death')
     ) {
       reply =
-        '⚠️ **Birds Showing Weakness or Deaths**\n\nWeakness and deaths can have several causes:\n\n- 🦠 **Infectious disease** (Newcastle, Gumboro, Coccidiosis)\n- 🌡️ **Heat or cold stress** — check brooding temperature\n- 💧 **Water deprivation** — check drinkers immediately\n- 🌾 **Feed problems** — mouldy or wrong-age feed\n- 🏠 **Overcrowding or poor ventilation**\n\n**Take these steps now:**\n1. **Isolate** very weak or dead birds from the flock immediately\n2. Check and fix **temperature, water, and ventilation**\n3. Record the **number affected**, symptoms, and timeline\n4. Contact a **qualified veterinarian** if deaths continue or worsen\n\nDo not delay — early action saves birds and profit. 🏥';
+        '⚠️ I’m sorry you’re dealing with weak birds or deaths — that can move fast, so let’s act carefully.\n\nPossible causes include:\n\n- 🦠 **Disease** like Newcastle, Gumboro, or Coccidiosis\n- 🌡️ **Heat/cold stress**, especially during brooding\n- 💧 **Water problems** — blocked drinkers, dirty water, or dehydration\n- 🌾 **Feed issues** — mouldy feed or wrong feed stage\n- 🏠 **Overcrowding or poor ventilation**\n\nDo these now:\n1. **Separate** very weak birds from the flock\n2. Check **water, temperature, and airflow** immediately\n3. Count how many are sick or dead and note the symptoms\n4. Call a **qualified vet** if deaths continue or more birds weaken\n\nWhat symptoms are you seeing exactly — diarrhoea, twisted neck, coughing, or just weakness?';
     }
 
     if (input.requiresVetAttention) {
       reply +=
-        '\n\n---\n🚨 **Urgent Veterinary Attention Required**\n\nThe symptoms you described are serious. Please **contact a qualified veterinarian immediately** — do not wait.\n\n- Isolate affected birds right away\n- Do not administer random drugs without vet guidance\n- Record symptoms, mortality numbers, and timeline to share with the vet';
+        '\n\n---\n🚨 **This needs urgent vet attention**\n\nThe signs you described are serious. Please **contact a qualified veterinarian immediately** — don’t wait to “see how it goes.”\n\nWhile waiting:\n- Isolate affected birds right away\n- Avoid random drug use without vet guidance\n- Write down symptoms, deaths, age, and when it started so the vet can act faster';
     }
 
     return {
@@ -301,6 +339,46 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       latencyMs: usage.latencyMs,
       modelId: usage.modelId,
     };
+  }
+
+  private sanitizeJsonString(raw: string): string {
+    let result = '';
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < raw.length; i++) {
+      const c = raw[i];
+      const code = raw.charCodeAt(i);
+
+      if (escaped) {
+        result += c;
+        escaped = false;
+      } else if (c === '\\' && inString) {
+        result += c;
+        escaped = true;
+      } else if (c === '"') {
+        result += c;
+        inString = !inString;
+      } else if (inString && code < 0x20) {
+        switch (c) {
+          case '\n':
+            result += '\\n';
+            break;
+          case '\r':
+            result += '\\r';
+            break;
+          case '\t':
+            result += '\\t';
+            break;
+          default:
+            result += `\\u${code.toString(16).padStart(4, '0')}`;
+        }
+      } else {
+        result += c;
+      }
+    }
+
+    return result;
   }
 
   private defaultQuickReplies(requiresVetAttention: boolean): string[] {

@@ -36,7 +36,8 @@ import termiiConfig from './config/termii.config';
 import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
 import KeyvRedis from '@keyv/redis';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { CustomThrottlerGuard } from './common/throttling/custom-throttler.guard';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { validateEnvironment } from './config/env.validation';
 import { RedisThrottlerStorage } from './common/throttling/redis-throttler.storage';
@@ -146,7 +147,7 @@ import { BullModule } from '@nestjs/bullmq';
     AppService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: CustomThrottlerGuard,
     },
     {
       provide: APP_INTERCEPTOR,
