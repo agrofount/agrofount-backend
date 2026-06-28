@@ -30,7 +30,7 @@ import { TOKEN_LIMIT_PER_USER } from './ai-farm-assistant.constants';
 
 const MESSAGE_MAX_LENGTH = 2000;
 const FEEDBACK_PROMPT =
-  "Your free trial of Ayo AI has been reached. Thank you for exploring Ayo!\n\n" +
+  'Your free trial of Ayo AI has been reached. Thank you for exploring Ayo!\n\n' +
   'Before you go, we would love to hear about your experience:\n' +
   '• How helpful was Ayo during your trial?\n' +
   '• Did you get the answers you were looking for?\n' +
