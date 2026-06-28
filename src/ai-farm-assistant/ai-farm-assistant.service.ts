@@ -55,10 +55,22 @@ export class AiFarmAssistantService {
   ) {}
 
   async ask(
-    userId: string,
+    user: {
+      id: string;
+      firstname?: string | null;
+      lastname?: string | null;
+      username?: string | null;
+      city?: string | null;
+      state?: string | null;
+    },
     dto: AskFarmAssistantDto,
     image?: Express.Multer.File,
   ) {
+    const userId = user.id;
+    const userName = user.firstname || user.username || null;
+    const userLocation =
+      [user.city, user.state].filter(Boolean).join(', ') || null;
+
     await this.ensureEnabled();
     const message = this.sanitizeMessage(dto.message);
 
@@ -139,21 +151,27 @@ export class AiFarmAssistantService {
       }),
     );
 
-    const ragResult = await this.aiRagService.search(
-      { query: message, limit: 4 },
-      userId,
-    );
-    const ragContext =
-      ragResult.results.length > 0
-        ? ragResult.results
-            .map((r, i) => `[${i + 1}] ${r.title}\n${r.content}`)
-            .join('\n\n')
-        : null;
+    let ragContext: string | null = null;
+    try {
+      const ragResult = await this.aiRagService.search(
+        { query: message, limit: 4 },
+        userId,
+      );
+      if (ragResult.results.length > 0) {
+        ragContext = ragResult.results
+          .map((r, i) => `[${i + 1}] ${r.title}\n${r.content}`)
+          .join('\n\n');
+      }
+    } catch {
+      // RAG search unavailable - Ayo continues without knowledge base context
+    }
 
     const aiReply = await this.aiProviderService.generateFarmAssistantReply({
       message,
       farmContext: conversation.farmContext,
       ragContext,
+      userName,
+      userLocation,
       history: history.map((item) => ({
         role:
           item.role === FarmAssistantMessageRole.Assistant

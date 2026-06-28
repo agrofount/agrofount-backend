@@ -53,7 +53,7 @@ export class AiFarmAssistantController {
     @Body() dto: AskFarmAssistantDto,
     @UploadedFile() image?: Express.Multer.File,
   ) {
-    return this.farmAssistantService.ask(user.id, dto, image);
+    return this.farmAssistantService.ask(user, dto, image);
   }
 
   @Post('ask/stream')
@@ -70,7 +70,7 @@ export class AiFarmAssistantController {
     res.flushHeaders?.();
 
     try {
-      const response = await this.farmAssistantService.ask(user.id, dto);
+      const response = await this.farmAssistantService.ask(user, dto);
 
       this.writeSse(res, 'start', {
         success: true,
