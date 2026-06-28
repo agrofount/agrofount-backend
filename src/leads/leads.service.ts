@@ -54,9 +54,14 @@ export class LeadsService {
       const rows: string[][] = [];
       sheet.eachRow({ includeEmpty: false }, (row) => {
         rows.push(
-          (row.values as (string | number | boolean | null | undefined)[])
-            .slice(1)
-            .map((v) => String(v ?? '').trim()),
+          (row.values as unknown[]).slice(1).map((v) => {
+            if (v instanceof Date) return v.toISOString();
+            if (v && typeof v === 'object' && 'richText' in v)
+              return (v as { richText: { text: string }[] }).richText
+                .map((r) => r.text)
+                .join('');
+            return String(v ?? '').trim();
+          }),
         );
       });
       return rows;
@@ -112,7 +117,9 @@ export class LeadsService {
       }
 
       const rawTime = col(row, 'created_time');
-      const sourceCreatedAt = rawTime ? new Date(rawTime) : null;
+      const parsedTime = rawTime ? new Date(rawTime) : null;
+      const sourceCreatedAt =
+        parsedTime && !isNaN(parsedTime.getTime()) ? parsedTime : null;
 
       await this.leadRepo.save(
         this.leadRepo.create({
