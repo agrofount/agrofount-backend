@@ -23,11 +23,12 @@ import {
   FarmAssistantSuggestedProduct,
 } from './ai-provider.service';
 import { AiSettingsService } from './ai-settings.service';
+import { AiRagService } from '../ai-platform/services/ai-rag.service';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
+import { TOKEN_LIMIT_PER_USER } from './ai-farm-assistant.constants';
 
 const MESSAGE_MAX_LENGTH = 2000;
-const TOKEN_LIMIT_PER_USER = 10_000;
 const FEEDBACK_PROMPT =
   "Your free trial of Ayo AI has been reached. Thank you for exploring Ayo!\n\n" +
   'Before you go, we would love to hear about your experience:\n' +
@@ -49,6 +50,7 @@ export class AiFarmAssistantService {
     private readonly productLocationRepository: Repository<ProductLocationEntity>,
     private readonly aiProviderService: AiProviderService,
     private readonly aiSettingsService: AiSettingsService,
+    private readonly aiRagService: AiRagService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -137,9 +139,21 @@ export class AiFarmAssistantService {
       }),
     );
 
+    const ragResult = await this.aiRagService.search(
+      { query: message, limit: 4 },
+      userId,
+    );
+    const ragContext =
+      ragResult.results.length > 0
+        ? ragResult.results
+            .map((r, i) => `[${i + 1}] ${r.title}\n${r.content}`)
+            .join('\n\n')
+        : null;
+
     const aiReply = await this.aiProviderService.generateFarmAssistantReply({
       message,
       farmContext: conversation.farmContext,
+      ragContext,
       history: history.map((item) => ({
         role:
           item.role === FarmAssistantMessageRole.Assistant

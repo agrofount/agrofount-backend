@@ -9,6 +9,7 @@ import {
   AiAnalyticsChartQueryDto,
   AiAnalyticsQueryDto,
   AiAnalyticsTopQueryDto,
+  AiUserTokenUsageQueryDto,
   ChartGranularity,
 } from './dto/ai-analytics-query.dto';
 
@@ -110,5 +111,15 @@ export class AdminAiAnalyticsController {
   @ApiOperation({ summary: 'Conversation breakdown by bird type' })
   getBirdTypeBreakdown(@Query() query: AiAnalyticsQueryDto) {
     return this.analyticsService.getBirdTypeBreakdown(query.from, query.to);
+  }
+
+  @Get('user-token-usage')
+  @RequiredPermissions('read_ai_analytics')
+  @ApiOperation({
+    summary:
+      'Per-user Ayo trial token usage with remaining quota and exhaustion status',
+  })
+  getUserTokenUsage(@Query() query: AiUserTokenUsageQueryDto) {
+    return this.analyticsService.getUserTokenUsage(query);
   }
 }

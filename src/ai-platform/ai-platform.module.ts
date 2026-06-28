@@ -12,6 +12,7 @@ import { AiAgentRunEntity } from './entities/ai-agent-run.entity';
 import { AiRagQueryEntity } from './entities/ai-rag-query.entity';
 import { AiSecurityService } from './services/ai-security.service';
 import { AiRagService } from './services/ai-rag.service';
+import { AiEmbeddingService } from './services/ai-embedding.service';
 import { AiPlatformAnalyticsService } from './services/ai-platform-analytics.service';
 import { AiToolRegistryService } from './services/ai-tool-registry.service';
 import { AyoRouterService } from './services/ayo-router.service';
@@ -42,6 +43,7 @@ import { AdminAiPlatformController } from './controllers/admin-ai-platform.contr
   providers: [
     AiSecurityService,
     AiRagService,
+    AiEmbeddingService,
     AiPlatformAnalyticsService,
     AiToolRegistryService,
     AyoRouterService,
@@ -49,6 +51,7 @@ import { AdminAiPlatformController } from './controllers/admin-ai-platform.contr
   exports: [
     AiSecurityService,
     AiRagService,
+    AiEmbeddingService,
     AiPlatformAnalyticsService,
     AiToolRegistryService,
     AyoRouterService,

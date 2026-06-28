@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AiPlatformModule } from '../ai-platform/ai-platform.module';
 import { AiFarmAssistantController } from './ai-farm-assistant.controller';
 import { AiStatusController } from './ai-status.controller';
 import { AiFarmAssistantService } from './ai-farm-assistant.service';
@@ -16,6 +17,7 @@ import { ProductLocationEntity } from '../product-location/entities/product-loca
 
 @Module({
   imports: [
+    AiPlatformModule,
     TypeOrmModule.forFeature([
       FarmAssistantConversationEntity,
       FarmAssistantMessageEntity,
