@@ -126,11 +126,7 @@ export class AiProviderService {
 
 Relevant Agrofount products:
 ${productContext}
-${
-  input.ragContext
-    ? `\nKnowledge base context:\n${input.ragContext}\n`
-    : ''
-}
+${input.ragContext ? `\nKnowledge base context:\n${input.ragContext}\n` : ''}
 Recent conversation:
 ${input.history
   .slice(-8)
