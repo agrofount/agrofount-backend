@@ -107,14 +107,18 @@ export class LeadsService {
       }
 
       const sourceLeadId = col(row, 'lead_id');
-      if (sourceLeadId) {
-        const existing = await this.leadRepo.findOne({
-          where: { sourceLeadId },
-        });
-        if (existing) {
-          skipped++;
-          continue;
-        }
+      const existingByLeadId = sourceLeadId
+        ? await this.leadRepo.findOne({ where: { sourceLeadId } })
+        : null;
+      if (existingByLeadId) {
+        skipped++;
+        continue;
+      }
+
+      const existingByPhone = await this.leadRepo.findOne({ where: { phone } });
+      if (existingByPhone) {
+        skipped++;
+        continue;
       }
 
       const rawTime = col(row, 'created_time');
