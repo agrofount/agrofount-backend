@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { ChartGranularity } from './dto/ai-analytics-query.dto';
 import { AiSettingsService } from './ai-settings.service';
+import { TOKEN_LIMIT_PER_USER } from './ai-farm-assistant.constants';
 
 const DISEASE_KEYWORDS: { label: string; keywords: string[] }[] = [
   {
@@ -430,6 +431,133 @@ export class AiAnalyticsService {
   }
 
   // ── resource consumption ──────────────────────────────────────────────────
+
+  async getUserTokenUsage(params: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: 'exhausted' | 'active';
+  }) {
+    const page = Math.max(1, params.page ?? 1);
+    const limit = Math.min(100, Math.max(1, params.limit ?? 20));
+    const offset = (page - 1) * limit;
+
+    const filters: string[] = [];
+    const args: unknown[] = [];
+
+    if (params.search) {
+      args.push(`%${params.search.trim()}%`);
+      const p = `$${args.length}`;
+      filters.push(
+        `(u.firstname ILIKE ${p} OR u.lastname ILIKE ${p} OR u.email ILIKE ${p} OR u.phone ILIKE ${p})`,
+      );
+    }
+
+    if (params.status === 'exhausted') {
+      filters.push(`usage.tokens >= ${TOKEN_LIMIT_PER_USER}`);
+    } else if (params.status === 'active') {
+      filters.push(`usage.tokens < ${TOKEN_LIMIT_PER_USER}`);
+    }
+
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
+    const baseCte = `
+      WITH usage AS (
+        SELECT
+          conv."userId" AS user_id,
+          COALESCE(
+            SUM(
+              (msg.metadata->>'inputTokens')::bigint
+              + (msg.metadata->>'outputTokens')::bigint
+            ),
+            0
+          )::bigint AS tokens,
+          COUNT(DISTINCT conv.id)::int AS conversations,
+          MAX(msg."createdAt") AS last_active
+        FROM farm_assistant_message msg
+        JOIN farm_assistant_conversation conv ON conv.id = msg."conversationId"
+        WHERE msg.role = 'assistant'
+          AND msg.metadata->>'inputTokens' IS NOT NULL
+        GROUP BY conv."userId"
+      )`;
+
+    const countArgs = [...args];
+    const countRows = await this.dataSource.query<{ total: string }[]>(
+      `${baseCte}
+       SELECT COUNT(*)::int AS total
+       FROM usage
+       LEFT JOIN "user" u ON u.id = usage.user_id
+       ${whereClause}`,
+      countArgs,
+    );
+    const totalItems = Number(countRows[0]?.total ?? 0);
+
+    const dataArgs = [...args, limit, offset];
+    const rows = await this.dataSource.query<
+      {
+        user_id: string;
+        firstname: string | null;
+        lastname: string | null;
+        email: string | null;
+        phone: string | null;
+        tokens: string;
+        conversations: number;
+        last_active: string | null;
+      }[]
+    >(
+      `${baseCte}
+       SELECT
+         usage.user_id,
+         u.firstname,
+         u.lastname,
+         u.email,
+         u.phone,
+         usage.tokens,
+         usage.conversations,
+         usage.last_active
+       FROM usage
+       LEFT JOIN "user" u ON u.id = usage.user_id
+       ${whereClause}
+       ORDER BY usage.tokens DESC
+       LIMIT $${dataArgs.length - 1} OFFSET $${dataArgs.length}`,
+      dataArgs,
+    );
+
+    const data = rows.map((r) => {
+      const tokensUsed = Number(r.tokens);
+      const name =
+        [r.firstname, r.lastname].filter(Boolean).join(' ').trim() ||
+        r.email ||
+        r.phone ||
+        'Unknown user';
+      return {
+        userId: r.user_id,
+        name,
+        email: r.email,
+        phone: r.phone,
+        tokensUsed,
+        tokenLimit: TOKEN_LIMIT_PER_USER,
+        tokensRemaining: Math.max(0, TOKEN_LIMIT_PER_USER - tokensUsed),
+        usagePercent: parseFloat(
+          ((tokensUsed / TOKEN_LIMIT_PER_USER) * 100).toFixed(1),
+        ),
+        trialExhausted: tokensUsed >= TOKEN_LIMIT_PER_USER,
+        conversations: r.conversations,
+        lastActive: r.last_active,
+      };
+    });
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        currentPage: page,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        tokenLimit: TOKEN_LIMIT_PER_USER,
+      },
+    };
+  }
 
   async getResourceConsumption(from?: string, to?: string) {
     const period = this.parseDateRange(from, to);

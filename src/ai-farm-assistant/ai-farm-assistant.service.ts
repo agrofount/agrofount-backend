@@ -26,9 +26,9 @@ import { AiSettingsService } from './ai-settings.service';
 import { AiRagService } from '../ai-platform/services/ai-rag.service';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
+import { TOKEN_LIMIT_PER_USER } from './ai-farm-assistant.constants';
 
 const MESSAGE_MAX_LENGTH = 2000;
-const TOKEN_LIMIT_PER_USER = 10_000;
 const FEEDBACK_PROMPT =
   "Your free trial of Ayo AI has been reached. Thank you for exploring Ayo!\n\n" +
   'Before you go, we would love to hear about your experience:\n' +
