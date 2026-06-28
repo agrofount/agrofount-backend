@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,11 +8,11 @@ import {
   Patch,
   Post,
   Query,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -35,20 +36,46 @@ export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
 
   @Post('upload')
-  @ApiOperation({ summary: 'Bulk upload leads from a Meta lead gen CSV' })
+  @ApiOperation({
+    summary:
+      'Bulk upload leads from one or more Meta lead gen files (CSV or XLSX)',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      properties: { file: { type: 'string', format: 'binary' } },
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
+      },
     },
   })
-  @UseInterceptors(FileInterceptor('file'))
-  upload(
-    @UploadedFile() file: Express.Multer.File,
+  @UseInterceptors(FilesInterceptor('files', 20))
+  async upload(
+    @UploadedFiles() files: Express.Multer.File[],
     @CurrentUser() user: UserEntity,
   ) {
-    return this.leadsService.uploadBulk(file.buffer, user.id);
+    if (!files?.length) throw new BadRequestException('No files were uploaded');
+
+    const totals = { inserted: 0, skipped: 0, total: 0 };
+    const results: {
+      filename: string;
+      inserted: number;
+      skipped: number;
+      total: number;
+    }[] = [];
+
+    for (const file of files) {
+      const result = await this.leadsService.uploadBulk(file.buffer, user.id);
+      totals.inserted += result.inserted;
+      totals.skipped += result.skipped;
+      totals.total += result.total;
+      results.push({ filename: file.originalname, ...result });
+    }
+
+    return { ...totals, files: results };
   }
 
   @Get('stats')
