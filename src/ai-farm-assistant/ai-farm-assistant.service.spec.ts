@@ -130,10 +130,13 @@ describe('AiFarmAssistantService', () => {
   it('asks a new question and stores user and assistant messages', async () => {
     const { service, messages } = setup();
 
-    const result = await service.ask({ id: userId }, {
-      message: 'My broilers are 3 weeks old. What feed should I use?',
-      farmContext: { birdType: 'broiler', birdAgeWeeks: 3 },
-    });
+    const result = await service.ask(
+      { id: userId },
+      {
+        message: 'My broilers are 3 weeks old. What feed should I use?',
+        farmContext: { birdType: 'broiler', birdAgeWeeks: 3 },
+      },
+    );
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -160,10 +163,13 @@ describe('AiFarmAssistantService', () => {
       farmContext: null,
     });
 
-    await service.ask({ id: userId }, {
-      conversationId,
-      message: 'What vaccination should I give next?',
-    });
+    await service.ask(
+      { id: userId },
+      {
+        conversationId,
+        message: 'What vaccination should I give next?',
+      },
+    );
 
     expect(conversationRepository.findOne).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: conversationId } }),
@@ -187,9 +193,12 @@ describe('AiFarmAssistantService', () => {
   it('returns product suggestions when the question mentions feed', async () => {
     const { service, productLocationRepository } = setup();
 
-    const result = await service.ask({ id: userId }, {
-      message: 'I need broiler starter feed',
-    });
+    const result = await service.ask(
+      { id: userId },
+      {
+        message: 'I need broiler starter feed',
+      },
+    );
 
     expect(productLocationRepository.find).toHaveBeenCalled();
     expect(result.suggestedProducts).toEqual([
@@ -204,9 +213,12 @@ describe('AiFarmAssistantService', () => {
   it('sets requiresVetAttention for severe disease symptoms', async () => {
     const { service } = setup();
 
-    const result = await service.ask({ id: userId }, {
-      message: 'Many are dying suddenly and some cannot stand',
-    });
+    const result = await service.ask(
+      { id: userId },
+      {
+        message: 'Many are dying suddenly and some cannot stand',
+      },
+    );
 
     expect(result.requiresVetAttention).toBe(true);
     expect(result.reply).toContain('vet');
