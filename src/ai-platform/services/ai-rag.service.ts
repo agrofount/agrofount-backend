@@ -130,7 +130,9 @@ export class AiRagService {
     }
 
     const body = this.cleanPdfText(rawText);
-    const title = (dto.title?.trim() || filename.replace(/\.pdf$/i, '').trim()).slice(0, 220);
+    const title = (
+      dto.title?.trim() || filename.replace(/\.pdf$/i, '').trim()
+    ).slice(0, 220);
 
     let tags: string[] = [];
     if (dto.tagsJson) {
@@ -150,7 +152,8 @@ export class AiRagService {
     if (dto.metadataJson) {
       try {
         const extra = JSON.parse(dto.metadataJson);
-        if (extra && typeof extra === 'object') metadata = { ...metadata, ...extra };
+        if (extra && typeof extra === 'object')
+          metadata = { ...metadata, ...extra };
       } catch {
         // ignore malformed metadata JSON
       }
@@ -202,8 +205,7 @@ export class AiRagService {
       .map((chunk) => {
         const sr = semanticRank.get(chunk.id);
         const fr = ftsRank.get(chunk.id);
-        const score =
-          (sr ? 1 / (RRF_K + sr) : 0) + (fr ? 1 / (RRF_K + fr) : 0);
+        const score = (sr ? 1 / (RRF_K + sr) : 0) + (fr ? 1 / (RRF_K + fr) : 0);
         return { chunk, score };
       })
       .sort((a, b) => b.score - a.score)
