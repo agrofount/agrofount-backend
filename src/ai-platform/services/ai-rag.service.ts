@@ -55,7 +55,10 @@ export class AiRagService {
   ) {}
 
   async ingestDocument(dto: IngestKnowledgeDocumentDto) {
-    const body = this.aiSecurityService.sanitizeInput(dto.body, 100_000);
+    const body = (dto.body || '').trim();
+    if (!body) {
+      throw new BadRequestException('Document body is required');
+    }
     const checksum = createHash('sha256')
       .update(`${dto.sourceType}:${dto.title}:${body}`)
       .digest('hex');
