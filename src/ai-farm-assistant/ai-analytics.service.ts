@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
 import { ChartGranularity } from './dto/ai-analytics-query.dto';
 import { AiSettingsService } from './ai-settings.service';
+import { AiUserQuotaEntity } from './entities/ai-user-quota.entity';
 import { TOKEN_LIMIT_PER_USER } from './ai-farm-assistant.constants';
 
 const DISEASE_KEYWORDS: { label: string; keywords: string[] }[] = [
@@ -38,6 +40,8 @@ export class AiAnalyticsService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly aiSettingsService: AiSettingsService,
+    @InjectRepository(AiUserQuotaEntity)
+    private readonly quotaRepository: Repository<AiUserQuotaEntity>,
   ) {}
 
   // ── date helpers ──────────────────────────────────────────────────────────
@@ -430,6 +434,28 @@ export class AiAnalyticsService {
     };
   }
 
+  async resetUserTokens(
+    userId: string,
+    adminId: string,
+  ): Promise<{ userId: string; newLimit: number; bonusTokens: number }> {
+    let quota = await this.quotaRepository.findOne({ where: { userId } });
+    if (!quota) {
+      quota = this.quotaRepository.create({
+        userId,
+        bonusTokens: 0,
+        lastResetBy: null,
+      });
+    }
+    quota.bonusTokens += TOKEN_LIMIT_PER_USER;
+    quota.lastResetBy = adminId;
+    await this.quotaRepository.save(quota);
+    return {
+      userId,
+      bonusTokens: quota.bonusTokens,
+      newLimit: TOKEN_LIMIT_PER_USER + quota.bonusTokens,
+    };
+  }
+
   // ── resource consumption ──────────────────────────────────────────────────
 
   async getUserTokenUsage(params: {
@@ -454,9 +480,13 @@ export class AiAnalyticsService {
     }
 
     if (params.status === 'exhausted') {
-      filters.push(`usage.tokens >= ${TOKEN_LIMIT_PER_USER}`);
+      filters.push(
+        `usage.tokens >= (${TOKEN_LIMIT_PER_USER} + COALESCE(q."bonusTokens", 0))`,
+      );
     } else if (params.status === 'active') {
-      filters.push(`usage.tokens < ${TOKEN_LIMIT_PER_USER}`);
+      filters.push(
+        `usage.tokens < (${TOKEN_LIMIT_PER_USER} + COALESCE(q."bonusTokens", 0))`,
+      );
     }
 
     const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
@@ -487,6 +517,7 @@ export class AiAnalyticsService {
        SELECT COUNT(*)::int AS total
        FROM usage
        LEFT JOIN "user" u ON u.id = usage.user_id
+       LEFT JOIN ai_user_quota q ON q."userId" = usage.user_id
        ${whereClause}`,
       countArgs,
     );
@@ -503,6 +534,7 @@ export class AiAnalyticsService {
         tokens: string;
         conversations: number;
         last_active: string | null;
+        bonus_tokens: string | null;
       }[]
     >(
       `${baseCte}
@@ -514,9 +546,11 @@ export class AiAnalyticsService {
          u.phone,
          usage.tokens,
          usage.conversations,
-         usage.last_active
+         usage.last_active,
+         COALESCE(q."bonusTokens", 0) AS bonus_tokens
        FROM usage
        LEFT JOIN "user" u ON u.id = usage.user_id
+       LEFT JOIN ai_user_quota q ON q."userId" = usage.user_id
        ${whereClause}
        ORDER BY usage.tokens DESC
        LIMIT $${dataArgs.length - 1} OFFSET $${dataArgs.length}`,
@@ -525,6 +559,8 @@ export class AiAnalyticsService {
 
     const data = rows.map((r) => {
       const tokensUsed = Number(r.tokens);
+      const bonusTokens = Number(r.bonus_tokens ?? 0);
+      const effectiveLimit = TOKEN_LIMIT_PER_USER + bonusTokens;
       const name =
         [r.firstname, r.lastname].filter(Boolean).join(' ').trim() ||
         r.email ||
@@ -536,12 +572,13 @@ export class AiAnalyticsService {
         email: r.email,
         phone: r.phone,
         tokensUsed,
-        tokenLimit: TOKEN_LIMIT_PER_USER,
-        tokensRemaining: Math.max(0, TOKEN_LIMIT_PER_USER - tokensUsed),
+        tokenLimit: effectiveLimit,
+        bonusTokens,
+        tokensRemaining: Math.max(0, effectiveLimit - tokensUsed),
         usagePercent: parseFloat(
-          ((tokensUsed / TOKEN_LIMIT_PER_USER) * 100).toFixed(1),
+          ((tokensUsed / effectiveLimit) * 100).toFixed(1),
         ),
-        trialExhausted: tokensUsed >= TOKEN_LIMIT_PER_USER,
+        trialExhausted: tokensUsed >= effectiveLimit,
         conversations: r.conversations,
         lastActive: r.last_active,
       };

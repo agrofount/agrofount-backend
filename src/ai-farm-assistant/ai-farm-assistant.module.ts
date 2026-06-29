@@ -13,6 +13,7 @@ import { FarmAssistantConversationEntity } from './entities/farm-assistant-conve
 import { FarmAssistantMessageEntity } from './entities/farm-assistant-message.entity';
 import { FarmAssistantFeedbackEntity } from './entities/farm-assistant-feedback.entity';
 import { AiSettingsEntity } from './entities/ai-settings.entity';
+import { AiUserQuotaEntity } from './entities/ai-user-quota.entity';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
 
 @Module({
@@ -23,6 +24,7 @@ import { ProductLocationEntity } from '../product-location/entities/product-loca
       FarmAssistantMessageEntity,
       FarmAssistantFeedbackEntity,
       AiSettingsEntity,
+      AiUserQuotaEntity,
       ProductLocationEntity,
     ]),
   ],

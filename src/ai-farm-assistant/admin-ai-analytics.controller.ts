@@ -1,4 +1,12 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
@@ -121,5 +129,18 @@ export class AdminAiAnalyticsController {
   })
   getUserTokenUsage(@Query() query: AiUserTokenUsageQueryDto) {
     return this.analyticsService.getUserTokenUsage(query);
+  }
+
+  @Post('user-token-usage/:userId/reset')
+  @RequiredPermissions('manage_ai_analytics')
+  @ApiOperation({
+    summary:
+      "Reset a user's Ayo token quota — increases their effective limit by the base quota amount",
+  })
+  resetUserTokens(
+    @Param('userId') userId: string,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.analyticsService.resetUserTokens(userId, req.user.id);
   }
 }

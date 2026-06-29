@@ -25,6 +25,7 @@ import {
 import { AiSettingsService } from './ai-settings.service';
 import { AiRagService } from '../ai-platform/services/ai-rag.service';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
+import { AiUserQuotaEntity } from './entities/ai-user-quota.entity';
 import pdfParse = require('pdf-parse');
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 import { TOKEN_LIMIT_PER_USER } from './ai-farm-assistant.constants';
@@ -49,6 +50,8 @@ export class AiFarmAssistantService {
     private readonly feedbackRepository: Repository<FarmAssistantFeedbackEntity>,
     @InjectRepository(ProductLocationEntity)
     private readonly productLocationRepository: Repository<ProductLocationEntity>,
+    @InjectRepository(AiUserQuotaEntity)
+    private readonly quotaRepository: Repository<AiUserQuotaEntity>,
     private readonly aiProviderService: AiProviderService,
     private readonly aiSettingsService: AiSettingsService,
     private readonly aiRagService: AiRagService,
@@ -80,7 +83,8 @@ export class AiFarmAssistantService {
     const message = this.sanitizeMessage(dto.message);
 
     const tokensUsed = await this.getUserTokensUsed(userId);
-    if (tokensUsed >= TOKEN_LIMIT_PER_USER) {
+    const effectiveLimit = await this.getEffectiveLimit(userId);
+    if (tokensUsed >= effectiveLimit) {
       const conversation = dto.conversationId
         ? await this.findOwnedConversation(dto.conversationId, userId)
         : await this.createConversation(userId, message, null);
@@ -268,6 +272,33 @@ export class AiFarmAssistantService {
       );
     }
     return { success: true };
+  }
+
+  async resetUserTokens(
+    userId: string,
+    adminId: string,
+  ): Promise<{ userId: string; newLimit: number; bonusTokens: number }> {
+    let quota = await this.quotaRepository.findOne({ where: { userId } });
+    if (!quota) {
+      quota = this.quotaRepository.create({
+        userId,
+        bonusTokens: 0,
+        lastResetBy: null,
+      });
+    }
+    quota.bonusTokens += TOKEN_LIMIT_PER_USER;
+    quota.lastResetBy = adminId;
+    await this.quotaRepository.save(quota);
+    return {
+      userId,
+      bonusTokens: quota.bonusTokens,
+      newLimit: TOKEN_LIMIT_PER_USER + quota.bonusTokens,
+    };
+  }
+
+  private async getEffectiveLimit(userId: string): Promise<number> {
+    const quota = await this.quotaRepository.findOne({ where: { userId } });
+    return TOKEN_LIMIT_PER_USER + (quota?.bonusTokens ?? 0);
   }
 
   private async extractPdfText(buffer: Buffer): Promise<string | null> {
