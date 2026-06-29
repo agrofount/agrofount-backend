@@ -105,11 +105,18 @@ describe('AiFarmAssistantService', () => {
       search: jest.fn().mockResolvedValue({ results: [] }),
       ...overrides.aiRagService,
     };
+    const quotaRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockImplementation((v) => Promise.resolve(v)),
+      ...overrides.quotaRepository,
+    };
     const service = new AiFarmAssistantService(
       conversationRepository as any,
       messageRepository as any,
       feedbackRepository as any,
       productLocationRepository as any,
+      quotaRepository as any,
       aiProviderService as any,
       aiSettingsService as any,
       aiRagService as any,

@@ -26,6 +26,7 @@ export type FarmAssistantProviderInput = {
   message: string;
   farmContext?: Record<string, unknown> | null;
   ragContext?: string | null;
+  documentContext?: string | null;
   userName?: string | null;
   userLocation?: string | null;
   history: FarmAssistantProviderMessage[];
@@ -68,6 +69,17 @@ RESPONSE FORMAT — follow these rules strictly:
 - Use ⚠️ to highlight warnings and ✅ to highlight positive signs or correct practices
 - Keep language simple, direct, and relevant to Nigerian farming conditions
 - End every response with a friendly next step, a short question, or 1 encouraging sentence unless the situation is an emergency
+
+VET DOCUMENT ANALYSIS: When a vet report, lab result, or medical document is shared (blood test, post-mortem, sensitivity test, faecal exam, etc.), explain it in plain language the farmer can understand. Structure your response as: 1) what each key finding means in simple terms, 2) which values are normal or abnormal and why that matters, 3) what the overall picture suggests about the animal's health, 4) recommended next steps. Never replace the vet's professional judgment — help the farmer understand so they can follow up confidently.
+
+IMAGE ANALYSIS: When the farmer shares a photo, carefully examine it before responding. Look for and comment on:
+- Bird posture (hunched, drooping wings, twisted neck, inability to stand)
+- Feather condition (ruffled, missing patches, wet around eyes or beak)
+- Visible lesions, swelling, or discolouration on comb, wattles, legs, or joints
+- Droppings colour and consistency visible in the image (green, yellow, bloody, watery)
+- Eye condition (cloudiness, discharge, swelling)
+- Housing and environment (overcrowding, wet litter, poor ventilation, dirty feeders/drinkers)
+Structure your image response as: 1) what you observe, 2) what it may indicate, 3) immediate action steps. Always remind the farmer that a definitive diagnosis requires a qualified vet.
 
 SAFETY: When symptoms suggest high mortality, severe weakness, bleeding, paralysis, twisted neck, greenish diarrhoea, or sudden unexplained deaths — add a clear 🚨 emergency block advising immediate veterinary contact. Never claim to provide a final veterinary diagnosis.
 
@@ -147,7 +159,11 @@ export class AiProviderService {
 
 Relevant Agrofount products:
 ${productContext}
-${input.ragContext ? `\nKnowledge base context:\n${input.ragContext}\n` : ''}
+${input.ragContext ? `\nKnowledge base context:\n${input.ragContext}\n` : ''}${
+      input.documentContext
+        ? `\nVet document content:\n${input.documentContext}\n`
+        : ''
+    }
 Recent conversation:
 ${input.history
   .slice(-8)
@@ -156,7 +172,7 @@ ${input.history
 
 Farmer question: ${input.message}${
       input.imageBuffer
-        ? '\n[The farmer has also attached an image for analysis. Describe what you can observe in the image and provide relevant advice.]'
+        ? '\n[The farmer has shared a photo. Examine it carefully: describe visible symptoms, assess what may be wrong, and give clear action steps. Follow the IMAGE ANALYSIS structure in your instructions.]'
         : ''
     }
 
