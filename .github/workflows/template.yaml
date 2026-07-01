@@ -156,10 +156,62 @@ jobs:
           container-name: ${{ inputs.container-name }}
           image: ${{ steps.build-image.outputs.image }}
 
+      - name: Register Amazon ECS task definition
+        id: register-task-def
+        run: |
+          TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "task-definition-arn=$TASK_DEFINITION_ARN" >> $GITHUB_OUTPUT
+
+      - name: Run database migrations
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition "${{ steps.register-task-def.outputs.task-definition-arn }}" \
+            --launch-type EC2 \
+            --count 1 \
+            --started-by "github-actions-migrations-${{ github.run_id }}" \
+            --overrides '{"containerOverrides":[{"name":"${{ inputs.container-name }}","command":["npm","run","migration:run:prod"]}]}' \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "Failed to start migration ECS task"
+            exit 1
+          fi
+
+          echo "Waiting for migration task to finish: $TASK_ARN"
+          aws ecs wait tasks-stopped \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[?name=='${{ inputs.container-name }}'].exitCode | [0]" \
+            --output text)
+
+          STOP_REASON=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Database migrations failed with exit code $EXIT_CODE"
+            echo "Stop reason: $STOP_REASON"
+            exit 1
+          fi
+
+          echo "Database migrations completed successfully"
+
       - name: Deploy Amazon ECS task definition
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          task-definition: ${{ steps.register-task-def.outputs.task-definition-arn }}
           service: ${{ inputs.service }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
