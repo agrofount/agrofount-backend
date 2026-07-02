@@ -517,7 +517,7 @@ export class AiAnalyticsService {
        SELECT COUNT(*)::int AS total
        FROM usage
        LEFT JOIN "user" u ON u.id = usage.user_id
-       LEFT JOIN ai_user_quota q ON q."userId" = usage.user_id
+       LEFT JOIN ai_user_quota q ON q."userId"::uuid = usage.user_id
        ${whereClause}`,
       countArgs,
     );
@@ -550,7 +550,7 @@ export class AiAnalyticsService {
          COALESCE(q."bonusTokens", 0) AS bonus_tokens
        FROM usage
        LEFT JOIN "user" u ON u.id = usage.user_id
-       LEFT JOIN ai_user_quota q ON q."userId" = usage.user_id
+       LEFT JOIN ai_user_quota q ON q."userId"::uuid = usage.user_id
        ${whereClause}
        ORDER BY usage.tokens DESC
        LIMIT $${dataArgs.length - 1} OFFSET $${dataArgs.length}`,
