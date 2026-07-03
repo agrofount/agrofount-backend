@@ -255,13 +255,16 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
-      this.logger.error(
-        'Failed to generate Bedrock farm assistant response',
+      this.logger.warn(
+        'Bedrock farm assistant response failed, falling back to rule-based reply',
         error instanceof Error ? error.stack : String(error),
       );
-      throw new ServiceUnavailableException(
-        'AI assistant is temporarily unavailable',
-      );
+      return this.generateRuleBasedReply(input, {
+        inputTokens: null,
+        outputTokens: null,
+        latencyMs: Date.now() - startMs,
+        modelId,
+      });
     }
   }
 
@@ -305,6 +308,16 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
     ) {
       reply =
         '⚠️ I’m sorry you’re dealing with weak birds or deaths — that can move fast, so let’s act carefully.\n\nPossible causes include:\n\n- 🦠 **Disease** like Newcastle, Gumboro, or Coccidiosis\n- 🌡️ **Heat/cold stress**, especially during brooding\n- 💧 **Water problems** — blocked drinkers, dirty water, or dehydration\n- 🌾 **Feed issues** — mouldy feed or wrong feed stage\n- 🏠 **Overcrowding or poor ventilation**\n\nDo these now:\n1. **Separate** very weak birds from the flock\n2. Check **water, temperature, and airflow** immediately\n3. Count how many are sick or dead and note the symptoms\n4. Call a **qualified vet** if deaths continue or more birds weaken\n\nWhat symptoms are you seeing exactly — diarrhoea, twisted neck, coughing, or just weakness?';
+    } else if (
+      lowerMessage.includes('dropping') ||
+      lowerMessage.includes('droppings') ||
+      lowerMessage.includes('poo') ||
+      lowerMessage.includes('faeces') ||
+      lowerMessage.includes('feces') ||
+      lowerMessage.includes('manure')
+    ) {
+      reply =
+        '🐔 Thick **dark brown droppings** in pullets are not always an emergency. Birds can pass darker, sticky **caecal droppings** a few times a day, and that can be normal.\n\nStill, keep an eye on the flock today:\n\n- ✅ If the birds are **active, eating, drinking, and the droppings are only occasional**, monitor them for 24 hours\n- ⚠️ Be more concerned if droppings become **watery, bloody, very smelly, green/yellow**, or if many birds are affected\n- 🚨 Call a vet quickly if you see **weakness, weight loss, blood, ruffled feathers, reduced feed intake, or deaths**\n\nFor now:\n1. Check that their **water is clean** and drinkers are not dirty\n2. Inspect the feed for **mould or spoilage**\n3. Keep litter dry and remove wet patches\n4. Take a clear photo of fresh droppings if it continues\n\nAre the pullets still eating and acting normal, or are you seeing weakness or reduced appetite too?';
     }
 
     if (input.requiresVetAttention) {
