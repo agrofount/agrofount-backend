@@ -9,6 +9,7 @@ import { CronJobName } from '../enums/cron-job-name.enum';
 import { UserEntity } from '../../user/entities/user.entity';
 import { OrderEntity } from '../../order/entities/order.entity';
 import { MessageTypes } from '../types/notification.type';
+import { FarmFlockService } from '../../ai-platform/services/farm-flock.service';
 
 @Injectable()
 export class NotificationTriggersJob {
@@ -19,6 +20,7 @@ export class NotificationTriggersJob {
     private readonly notificationService: NotificationService,
     private readonly notificationGateway: NotificationGateway,
     private readonly cronMonitor: CronMonitorService,
+    private readonly farmFlockService: FarmFlockService,
   ) {}
 
   @Cron('0 10 * * *')
@@ -513,6 +515,58 @@ export class NotificationTriggersJob {
     }
 
     return { sent, total };
+  }
+
+  @Cron('0 7 * * *')
+  async sendVaccinationDueReminders() {
+    if (
+      !(await this.cronMonitor.isEnabled(
+        CronJobName.VACCINATION_DUE_REMINDERS,
+      ))
+    )
+      return;
+    const run = await this.cronMonitor.startRun(
+      CronJobName.VACCINATION_DUE_REMINDERS,
+    );
+
+    let sent = 0;
+    let total = 0;
+
+    try {
+      const flocks =
+        await this.farmFlockService.listActiveFlocksWithDueVaccinesToday();
+      total = flocks.length;
+
+      for (const flock of flocks) {
+        try {
+          const status = this.farmFlockService.computeVaccinationStatus(flock);
+          const vaccineNames = status.dueToday
+            .map((item) => item.vaccineName)
+            .join(', ');
+
+          this.notificationGateway.emitToUser(flock.userId, 'notification', {
+            title: 'Vaccination due today',
+            message: `Your ${flock.birdType} flock has a vaccination due today: ${vaccineNames}.`,
+          });
+          sent++;
+        } catch (err) {
+          this.logger.warn(
+            `Vaccination reminder failed for flock ${flock.id}: ${
+              (err as Error).message
+            }`,
+          );
+        }
+      }
+
+      await this.cronMonitor.finishRun(run, { sent, total });
+    } catch (err) {
+      await this.cronMonitor.finishRun(run, {
+        sent,
+        total,
+        error: (err as Error).message,
+      });
+      throw err;
+    }
   }
 
   private buildSimpleEmail(

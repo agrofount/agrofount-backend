@@ -84,6 +84,10 @@ describe('AiFarmAssistantService', () => {
           : 'Use starter feed and clean water.',
         quickReplies: ['How much feed do I need?'],
         requiresVetAttention: input.requiresVetAttention,
+        inputTokens: 1000,
+        outputTokens: 100,
+        latencyMs: 250,
+        modelId: 'amazon.nova-lite-v1:0',
       })),
       ...overrides.aiProviderService,
     };
@@ -100,6 +104,11 @@ describe('AiFarmAssistantService', () => {
     };
     const aiSettingsService = {
       isAyoActive: jest.fn().mockResolvedValue(true),
+      getSettings: jest.fn().mockResolvedValue({
+        costPer1MInputTokensUSD: 0.06,
+        costPer1MOutputTokensUSD: 0.24,
+      }),
+      ...overrides.aiSettingsService,
     };
     const aiRagService = {
       search: jest.fn().mockResolvedValue({ results: [] }),
@@ -111,15 +120,36 @@ describe('AiFarmAssistantService', () => {
       save: jest.fn().mockImplementation((v) => Promise.resolve(v)),
       ...overrides.quotaRepository,
     };
+    const farmerProfileRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      ...overrides.farmerProfileRepository,
+    };
+    const aiToolRegistryService = {
+      executeTool: jest.fn().mockResolvedValue({
+        success: true,
+        flock: null,
+        dueToday: [],
+        upcoming7Days: [],
+        missed: [],
+      }),
+      ...overrides.aiToolRegistryService,
+    };
+    const farmFlockService = {
+      upsertFromChatContext: jest.fn().mockResolvedValue(null),
+      ...overrides.farmFlockService,
+    };
     const service = new AiFarmAssistantService(
       conversationRepository as any,
       messageRepository as any,
       feedbackRepository as any,
       productLocationRepository as any,
       quotaRepository as any,
+      farmerProfileRepository as any,
       aiProviderService as any,
       aiSettingsService as any,
       aiRagService as any,
+      aiToolRegistryService as any,
+      farmFlockService as any,
       configService as any,
     );
 
@@ -130,6 +160,9 @@ describe('AiFarmAssistantService', () => {
       conversationRepository,
       messageRepository,
       productLocationRepository,
+      farmerProfileRepository,
+      aiToolRegistryService,
+      farmFlockService,
       aiProviderService,
     };
   }
@@ -157,7 +190,94 @@ describe('AiFarmAssistantService', () => {
       expect.objectContaining({ role: FarmAssistantMessageRole.User }),
     );
     expect(messages[1]).toEqual(
-      expect.objectContaining({ role: FarmAssistantMessageRole.Assistant }),
+      expect.objectContaining({
+        role: FarmAssistantMessageRole.Assistant,
+        metadata: expect.objectContaining({
+          inputTokens: 1000,
+          outputTokens: 100,
+          ayoCredits: 84,
+          provider: 'AWS Bedrock',
+        }),
+      }),
+    );
+  });
+
+  it('saves a flock from complete chat context and threads vaccination status to the AI provider', async () => {
+    const { service, aiProviderService, farmFlockService } = setup({
+      farmFlockService: {
+        upsertFromChatContext: jest.fn().mockResolvedValue(null),
+      },
+      aiToolRegistryService: {
+        executeTool: jest.fn().mockResolvedValue({
+          success: true,
+          flock: { birdType: 'Broiler', quantity: 500, startDate: '2026-06-27' },
+          dueToday: [
+            {
+              vaccineName: 'Newcastle Disease (Lasota) - Dose 1',
+              method: 'Eye drop or drinking water',
+              targetDay: 7,
+            },
+          ],
+          upcoming7Days: [],
+          missed: [],
+        }),
+      },
+    });
+
+    await service.ask(
+      { id: userId },
+      {
+        message: 'What vaccines are due?',
+        farmContext: { birdType: 'Broiler', quantity: 500, birdAgeWeeks: 1 },
+      },
+    );
+
+    expect(farmFlockService.upsertFromChatContext).toHaveBeenCalledWith(
+      userId,
+      expect.objectContaining({ birdType: 'Broiler', quantity: 500, birdAgeWeeks: 1 }),
+    );
+    expect(aiProviderService.generateFarmAssistantReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vaccinationStatus: expect.stringContaining(
+          'Newcastle Disease (Lasota) - Dose 1',
+        ),
+      }),
+    );
+  });
+
+  it('loads the farmer\'s persistent profile and passes it to the AI provider', async () => {
+    const { service, aiProviderService, farmerProfileRepository } = setup({
+      farmerProfileRepository: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 'profile-1',
+          livestockTypes: ['Poultry'],
+          farmSize: 'Medium',
+          productionSystem: 'Intensive',
+          feedSource: 'Commercial',
+          breeds: [
+            {
+              breedName: 'Cobb 500',
+              livestockType: 'Poultry',
+              currentStock: 500,
+              primaryPurpose: 'Meat',
+            },
+          ],
+        }),
+      },
+    });
+
+    await service.ask(
+      { id: userId, profileId: 'profile-1' },
+      { message: 'What feed should I use?' },
+    );
+
+    expect(farmerProfileRepository.findOne).toHaveBeenCalledWith({
+      where: { id: 'profile-1' },
+    });
+    expect(aiProviderService.generateFarmAssistantReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        farmerProfile: expect.stringContaining('Cobb 500'),
+      }),
     );
   });
 

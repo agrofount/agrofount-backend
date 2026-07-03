@@ -24,11 +24,21 @@ import {
 } from './ai-provider.service';
 import { AiSettingsService } from './ai-settings.service';
 import { AiRagService } from '../ai-platform/services/ai-rag.service';
+import { AiToolRegistryService } from '../ai-platform/services/ai-tool-registry.service';
+import {
+  FarmFlockService,
+  VaccinationStatus,
+} from '../ai-platform/services/farm-flock.service';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
 import { AiUserQuotaEntity } from './entities/ai-user-quota.entity';
+import { LivestockFarmerProfile } from '../user/entities/profile.entity';
 import pdfParse = require('pdf-parse');
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
-import { TOKEN_LIMIT_PER_USER } from './ai-farm-assistant.constants';
+import {
+  AYO_CREDITS_PER_USD,
+  AYO_CREDIT_LIMIT_PER_USER,
+  calculateAyoCredits,
+} from './ai-farm-assistant.constants';
 
 const MESSAGE_MAX_LENGTH = 2000;
 const FEEDBACK_PROMPT =
@@ -52,9 +62,13 @@ export class AiFarmAssistantService {
     private readonly productLocationRepository: Repository<ProductLocationEntity>,
     @InjectRepository(AiUserQuotaEntity)
     private readonly quotaRepository: Repository<AiUserQuotaEntity>,
+    @InjectRepository(LivestockFarmerProfile)
+    private readonly farmerProfileRepository: Repository<LivestockFarmerProfile>,
     private readonly aiProviderService: AiProviderService,
     private readonly aiSettingsService: AiSettingsService,
     private readonly aiRagService: AiRagService,
+    private readonly aiToolRegistryService: AiToolRegistryService,
+    private readonly farmFlockService: FarmFlockService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -66,6 +80,7 @@ export class AiFarmAssistantService {
       username?: string | null;
       city?: string | null;
       state?: string | null;
+      profileId?: string | null;
     },
     dto: AskFarmAssistantDto,
     image?: Express.Multer.File,
@@ -75,6 +90,12 @@ export class AiFarmAssistantService {
     const userName = user.firstname || user.username || null;
     const userLocation =
       [user.city, user.state].filter(Boolean).join(', ') || null;
+    const farmerProfile = user.profileId
+      ? await this.farmerProfileRepository.findOne({
+          where: { id: user.profileId },
+        })
+      : null;
+    const farmerProfileSummary = this.buildFarmerProfileSummary(farmerProfile);
     const documentContext = document
       ? await this.extractPdfText(document.buffer)
       : null;
@@ -82,9 +103,9 @@ export class AiFarmAssistantService {
     await this.ensureEnabled();
     const message = this.sanitizeMessage(dto.message);
 
-    const tokensUsed = await this.getUserTokensUsed(userId);
+    const creditsUsed = await this.getUserCreditsUsed(userId);
     const effectiveLimit = await this.getEffectiveLimit(userId);
-    if (tokensUsed >= effectiveLimit) {
+    if (creditsUsed >= effectiveLimit) {
       const conversation = dto.conversationId
         ? await this.findOwnedConversation(dto.conversationId, userId)
         : await this.createConversation(userId, message, null);
@@ -138,6 +159,16 @@ export class AiFarmAssistantService {
         dto.farmContext as Record<string, unknown>,
       );
       await this.conversationRepository.save(conversation);
+
+      try {
+        await this.farmFlockService.upsertFromChatContext(userId, {
+          birdType: dto.farmContext.birdType,
+          quantity: dto.farmContext.quantity,
+          birdAgeWeeks: dto.farmContext.birdAgeWeeks,
+        });
+      } catch {
+        // Flock tracking is best-effort - Ayo continues even if this fails
+      }
     }
 
     const history = await this.messageRepository.find({
@@ -175,6 +206,8 @@ export class AiFarmAssistantService {
       // RAG search unavailable - Ayo continues without knowledge base context
     }
 
+    const vaccinationStatus = await this.getVaccinationStatusSummary(userId);
+
     const aiReply = await this.aiProviderService.generateFarmAssistantReply({
       message,
       farmContext: conversation.farmContext,
@@ -182,6 +215,8 @@ export class AiFarmAssistantService {
       documentContext,
       userName,
       userLocation,
+      farmerProfile: farmerProfileSummary,
+      vaccinationStatus,
       history: history.map((item) => ({
         role:
           item.role === FarmAssistantMessageRole.Assistant
@@ -193,6 +228,13 @@ export class AiFarmAssistantService {
       requiresVetAttention,
       imageBuffer: image?.buffer,
       imageMimeType: image?.mimetype,
+    });
+    const settings = await this.aiSettingsService.getSettings();
+    const ayoCredits = calculateAyoCredits({
+      inputTokens: aiReply.inputTokens,
+      outputTokens: aiReply.outputTokens,
+      costPer1MInputTokensUSD: Number(settings.costPer1MInputTokensUSD),
+      costPer1MOutputTokensUSD: Number(settings.costPer1MOutputTokensUSD),
     });
 
     await this.messageRepository.save(
@@ -207,9 +249,23 @@ export class AiFarmAssistantService {
           requiresVetAttention: aiReply.requiresVetAttention,
           inputTokens: aiReply.inputTokens,
           outputTokens: aiReply.outputTokens,
+          ayoCredits,
+          creditRate: {
+            creditsPerUsd: AYO_CREDITS_PER_USD,
+            costPer1MInputTokensUSD: Number(
+              settings.costPer1MInputTokensUSD,
+            ),
+            costPer1MOutputTokensUSD: Number(
+              settings.costPer1MOutputTokensUSD,
+            ),
+          },
           latencyMs: aiReply.latencyMs,
           modelId: aiReply.modelId,
-          provider: aiReply.modelId ? 'AWS Bedrock' : null,
+          provider: aiReply.modelId
+            ? aiReply.modelId.startsWith('gemini')
+              ? 'Gemini'
+              : 'AWS Bedrock'
+            : null,
         },
       }),
     );
@@ -286,19 +342,19 @@ export class AiFarmAssistantService {
         lastResetBy: null,
       });
     }
-    quota.bonusTokens += TOKEN_LIMIT_PER_USER;
+    quota.bonusTokens += AYO_CREDIT_LIMIT_PER_USER;
     quota.lastResetBy = adminId;
     await this.quotaRepository.save(quota);
     return {
       userId,
       bonusTokens: quota.bonusTokens,
-      newLimit: TOKEN_LIMIT_PER_USER + quota.bonusTokens,
+      newLimit: AYO_CREDIT_LIMIT_PER_USER + quota.bonusTokens,
     };
   }
 
   private async getEffectiveLimit(userId: string): Promise<number> {
     const quota = await this.quotaRepository.findOne({ where: { userId } });
-    return TOKEN_LIMIT_PER_USER + (quota?.bonusTokens ?? 0);
+    return AYO_CREDIT_LIMIT_PER_USER + (quota?.bonusTokens ?? 0);
   }
 
   private async extractPdfText(buffer: Buffer): Promise<string | null> {
@@ -317,7 +373,7 @@ export class AiFarmAssistantService {
     }
   }
 
-  private async getUserTokensUsed(userId: string): Promise<number> {
+  private async getUserCreditsUsed(userId: string): Promise<number> {
     const result = await this.messageRepository
       .createQueryBuilder('msg')
       .innerJoin('msg.conversation', 'conv')
@@ -325,7 +381,13 @@ export class AiFarmAssistantService {
       .andWhere("msg.role = 'assistant'")
       .andWhere("msg.metadata->>'inputTokens' IS NOT NULL")
       .select(
-        `COALESCE(SUM((msg.metadata->>'inputTokens')::int + (msg.metadata->>'outputTokens')::int), 0)`,
+        `COALESCE(SUM(
+          COALESCE(
+            (msg.metadata->>'ayoCredits')::bigint,
+            COALESCE((msg.metadata->>'inputTokens')::bigint, 0)
+              + COALESCE((msg.metadata->>'outputTokens')::bigint, 0)
+          )
+        ), 0)`,
         'total',
       )
       .getRawOne<{ total: string }>();
@@ -365,6 +427,67 @@ export class AiFarmAssistantService {
     }
 
     return message;
+  }
+
+  private buildFarmerProfileSummary(
+    profile: LivestockFarmerProfile | null,
+  ): string | null {
+    if (!profile) return null;
+
+    const lines: string[] = [];
+    if (profile.livestockTypes?.length) {
+      lines.push(`Livestock types: ${profile.livestockTypes.join(', ')}`);
+    }
+    if (profile.farmSize) lines.push(`Farm size: ${profile.farmSize}`);
+    if (profile.productionSystem) {
+      lines.push(`Production system: ${profile.productionSystem}`);
+    }
+    if (profile.feedSource) lines.push(`Usual feed source: ${profile.feedSource}`);
+
+    for (const breed of profile.breeds || []) {
+      const details = [
+        breed.livestockType,
+        breed.currentStock ? `~${breed.currentStock} on the farm` : null,
+        breed.primaryPurpose ? `raised for ${breed.primaryPurpose}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      lines.push(`Breed on farm: ${breed.breedName}${details ? ` (${details})` : ''}`);
+    }
+
+    return lines.length > 0 ? lines.join('\n') : null;
+  }
+
+  private async getVaccinationStatusSummary(
+    userId: string,
+  ): Promise<string | null> {
+    try {
+      const result = (await this.aiToolRegistryService.executeTool(
+        'vaccination.schedule',
+        {},
+        { actorType: 'farmer', userId },
+      )) as VaccinationStatus;
+
+      if (!result?.flock) return null;
+
+      const lines: string[] = [];
+      const format = (items: { vaccineName: string; method: string }[]) =>
+        items.map((item) => `${item.vaccineName} (${item.method})`).join('; ');
+
+      if (result.dueToday?.length) {
+        lines.push(`Due now: ${format(result.dueToday)}`);
+      }
+      if (result.missed?.length) {
+        lines.push(`Overdue/missed: ${format(result.missed)}`);
+      }
+      if (result.upcoming7Days?.length) {
+        lines.push(`Coming up in the next 7 days: ${format(result.upcoming7Days)}`);
+      }
+
+      return lines.length > 0 ? lines.join('\n') : null;
+    } catch {
+      return null;
+    }
   }
 
   private sanitizeFarmContext(

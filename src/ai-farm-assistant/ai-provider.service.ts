@@ -8,6 +8,7 @@ import {
   BedrockRuntimeClient,
   ConverseCommand,
 } from '@aws-sdk/client-bedrock-runtime';
+import { AiSettingsService } from './ai-settings.service';
 
 export type FarmAssistantSuggestedProduct = {
   id: string;
@@ -29,6 +30,8 @@ export type FarmAssistantProviderInput = {
   documentContext?: string | null;
   userName?: string | null;
   userLocation?: string | null;
+  farmerProfile?: string | null;
+  vaccinationStatus?: string | null;
   history: FarmAssistantProviderMessage[];
   products: FarmAssistantSuggestedProduct[];
   requiresVetAttention: boolean;
@@ -67,22 +70,26 @@ PERSONALITY & PERSONALIZATION:
 - When the farmer's name is provided, use it naturally but sparingly — only in the first message of a conversation or occasionally when it genuinely fits (e.g. a moment of encouragement). Never open every reply with their name; that feels robotic
 - Use "you", "your birds", "your flock", or "your farm" throughout so the answer feels personal
 - Use the farmer's farm context when available, such as bird type, bird age, flock size, current feed, and location
+- When a "Farmer's known farm profile" section is provided, treat it as background you already know about this farmer (their livestock types, breeds, farm size, production system, feed source). Weave it into the conversation naturally — e.g. mention their breed or setup in passing when relevant — never recite it back as a list or say things like "I see your profile shows..."
 - When the farmer's location is known, reference it where relevant — mention common diseases in that region, local climate effects, or nearby market considerations
 - Acknowledge what the farmer said before giving advice, especially if they mention stress, losses, cost, or uncertainty
 - Be interactive: when important details are missing, ask 1 clear follow-up question at the end instead of overwhelming the farmer with many questions
+- Be proactive, not just reactive: when you already have enough detail (from the profile, farm context, or conversation) to answer fully, add one relevant observation the farmer didn't ask about but would want to know — e.g. an upcoming vaccination window, a feed-transition point, or a market-weight milestone for their bird's age. Skip this if the situation is an emergency or the farmer just wants a quick fact
+- When a "Vaccination status" section is provided, treat it as ground truth for this farmer's actual flock (not a generic schedule) — answer "what's due" or "what did I miss" directly from it, and lead with anything due now or overdue as your proactive observation
 - Keep responses concise unless the farmer asks for a detailed plan
 - Avoid stiff phrases like "Dear user", "as an AI", "it is recommended that", or long textbook-style paragraphs
 - Use light encouragement naturally, but do not overdo hype
 
 RESPONSE FORMAT — follow these rules strictly:
 - Write the reply in markdown so it renders beautifully in the app
-- Open every response with a fitting emoji that matches the topic (e.g. 🐔 birds, 🌾 feed, 💊 medicine, 🌡️ temperature, 💧 water, 🏥 vet care, 📋 schedule, 💰 cost)
+- Open with a fitting emoji that matches the topic (e.g. 🐔 birds, 🌾 feed, 💊 medicine, 🌡️ temperature, 💧 water, 🏥 vet care, 📋 schedule, 💰 cost), but vary the opening line itself — don't reuse the same greeting or sentence structure every reply in a thread, and don't re-introduce yourself or recap the farmer's profile after the first message of a conversation
 - Use **bold** for key terms, dosage figures, critical warnings, and product names
 - Use bullet lists or numbered steps whenever giving multiple items, symptoms, or instructions
 - Use ## headings only for structured multi-section responses
 - Use ⚠️ to highlight warnings and ✅ to highlight positive signs or correct practices
 - Keep language simple, direct, and relevant to Nigerian farming conditions
 - End every response with a friendly next step, a short question, or 1 encouraging sentence unless the situation is an emergency
+- quickReplies should read like the farmer's own next question, in their voice, and reference their actual bird type/breed/topic when known (e.g. "How much feed do my Cobb 500 broilers need?") instead of generic phrasing
 
 VET DOCUMENT ANALYSIS: When a vet report, lab result, or medical document is shared (blood test, post-mortem, sensitivity test, faecal exam, etc.), explain it in plain language the farmer can understand. Structure your response as: 1) what each key finding means in simple terms, 2) which values are normal or abnormal and why that matters, 3) what the overall picture suggests about the animal's health, 4) recommended next steps. Never replace the vet's professional judgment — help the farmer understand so they can follow up confidently.
 
@@ -106,24 +113,61 @@ export class AiProviderService {
   private readonly logger = new Logger(AiProviderService.name);
   private bedrockClient: BedrockRuntimeClient | null = null;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly aiSettingsService: AiSettingsService,
+  ) {}
 
   async generateFarmAssistantReply(
     input: FarmAssistantProviderInput,
   ): Promise<FarmAssistantProviderOutput> {
-    const provider = (
-      this.configService.get<string>('AI_PROVIDER') || 'bedrock'
-    ).toLowerCase();
+    const { provider, modelId } = await this.getEffectiveProviderConfig();
 
     if (provider === 'gemini') {
-      return this.generateGeminiReply(input);
+      return this.generateGeminiReply(input, modelId);
     }
 
     if (provider !== 'bedrock') {
       return this.generateRuleBasedReply(input);
     }
 
-    return this.generateBedrockReply(input);
+    return this.generateBedrockReply(input, modelId);
+  }
+
+  private async getEffectiveProviderConfig(): Promise<{
+    provider: 'bedrock' | 'gemini' | 'local';
+    modelId: string;
+  }> {
+    let providerLabel = this.configService.get<string>('AI_PROVIDER') || 'bedrock';
+    let dbModel: string | null = null;
+
+    try {
+      const settings = await this.aiSettingsService.getSettings();
+      if (settings.provider) providerLabel = settings.provider;
+      dbModel = settings.model || null;
+    } catch {
+      // Admin settings unreadable — fall back to env-only configuration
+    }
+
+    const provider = this.normalizeProvider(providerLabel);
+    const modelId =
+      dbModel ||
+      (provider === 'gemini'
+        ? this.configService.get<string>('GEMINI_MODEL_ID') ||
+          'gemini-3.1-flash-lite'
+        : this.configService.get<string>('BEDROCK_MODEL_ID') ||
+          'amazon.nova-lite-v1:0');
+
+    return { provider, modelId };
+  }
+
+  private normalizeProvider(
+    value: string | null | undefined,
+  ): 'bedrock' | 'gemini' | 'local' {
+    const lower = (value || '').toLowerCase();
+    if (!lower || lower.includes('bedrock')) return 'bedrock';
+    if (lower.includes('gemini')) return 'gemini';
+    return 'local';
   }
 
   private getBedrockClient(): BedrockRuntimeClient {
@@ -139,22 +183,8 @@ export class AiProviderService {
 
   private async generateBedrockReply(
     input: FarmAssistantProviderInput,
+    modelId: string,
   ): Promise<FarmAssistantProviderOutput> {
-    const modelId =
-      this.configService.get<string>('BEDROCK_MODEL_ID') ||
-      'amazon.nova-lite-v1:0';
-
-    const productContext = input.products.length
-      ? input.products
-          .map(
-            (product) =>
-              `- ${product.name} (${product.category || 'Product'}) ₦${
-                product.price
-              }`,
-          )
-          .join('\n')
-      : 'No matching Agrofount products were found for this message.';
-
     const mimeToFormat: Record<string, 'jpeg' | 'png' | 'webp' | 'gif'> = {
       'image/jpeg': 'jpeg',
       'image/png': 'png',
@@ -164,39 +194,7 @@ export class AiProviderService {
     const imageFormat: 'jpeg' | 'png' | 'webp' | 'gif' =
       mimeToFormat[input.imageMimeType ?? ''] ?? 'jpeg';
 
-    const farmerProfile = [
-      input.userName ? `Farmer name: ${input.userName}` : null,
-      input.userLocation ? `Farmer location: ${input.userLocation}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-    const userContent = `${
-      farmerProfile ? farmerProfile + '\n\n' : ''
-    }Farm context: ${JSON.stringify(input.farmContext || {})}
-
-Relevant Agrofount products:
-${productContext}
-${input.ragContext ? `\nKnowledge base context:\n${input.ragContext}\n` : ''}${
-      input.documentContext
-        ? `\nVet document content:\n${input.documentContext}\n`
-        : ''
-    }
-Recent conversation:
-${input.history
-  .slice(-8)
-  .map((message) => `${message.role}: ${message.content}`)
-  .join('\n')}
-
-Farmer question: ${input.message}${
-      input.imageBuffer
-        ? '\n[The farmer has shared a photo. Examine it carefully: describe visible symptoms, assess what may be wrong, and give clear action steps. Follow the IMAGE ANALYSIS structure in your instructions.]'
-        : ''
-    }
-
-Safety precheck requires vet attention: ${input.requiresVetAttention}
-
-Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAttention.`;
+    const userContent = this.buildUserContent(input);
 
     const command = new ConverseCommand({
       modelId,
@@ -294,10 +292,8 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
 
   private async generateGeminiReply(
     input: FarmAssistantProviderInput,
+    modelId: string,
   ): Promise<FarmAssistantProviderOutput> {
-    const modelId =
-      this.configService.get<string>('GEMINI_MODEL_ID') ||
-      'gemini-3.1-flash-lite';
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     const startMs = Date.now();
 
@@ -313,50 +309,7 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       });
     }
 
-    const productContext = input.products.length
-      ? input.products
-          .map(
-            (product) =>
-              `- ${product.name} (${product.category || 'Product'}) ₦${
-                product.price
-              }`,
-          )
-          .join('\n')
-      : 'No matching Agrofount products were found for this message.';
-
-    const farmerProfile = [
-      input.userName ? `Farmer name: ${input.userName}` : null,
-      input.userLocation ? `Farmer location: ${input.userLocation}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-    const userContent = `${
-      farmerProfile ? farmerProfile + '\n\n' : ''
-    }Farm context: ${JSON.stringify(input.farmContext || {})}
-
-Relevant Agrofount products:
-${productContext}
-${input.ragContext ? `\nKnowledge base context:\n${input.ragContext}\n` : ''}${
-      input.documentContext
-        ? `\nVet document content:\n${input.documentContext}\n`
-        : ''
-    }
-Recent conversation:
-${input.history
-  .slice(-8)
-  .map((message) => `${message.role}: ${message.content}`)
-  .join('\n')}
-
-Farmer question: ${input.message}${
-      input.imageBuffer
-        ? '\n[The farmer has shared a photo. Examine it carefully: describe visible symptoms, assess what may be wrong, and give clear action steps. Follow the IMAGE ANALYSIS structure in your instructions.]'
-        : ''
-    }
-
-Safety precheck requires vet attention: ${input.requiresVetAttention}
-
-Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAttention.`;
+    const userContent = this.buildUserContent(input);
 
     const parts: Array<
       { text: string } | { inlineData: { mimeType: string; data: string } }
@@ -489,6 +442,61 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
     }
   }
 
+  private buildUserContent(input: FarmAssistantProviderInput): string {
+    const productContext = input.products.length
+      ? input.products
+          .map(
+            (product) =>
+              `- ${product.name} (${product.category || 'Product'}) ₦${
+                product.price
+              }`,
+          )
+          .join('\n')
+      : 'No matching Agrofount products were found for this message.';
+
+    const farmerIdentity = [
+      input.userName ? `Farmer name: ${input.userName}` : null,
+      input.userLocation ? `Farmer location: ${input.userLocation}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return `${farmerIdentity ? farmerIdentity + '\n\n' : ''}${
+      input.farmerProfile
+        ? `Farmer's known farm profile (durable, from onboarding — reference naturally, don't recite it back):\n${input.farmerProfile}\n\n`
+        : ''
+    }${
+      input.vaccinationStatus
+        ? `Vaccination status for this farmer's active flock (computed fact, not a guess — use this to answer precisely and as your proactive observation when relevant):\n${input.vaccinationStatus}\n\n`
+        : ''
+    }Farm context for this conversation: ${JSON.stringify(
+      input.farmContext || {},
+    )}
+
+Relevant Agrofount products:
+${productContext}
+${input.ragContext ? `\nKnowledge base context:\n${input.ragContext}\n` : ''}${
+      input.documentContext
+        ? `\nVet document content:\n${input.documentContext}\n`
+        : ''
+    }
+Recent conversation:
+${input.history
+  .slice(-8)
+  .map((message) => `${message.role}: ${message.content}`)
+  .join('\n')}
+
+Farmer question: ${input.message}${
+      input.imageBuffer
+        ? '\n[The farmer has shared a photo. Examine it carefully: describe visible symptoms, assess what may be wrong, and give clear action steps. Follow the IMAGE ANALYSIS structure in your instructions.]'
+        : ''
+    }
+
+Safety precheck requires vet attention: ${input.requiresVetAttention}
+
+Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAttention.`;
+  }
+
   private isBedrockOperationNotAllowed(error: unknown): boolean {
     return (
       error instanceof Error &&
@@ -508,6 +516,10 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
   ): FarmAssistantProviderOutput {
     const lowerMessage = input.message.toLowerCase();
     const age = Number(input.farmContext?.birdAgeWeeks);
+    const birdType =
+      typeof input.farmContext?.birdType === 'string'
+        ? input.farmContext.birdType
+        : null;
     const productLine = input.products.length
       ? `\n\n---\n🛒 **Available on Agrofount:**\n${input.products
           .slice(0, 3)
@@ -562,7 +574,10 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
 
     return {
       reply: `${reply}${productLine}`,
-      quickReplies: this.defaultQuickReplies(input.requiresVetAttention),
+      quickReplies: this.defaultQuickReplies(
+        input.requiresVetAttention,
+        birdType,
+      ),
       requiresVetAttention: input.requiresVetAttention,
       inputTokens: usage?.inputTokens ?? null,
       outputTokens: usage?.outputTokens ?? null,
@@ -581,11 +596,15 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       modelId: string | null;
     },
   ): FarmAssistantProviderOutput {
+    const birdType =
+      typeof input.farmContext?.birdType === 'string'
+        ? input.farmContext.birdType
+        : null;
     const quickReplies = Array.isArray(value.quickReplies)
       ? value.quickReplies
           .filter((reply) => typeof reply === 'string' && reply.trim())
           .slice(0, 5)
-      : this.defaultQuickReplies(input.requiresVetAttention);
+      : this.defaultQuickReplies(input.requiresVetAttention, birdType);
 
     return {
       reply:
@@ -595,7 +614,7 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       quickReplies:
         quickReplies.length > 0
           ? quickReplies
-          : this.defaultQuickReplies(input.requiresVetAttention),
+          : this.defaultQuickReplies(input.requiresVetAttention, birdType),
       requiresVetAttention:
         Boolean(value.requiresVetAttention) || input.requiresVetAttention,
       inputTokens: usage.inputTokens,
@@ -645,7 +664,10 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
     return result;
   }
 
-  private defaultQuickReplies(requiresVetAttention: boolean): string[] {
+  private defaultQuickReplies(
+    requiresVetAttention: boolean,
+    birdType?: string | null,
+  ): string[] {
     if (requiresVetAttention) {
       return [
         '🏥 What should I do before the vet arrives?',
@@ -655,12 +677,17 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       ];
     }
 
+    const subject = birdType?.trim() ? `my ${birdType.trim()}` : 'my birds';
+    const possessive = birdType?.trim()
+      ? `my ${birdType.trim()}'s`
+      : "my flock's";
+
     return [
-      '🌾 How much feed do I need per bird?',
-      '💊 What vaccination should I give next?',
-      '⚠️ Why are my birds looking weak?',
+      `🌾 How much feed do ${subject} need?`,
+      `💊 What vaccination should ${subject} get next?`,
+      `⚠️ Why would ${subject} be looking weak?`,
       '💧 How much water do broilers need daily?',
-      "📈 How do I improve my flock's growth rate?",
+      `📈 How do I improve ${possessive} growth rate?`,
     ];
   }
 }
