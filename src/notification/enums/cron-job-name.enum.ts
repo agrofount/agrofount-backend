@@ -4,4 +4,5 @@ export enum CronJobName {
   UNVERIFIED_ACCOUNT_REMINDERS = 'unverified_account_reminders',
   EDUCATIONAL_CONTENT = 'educational_content',
   PENDING_ORDER_REMINDERS = 'pending_order_reminders',
+  VACCINATION_DUE_REMINDERS = 'vaccination_due_reminders',
 }

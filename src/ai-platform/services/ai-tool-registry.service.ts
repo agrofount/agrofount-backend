@@ -12,6 +12,7 @@ import { CreditFacilityRequestEntity } from '../../credit-facility/entities/cred
 import { AiRunStatus } from '../entities/ai-tool-invocation.entity';
 import { AiPlatformAnalyticsService } from './ai-platform-analytics.service';
 import { AiSecurityService } from './ai-security.service';
+import { FarmFlockService } from './farm-flock.service';
 
 export type AiToolContext = {
   actorType: string;
@@ -57,6 +58,14 @@ const TOOL_DEFINITIONS: AiToolDefinition[] = [
     allowedActors: ['farmer', 'sales_rep', 'admin', 'system'],
     readOnly: true,
   },
+  {
+    name: 'vaccination.schedule',
+    category: 'farm_health',
+    description:
+      "Compute a farmer's active flock vaccination status: due today, upcoming, and missed",
+    allowedActors: ['farmer', 'sales_rep', 'admin', 'system'],
+    readOnly: true,
+  },
 ];
 
 @Injectable()
@@ -72,6 +81,7 @@ export class AiToolRegistryService {
     private readonly creditFacilityRepository: Repository<CreditFacilityRequestEntity>,
     private readonly analyticsService: AiPlatformAnalyticsService,
     private readonly aiSecurityService: AiSecurityService,
+    private readonly farmFlockService: FarmFlockService,
   ) {}
 
   listTools(actorType = 'farmer') {
@@ -124,7 +134,7 @@ export class AiToolRegistryService {
     toolName: string,
     input: Record<string, unknown>,
     context: AiToolContext,
-  ) {
+  ): Promise<Record<string, unknown>> {
     if (toolName === 'commerce.product_search') {
       return this.productSearch(input);
     }
@@ -137,8 +147,22 @@ export class AiToolRegistryService {
     if (toolName === 'credit.eligibility') {
       return this.creditEligibility(input, context);
     }
+    if (toolName === 'vaccination.schedule') {
+      return this.vaccinationSchedule(context);
+    }
 
     throw new NotFoundException(`Unknown AI tool: ${toolName}`);
+  }
+
+  private async vaccinationSchedule(context: AiToolContext) {
+    const targetUserId = context.userId;
+    if (!targetUserId) throw new ForbiddenException('User context is required');
+
+    const flock = await this.farmFlockService.getActiveFlock(targetUserId);
+    return {
+      success: true,
+      ...this.farmFlockService.computeVaccinationStatus(flock),
+    };
   }
 
   private async productSearch(input: Record<string, unknown>) {

@@ -15,6 +15,7 @@ import { FarmAssistantFeedbackEntity } from './entities/farm-assistant-feedback.
 import { AiSettingsEntity } from './entities/ai-settings.entity';
 import { AiUserQuotaEntity } from './entities/ai-user-quota.entity';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
+import { LivestockFarmerProfile } from '../user/entities/profile.entity';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ProductLocationEntity } from '../product-location/entities/product-loca
       AiSettingsEntity,
       AiUserQuotaEntity,
       ProductLocationEntity,
+      LivestockFarmerProfile,
     ]),
   ],
   controllers: [

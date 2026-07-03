@@ -108,7 +108,7 @@ export class AdminAiAnalyticsController {
   @Get('resource-consumption')
   @RequiredPermissions('read_ai_analytics')
   @ApiOperation({
-    summary: 'AI provider resource consumption — tokens, cost, daily usage',
+    summary: 'AI provider resource consumption — credits, tokens, cost, daily usage',
   })
   getResourceConsumption(@Query() query: AiAnalyticsQueryDto) {
     return this.analyticsService.getResourceConsumption(query.from, query.to);
@@ -125,7 +125,7 @@ export class AdminAiAnalyticsController {
   @RequiredPermissions('read_ai_analytics')
   @ApiOperation({
     summary:
-      'Per-user Ayo trial token usage with remaining quota and exhaustion status',
+      'Per-user Ayo trial credit usage with remaining quota and exhaustion status',
   })
   getUserTokenUsage(@Query() query: AiUserTokenUsageQueryDto) {
     return this.analyticsService.getUserTokenUsage(query);
@@ -135,7 +135,7 @@ export class AdminAiAnalyticsController {
   @RequiredPermissions('manage_ai_analytics')
   @ApiOperation({
     summary:
-      "Reset a user's Ayo token quota — increases their effective limit by the base quota amount",
+      "Reset a user's Ayo credit quota — increases their effective limit by the base quota amount",
   })
   resetUserTokens(
     @Param('userId') userId: string,
