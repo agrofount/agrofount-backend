@@ -97,6 +97,15 @@ export function validateEnvironment(
         'AWS credentials (AWS_ACCESS_KEY_ID or an IAM role) are required when AI Farm Assistant is enabled with Bedrock',
       );
     }
+    if (
+      config.AI_FARM_ASSISTANT_ENABLED === 'true' &&
+      config.AI_PROVIDER === 'gemini' &&
+      !config.GEMINI_API_KEY
+    ) {
+      throw new Error(
+        'GEMINI_API_KEY is required when AI Farm Assistant is enabled with Gemini',
+      );
+    }
     const jwtExpiration = String(config.JWT_EXPIRATION || '15m');
     if (!/^(?:[1-9]|1[0-5])m$/.test(jwtExpiration)) {
       throw new Error('Production JWT_EXPIRATION must be between 1m and 15m');

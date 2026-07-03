@@ -46,6 +46,20 @@ export type FarmAssistantProviderOutput = {
   modelId: string | null;
 };
 
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+  };
+};
+
 const FARM_ASSISTANT_SYSTEM_INSTRUCTION = `You are Ayo, Agrofount's AI Farm Assistant. You help Nigerian poultry and livestock farmers like a friendly farm buddy: warm, practical, conversational, and easy to talk to.
 
 PERSONALITY & PERSONALIZATION:
@@ -100,6 +114,10 @@ export class AiProviderService {
     const provider = (
       this.configService.get<string>('AI_PROVIDER') || 'bedrock'
     ).toLowerCase();
+
+    if (provider === 'gemini') {
+      return this.generateGeminiReply(input);
+    }
 
     if (provider !== 'bedrock') {
       return this.generateRuleBasedReply(input);
@@ -265,6 +283,203 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
           error instanceof Error ? error.stack : String(error),
         );
       }
+      return this.generateRuleBasedReply(input, {
+        inputTokens: null,
+        outputTokens: null,
+        latencyMs: Date.now() - startMs,
+        modelId,
+      });
+    }
+  }
+
+  private async generateGeminiReply(
+    input: FarmAssistantProviderInput,
+  ): Promise<FarmAssistantProviderOutput> {
+    const modelId =
+      this.configService.get<string>('GEMINI_MODEL_ID') ||
+      'gemini-3.1-flash-lite';
+    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
+    const startMs = Date.now();
+
+    if (!apiKey) {
+      this.logger.warn(
+        'GEMINI_API_KEY is missing; falling back to rule-based reply',
+      );
+      return this.generateRuleBasedReply(input, {
+        inputTokens: null,
+        outputTokens: null,
+        latencyMs: Date.now() - startMs,
+        modelId,
+      });
+    }
+
+    const productContext = input.products.length
+      ? input.products
+          .map(
+            (product) =>
+              `- ${product.name} (${product.category || 'Product'}) ₦${
+                product.price
+              }`,
+          )
+          .join('\n')
+      : 'No matching Agrofount products were found for this message.';
+
+    const farmerProfile = [
+      input.userName ? `Farmer name: ${input.userName}` : null,
+      input.userLocation ? `Farmer location: ${input.userLocation}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const userContent = `${
+      farmerProfile ? farmerProfile + '\n\n' : ''
+    }Farm context: ${JSON.stringify(input.farmContext || {})}
+
+Relevant Agrofount products:
+${productContext}
+${input.ragContext ? `\nKnowledge base context:\n${input.ragContext}\n` : ''}${
+      input.documentContext
+        ? `\nVet document content:\n${input.documentContext}\n`
+        : ''
+    }
+Recent conversation:
+${input.history
+  .slice(-8)
+  .map((message) => `${message.role}: ${message.content}`)
+  .join('\n')}
+
+Farmer question: ${input.message}${
+      input.imageBuffer
+        ? '\n[The farmer has shared a photo. Examine it carefully: describe visible symptoms, assess what may be wrong, and give clear action steps. Follow the IMAGE ANALYSIS structure in your instructions.]'
+        : ''
+    }
+
+Safety precheck requires vet attention: ${input.requiresVetAttention}
+
+Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAttention.`;
+
+    const parts: Array<
+      { text: string } | { inlineData: { mimeType: string; data: string } }
+    > = [];
+
+    if (input.imageBuffer) {
+      parts.push({
+        inlineData: {
+          mimeType: input.imageMimeType || 'image/jpeg',
+          data: input.imageBuffer.toString('base64'),
+        },
+      });
+    }
+
+    parts.push({ text: userContent });
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          modelId,
+        )}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{ text: FARM_ASSISTANT_SYSTEM_INSTRUCTION }],
+            },
+            contents: [{ role: 'user', parts }],
+            generationConfig: {
+              temperature: 0.65,
+              maxOutputTokens: 1536,
+              responseMimeType: 'application/json',
+            },
+          }),
+        },
+      );
+      const latencyMs = Date.now() - startMs;
+      const responseBody = (await response.json().catch(() => null)) as
+        | GeminiGenerateContentResponse
+        | { error?: { message?: string } }
+        | null;
+
+      if (!response.ok) {
+        const errorMessage =
+          responseBody && 'error' in responseBody && responseBody.error?.message
+            ? responseBody.error.message
+            : `HTTP ${response.status}`;
+        this.logger.warn(
+          `Gemini farm assistant response failed (${errorMessage}); falling back to rule-based reply`,
+        );
+        return this.generateRuleBasedReply(input, {
+          inputTokens: null,
+          outputTokens: null,
+          latencyMs,
+          modelId,
+        });
+      }
+
+      const geminiBody = responseBody as GeminiGenerateContentResponse | null;
+      const rawContent = geminiBody?.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text)
+        .filter(Boolean)
+        .join('');
+      const inputTokens = geminiBody?.usageMetadata?.promptTokenCount ?? null;
+      const outputTokens =
+        geminiBody?.usageMetadata?.candidatesTokenCount ?? null;
+
+      if (!rawContent) {
+        this.logger.warn(
+          'Gemini response did not contain text, falling back to rule-based reply',
+        );
+        return this.generateRuleBasedReply(input, {
+          inputTokens,
+          outputTokens,
+          latencyMs,
+          modelId,
+        });
+      }
+
+      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        this.logger.warn(
+          'Gemini response did not contain valid JSON, falling back to rule-based reply',
+        );
+        return this.generateRuleBasedReply(input, {
+          inputTokens,
+          outputTokens,
+          latencyMs,
+          modelId,
+        });
+      }
+
+      let parsed: Record<string, any>;
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        try {
+          parsed = JSON.parse(this.sanitizeJsonString(jsonMatch[0]));
+        } catch {
+          this.logger.warn(
+            'Gemini response JSON could not be parsed after sanitization, falling back to rule-based reply',
+          );
+          return this.generateRuleBasedReply(input, {
+            inputTokens,
+            outputTokens,
+            latencyMs,
+            modelId,
+          });
+        }
+      }
+
+      return this.normalizeProviderOutput(parsed, input, {
+        inputTokens,
+        outputTokens,
+        latencyMs,
+        modelId,
+      });
+    } catch (error) {
+      this.logger.warn(
+        'Gemini farm assistant response failed, falling back to rule-based reply',
+        error instanceof Error ? error.stack : String(error),
+      );
       return this.generateRuleBasedReply(input, {
         inputTokens: null,
         outputTokens: null,
