@@ -255,10 +255,16 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
       });
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
-      this.logger.warn(
-        'Bedrock farm assistant response failed, falling back to rule-based reply',
-        error instanceof Error ? error.stack : String(error),
-      );
+      if (this.isBedrockOperationNotAllowed(error)) {
+        this.logger.warn(
+          `Bedrock model access denied for ${modelId}; falling back to rule-based reply`,
+        );
+      } else {
+        this.logger.warn(
+          'Bedrock farm assistant response failed, falling back to rule-based reply',
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
       return this.generateRuleBasedReply(input, {
         inputTokens: null,
         outputTokens: null,
@@ -266,6 +272,14 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
         modelId,
       });
     }
+  }
+
+  private isBedrockOperationNotAllowed(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      error.name === 'ValidationException' &&
+      error.message.includes('Operation not allowed')
+    );
   }
 
   private generateRuleBasedReply(
@@ -289,7 +303,13 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
     let reply =
       '🐔 I’m with you. To guide you properly, I need one quick detail first:\n\n**What type of birds or livestock are we talking about, and how old are they?**\n\nIf you can also share your **flock size**, **location**, and what you’re noticing, I’ll make the advice more specific to your farm. 💪';
 
-    if (lowerMessage.includes('feed') || lowerMessage.includes('starter')) {
+    if (input.imageBuffer) {
+      reply =
+        '🐔 I can see you shared a bird photo, but my detailed image-reading model is not available right now, so I don’t want to pretend I can diagnose the picture perfectly.\n\nFrom your question, treat this as a **sick-bird check** and act quickly:\n\n- ✅ **Isolate this bird** from the flock for observation\n- 💧 Make sure it has **clean water** and easy access to feed\n- 🏠 Check the brooder/pen for **cold drafts, heat stress, wet litter, poor ventilation, or overcrowding**\n- 👀 Look closely for **drooping wings, closed eyes, ruffled feathers, limping, coughing, watery/bloody droppings, or not eating**\n\n🚨 **Call a qualified vet urgently** if the bird is weak, unable to stand, breathing badly, has bloody diarrhoea, or if more birds start showing signs.\n\nCan you tell me the bird’s **age** and what symptoms you’re seeing apart from the photo — is it eating, walking normally, and passing normal droppings?';
+    } else if (
+      lowerMessage.includes('feed') ||
+      lowerMessage.includes('starter')
+    ) {
       reply =
         Number.isFinite(age) && age <= 3
           ? '🌾 **For your 3-week broilers**, you’re right at the starter-to-grower transition point.\n\nHere’s what I’d do:\n\n- ✅ Keep them on good **starter feed** until the end of week 3\n- 🔄 Start moving to **grower feed** from **week 4**\n- ⚠️ Mix the old and new feed gradually over **2–3 days** so their stomachs adjust\n- 💧 Keep clean water available all day — water issues quickly affect growth\n\nYou’re at an important stage, but you’re not late. What feed are they currently eating?'
