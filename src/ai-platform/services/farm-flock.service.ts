@@ -6,6 +6,10 @@ import {
   FarmFlockStatus,
 } from '../entities/farm-flock.entity';
 import { POULTRY_VACCINATION_SCHEDULE } from '../constants/poultry-vaccination-schedule.constant';
+import {
+  BROILER_FEED_SCHEDULE,
+  BroilerFeedStage,
+} from '../constants/broiler-feed-schedule.constant';
 
 export type VaccinationScheduleItem = {
   vaccineName: string;
@@ -18,6 +22,16 @@ export type VaccinationStatus = {
   dueToday: VaccinationScheduleItem[];
   upcoming7Days: VaccinationScheduleItem[];
   missed: VaccinationScheduleItem[];
+};
+
+export type FeedRecommendation = {
+  flock: { birdType: string; quantity: number; startDate: string } | null;
+  stage: BroilerFeedStage | null;
+  gramsPerBirdPerDay: number | null;
+  totalDailyKgForFlock: number | null;
+  nextStage: BroilerFeedStage | null;
+  weeksUntilNextStage: number | null;
+  supplementNote: string | null;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -119,6 +133,56 @@ export class FarmFlockService {
       dueToday,
       upcoming7Days,
       missed,
+    };
+  }
+
+  computeFeedRecommendation(flock: FarmFlockEntity | null): FeedRecommendation {
+    if (!flock) {
+      return {
+        flock: null,
+        stage: null,
+        gramsPerBirdPerDay: null,
+        totalDailyKgForFlock: null,
+        nextStage: null,
+        weeksUntilNextStage: null,
+        supplementNote: null,
+      };
+    }
+
+    const ageInWeeks = Math.floor(
+      (Date.now() - new Date(flock.startDate).getTime()) / DAY_MS / 7,
+    );
+
+    const bandIndex = BROILER_FEED_SCHEDULE.findIndex(
+      (band) =>
+        ageInWeeks >= band.fromWeek &&
+        (band.toWeek === null || ageInWeeks < band.toWeek),
+    );
+    const band =
+      bandIndex >= 0
+        ? BROILER_FEED_SCHEDULE[bandIndex]
+        : BROILER_FEED_SCHEDULE[BROILER_FEED_SCHEDULE.length - 1];
+    const nextBand =
+      bandIndex >= 0 ? BROILER_FEED_SCHEDULE[bandIndex + 1] : null;
+
+    return {
+      flock: {
+        birdType: flock.birdType,
+        quantity: flock.quantity,
+        startDate: flock.startDate,
+      },
+      stage: band.stage,
+      gramsPerBirdPerDay: band.gramsPerBirdPerDay,
+      totalDailyKgForFlock: Number(
+        ((band.gramsPerBirdPerDay * flock.quantity) / 1000).toFixed(1),
+      ),
+      nextStage:
+        nextBand && nextBand.stage !== band.stage ? nextBand.stage : null,
+      weeksUntilNextStage:
+        nextBand && band.toWeek !== null
+          ? Math.max(0, band.toWeek - ageInWeeks)
+          : null,
+      supplementNote: band.supplementNote,
     };
   }
 
