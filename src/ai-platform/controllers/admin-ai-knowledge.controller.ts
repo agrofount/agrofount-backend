@@ -28,7 +28,7 @@ import {
 } from '../dto/knowledge.dto';
 import { AiRagService } from '../services/ai-rag.service';
 
-const PDF_MAX_BYTES = 30 * 1024 * 1024; // 30 MB
+const PDF_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
 @Controller('admin/ai-knowledge')
 @ApiTags('Admin AI Knowledge')
