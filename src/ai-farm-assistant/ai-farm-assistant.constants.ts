@@ -1,6 +1,6 @@
 // Lifetime free-trial credit allowance per user for Ayo AI.
 // Shared between trial enforcement (ask flow) and admin usage reporting.
-export const AYO_CREDIT_LIMIT_PER_USER = 200_000;
+export const AYO_CREDIT_LIMIT_PER_USER = 150_000;
 export const TOKEN_LIMIT_PER_USER = AYO_CREDIT_LIMIT_PER_USER;
 export const AYO_CREDITS_PER_USD = 1_000_000;
 

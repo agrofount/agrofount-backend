@@ -264,6 +264,119 @@ describe('AiProviderService', () => {
     expect(result.outputTokens).toBe(16);
   });
 
+  it('forces order.track via Gemini tool_config when the message mentions an order', async () => {
+    const toolDefinitions = [
+      {
+        name: 'order.track',
+        description: 'Track an order',
+        category: 'order',
+        allowedActors: ['farmer'],
+        readOnly: true,
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ];
+
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    reply: "I don't have that information right now.",
+                    quickReplies: [],
+                    requiresVetAttention: false,
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 5 },
+      }),
+    });
+    global.fetch = fetchMock as any;
+
+    const { service } = setup(
+      { AI_PROVIDER: 'gemini', GEMINI_API_KEY: 'test-gemini-key' },
+      null,
+      { listTools: jest.fn().mockReturnValue(toolDefinitions) },
+    );
+
+    await service.generateFarmAssistantReply({
+      message: 'Can you show me order ORD-12345?',
+      userId: 'user-1',
+      history: [],
+      products: [],
+      requiresVetAttention: false,
+    });
+
+    const [, request] = fetchMock.mock.calls[0];
+    const body = JSON.parse(request.body);
+    expect(body.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: 'ANY',
+        allowedFunctionNames: ['order.track'],
+      },
+    });
+  });
+
+  it('does not force a tool choice for messages with no order/credit intent', async () => {
+    const toolDefinitions = [
+      {
+        name: 'order.track',
+        description: 'Track an order',
+        category: 'order',
+        allowedActors: ['farmer'],
+        readOnly: true,
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ];
+
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    reply: 'General advice.',
+                    quickReplies: [],
+                    requiresVetAttention: false,
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 5 },
+      }),
+    });
+    global.fetch = fetchMock as any;
+
+    const { service } = setup(
+      { AI_PROVIDER: 'gemini', GEMINI_API_KEY: 'test-gemini-key' },
+      null,
+      { listTools: jest.fn().mockReturnValue(toolDefinitions) },
+    );
+
+    await service.generateFarmAssistantReply({
+      message: 'How much water do broilers need daily?',
+      userId: 'user-1',
+      history: [],
+      products: [],
+      requiresVetAttention: false,
+    });
+
+    const [, request] = fetchMock.mock.calls[0];
+    const body = JSON.parse(request.body);
+    expect(body.toolConfig).toBeUndefined();
+  });
+
   it('lets Bedrock call a tool and sums tokens across both rounds', async () => {
     const toolDefinitions = [
       {
@@ -346,6 +459,75 @@ describe('AiProviderService', () => {
     expect(result.reply).toBe('Your credit eligibility looks good.');
     expect(result.inputTokens).toBe(40);
     expect(result.outputTokens).toBe(15);
+  });
+
+  it('forces order.track via Bedrock toolChoice on the first round only', async () => {
+    const toolDefinitions = [
+      {
+        name: 'order.track',
+        description: 'Track an order',
+        category: 'order',
+        allowedActors: ['farmer'],
+        readOnly: true,
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ];
+
+    const sendMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        stopReason: 'tool_use',
+        usage: { inputTokens: 10, outputTokens: 5 },
+        output: {
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                toolUse: { toolUseId: 'tu-1', name: 'order.track', input: {} },
+              },
+            ],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        stopReason: 'end_turn',
+        usage: { inputTokens: 10, outputTokens: 5 },
+        output: {
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                text: JSON.stringify({
+                  reply: "I couldn't find that order.",
+                  quickReplies: [],
+                  requiresVetAttention: false,
+                }),
+              },
+            ],
+          },
+        },
+      });
+
+    const { service } = setup({ AI_PROVIDER: 'bedrock' }, null, {
+      listTools: jest.fn().mockReturnValue(toolDefinitions),
+    });
+    (service as any).bedrockClient = { send: sendMock };
+
+    await service.generateFarmAssistantReply({
+      message: 'Where is my order, has it shipped?',
+      userId: 'user-1',
+      history: [],
+      products: [],
+      requiresVetAttention: false,
+    });
+
+    const firstCallConfig = sendMock.mock.calls[0][0].input.toolConfig;
+    expect(firstCallConfig.toolChoice).toEqual({
+      tool: { name: 'order.track' },
+    });
+
+    const secondCallConfig = sendMock.mock.calls[1][0].input.toolConfig;
+    expect(secondCallConfig.toolChoice).toBeUndefined();
   });
 
   it('still returns a reply when a tool call fails', async () => {

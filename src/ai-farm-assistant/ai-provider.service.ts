@@ -9,7 +9,10 @@ import {
   ConverseCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import { AiSettingsService } from './ai-settings.service';
-import { AiToolRegistryService } from '../ai-platform/services/ai-tool-registry.service';
+import {
+  AiToolDefinition,
+  AiToolRegistryService,
+} from '../ai-platform/services/ai-tool-registry.service';
 
 export type FarmAssistantSuggestedProduct = {
   id: string;
@@ -132,7 +135,7 @@ If a shared photo is too unclear to actually assess (per IMAGE ANALYSIS above), 
 
 PRODUCTS: Only recommend products or categories available on Agrofount when product data is provided in the prompt.
 
-TOOLS: When tools are available to you, use them instead of guessing — call order.track when the farmer asks about an order, delivery, or shipment status; call credit.eligibility when asked about credit or loan eligibility; call commerce.product_search when a specific product or price question needs a real catalog lookup. Never fabricate order status, credit numbers, or prices — if a tool call fails or returns nothing useful, say so plainly instead of inventing an answer. Only call a tool when the farmer's question actually needs it; general advice questions don't need a tool call.
+TOOLS: When tools are available to you, use them instead of guessing — call order.track when the farmer asks about an order, delivery, or shipment status; call credit.eligibility when asked about credit or loan eligibility; call commerce.product_search when a specific product or price question needs a real catalog lookup. This is a hard rule, not a suggestion: you must never state an order status, tracking detail, delivery estimate, credit score, credit limit, or specific price unless you actually called the matching tool in this turn and are reporting its real returned data. If a tool call fails, returns nothing useful, or you were not given that tool, say plainly that you don't have that information right now — a confident-sounding invented answer about someone's order or money is worse than admitting you don't know. Only call a tool when the farmer's question actually needs it; general advice questions don't need a tool call.
 
 Always respond with a valid JSON object with exactly these keys: reply (markdown string), quickReplies (array of up to 5 short action strings), requiresVetAttention (boolean), diagnosisAssessment (object per the STRUCTURED DIAGNOSIS rules above, or null). This applies to your final answer only — if you need to call a tool first, do that before producing this JSON object.`;
 
@@ -141,6 +144,18 @@ const CHAT_TOOL_NAMES = [
   'commerce.product_search',
   'order.track',
   'credit.eligibility',
+];
+
+// A model can decide not to bother calling a tool and just guess instead —
+// for anything touching real order/financial data, guessing is fabrication,
+// not "helpfulness". These patterns force the matching tool call on the
+// first round instead of leaving it to the model's discretion.
+const FORCE_TOOL_PATTERNS: [string, RegExp][] = [
+  [
+    'order.track',
+    /\b(order|delivery|deliver(ed|y)?|shipment|shipped|dispatch(ed)?|track(ing)?)\b/i,
+  ],
+  ['credit.eligibility', /\b(credit|loan|eligib\w*|repay\w*|facility)\b/i],
 ];
 
 @Injectable()
@@ -158,6 +173,19 @@ export class AiProviderService {
     return this.aiToolRegistryService
       .listTools('farmer')
       .filter((tool) => CHAT_TOOL_NAMES.includes(tool.name));
+  }
+
+  private getForcedToolName(
+    message: string,
+    tools: AiToolDefinition[],
+  ): string | null {
+    const availableNames = new Set(tools.map((tool) => tool.name));
+    for (const [toolName, pattern] of FORCE_TOOL_PATTERNS) {
+      if (availableNames.has(toolName) && pattern.test(message)) {
+        return toolName;
+      }
+    }
+    return null;
   }
 
   private async runTool(
@@ -292,17 +320,16 @@ export class AiProviderService {
 
     const userContent = this.buildUserContent(input);
     const tools = this.getChatTools();
-    const toolConfig = tools.length
-      ? ({
-          tools: tools.map((tool) => ({
-            toolSpec: {
-              name: tool.name,
-              description: tool.description,
-              inputSchema: { json: tool.inputSchema },
-            },
-          })),
-        } as any)
-      : undefined;
+    const forcedToolName = this.getForcedToolName(input.message, tools);
+    const toolSpecs = tools.length
+      ? tools.map((tool) => ({
+          toolSpec: {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: { json: tool.inputSchema },
+          },
+        }))
+      : null;
 
     const messages: any[] = [
       {
@@ -327,6 +354,15 @@ export class AiProviderService {
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        const toolConfig = toolSpecs
+          ? ({
+              tools: toolSpecs,
+              ...(round === 0 && forcedToolName
+                ? { toolChoice: { tool: { name: forcedToolName } } }
+                : {}),
+            } as any)
+          : undefined;
+
         const command = new ConverseCommand({
           modelId,
           system: [{ text: FARM_ASSISTANT_SYSTEM_INSTRUCTION }],
@@ -461,6 +497,7 @@ export class AiProviderService {
     parts.push({ text: userContent });
 
     const tools = this.getChatTools();
+    const forcedToolName = this.getForcedToolName(input.message, tools);
     const geminiTools = tools.length
       ? [
           {
@@ -479,6 +516,16 @@ export class AiProviderService {
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        const toolConfig =
+          geminiTools && round === 0 && forcedToolName
+            ? {
+                functionCallingConfig: {
+                  mode: 'ANY',
+                  allowedFunctionNames: [forcedToolName],
+                },
+              }
+            : undefined;
+
         const response = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
             modelId,
@@ -492,6 +539,7 @@ export class AiProviderService {
               },
               contents,
               tools: geminiTools,
+              toolConfig,
               generationConfig: {
                 temperature: 0.65,
                 maxOutputTokens: 1536,
