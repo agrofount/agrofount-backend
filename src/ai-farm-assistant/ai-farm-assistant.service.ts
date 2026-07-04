@@ -252,12 +252,8 @@ export class AiFarmAssistantService {
           ayoCredits,
           creditRate: {
             creditsPerUsd: AYO_CREDITS_PER_USD,
-            costPer1MInputTokensUSD: Number(
-              settings.costPer1MInputTokensUSD,
-            ),
-            costPer1MOutputTokensUSD: Number(
-              settings.costPer1MOutputTokensUSD,
-            ),
+            costPer1MInputTokensUSD: Number(settings.costPer1MInputTokensUSD),
+            costPer1MOutputTokensUSD: Number(settings.costPer1MOutputTokensUSD),
           },
           latencyMs: aiReply.latencyMs,
           modelId: aiReply.modelId,
@@ -442,7 +438,8 @@ export class AiFarmAssistantService {
     if (profile.productionSystem) {
       lines.push(`Production system: ${profile.productionSystem}`);
     }
-    if (profile.feedSource) lines.push(`Usual feed source: ${profile.feedSource}`);
+    if (profile.feedSource)
+      lines.push(`Usual feed source: ${profile.feedSource}`);
 
     for (const breed of profile.breeds || []) {
       const details = [
@@ -452,7 +449,9 @@ export class AiFarmAssistantService {
       ]
         .filter(Boolean)
         .join(', ');
-      lines.push(`Breed on farm: ${breed.breedName}${details ? ` (${details})` : ''}`);
+      lines.push(
+        `Breed on farm: ${breed.breedName}${details ? ` (${details})` : ''}`,
+      );
     }
 
     return lines.length > 0 ? lines.join('\n') : null;
@@ -481,7 +480,9 @@ export class AiFarmAssistantService {
         lines.push(`Overdue/missed: ${format(result.missed)}`);
       }
       if (result.upcoming7Days?.length) {
-        lines.push(`Coming up in the next 7 days: ${format(result.upcoming7Days)}`);
+        lines.push(
+          `Coming up in the next 7 days: ${format(result.upcoming7Days)}`,
+        );
       }
 
       return lines.length > 0 ? lines.join('\n') : null;

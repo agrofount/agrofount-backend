@@ -33,7 +33,9 @@ export class FarmFlock1782430000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP INDEX IF EXISTS "IDX_farm_flocks_user_status"`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "IDX_farm_flocks_user_status"`,
+    );
     await queryRunner.query(`DROP TABLE IF EXISTS "farm_flocks"`);
     await queryRunner.query(
       `DROP TYPE IF EXISTS "public"."farm_flocks_status_enum"`,

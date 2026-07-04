@@ -27,7 +27,10 @@ describe('AiProviderService', () => {
         : jest.fn().mockRejectedValue(new Error('settings unavailable')),
     };
 
-    return new AiProviderService(configService as any, aiSettingsService as any);
+    return new AiProviderService(
+      configService as any,
+      aiSettingsService as any,
+    );
   }
 
   it('returns a useful image fallback when provider vision is unavailable', async () => {

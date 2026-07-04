@@ -520,9 +520,7 @@ export class NotificationTriggersJob {
   @Cron('0 7 * * *')
   async sendVaccinationDueReminders() {
     if (
-      !(await this.cronMonitor.isEnabled(
-        CronJobName.VACCINATION_DUE_REMINDERS,
-      ))
+      !(await this.cronMonitor.isEnabled(CronJobName.VACCINATION_DUE_REMINDERS))
     )
       return;
     const run = await this.cronMonitor.startRun(
