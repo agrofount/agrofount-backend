@@ -27,6 +27,7 @@ import { AiRagService } from '../ai-platform/services/ai-rag.service';
 import { AiToolRegistryService } from '../ai-platform/services/ai-tool-registry.service';
 import {
   FarmFlockService,
+  FeedRecommendation,
   VaccinationStatus,
 } from '../ai-platform/services/farm-flock.service';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
@@ -207,9 +208,12 @@ export class AiFarmAssistantService {
     }
 
     const vaccinationStatus = await this.getVaccinationStatusSummary(userId);
+    const feedAdvice = await this.getFeedAdviceSummary(userId);
 
     const aiReply = await this.aiProviderService.generateFarmAssistantReply({
       message,
+      userId,
+      conversationId: conversation.id,
       farmContext: conversation.farmContext,
       ragContext,
       documentContext,
@@ -217,6 +221,7 @@ export class AiFarmAssistantService {
       userLocation,
       farmerProfile: farmerProfileSummary,
       vaccinationStatus,
+      feedAdvice,
       history: history.map((item) => ({
         role:
           item.role === FarmAssistantMessageRole.Assistant
@@ -247,6 +252,7 @@ export class AiFarmAssistantService {
           suggestedProducts,
           quickReplies: aiReply.quickReplies,
           requiresVetAttention: aiReply.requiresVetAttention,
+          diagnosisAssessment: aiReply.diagnosisAssessment ?? null,
           inputTokens: aiReply.inputTokens,
           outputTokens: aiReply.outputTokens,
           ayoCredits,
@@ -276,6 +282,7 @@ export class AiFarmAssistantService {
       suggestedProducts,
       quickReplies: aiReply.quickReplies,
       requiresVetAttention: aiReply.requiresVetAttention,
+      diagnosisAssessment: aiReply.diagnosisAssessment ?? null,
     };
   }
 
@@ -486,6 +493,32 @@ export class AiFarmAssistantService {
       }
 
       return lines.length > 0 ? lines.join('\n') : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async getFeedAdviceSummary(userId: string): Promise<string | null> {
+    try {
+      const result = (await this.aiToolRegistryService.executeTool(
+        'feed.advisor',
+        {},
+        { actorType: 'farmer', userId },
+      )) as FeedRecommendation;
+
+      if (!result?.flock || !result.stage) return null;
+
+      const lines: string[] = [
+        `Current feed stage: ${result.stage} (${result.gramsPerBirdPerDay}g/bird/day, ~${result.totalDailyKgForFlock}kg/day for the whole flock)`,
+      ];
+      if (result.supplementNote) lines.push(result.supplementNote);
+      if (result.nextStage && result.weeksUntilNextStage != null) {
+        lines.push(
+          `Switch to ${result.nextStage} in about ${result.weeksUntilNextStage} week(s)`,
+        );
+      }
+
+      return lines.join('\n');
     } catch {
       return null;
     }

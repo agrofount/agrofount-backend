@@ -253,6 +253,83 @@ describe('AiFarmAssistantService', () => {
     );
   });
 
+  it('threads feed advice from the feed.advisor tool to the AI provider', async () => {
+    const { service, aiProviderService } = setup({
+      aiToolRegistryService: {
+        executeTool: jest.fn().mockImplementation((toolName: string) => {
+          if (toolName === 'feed.advisor') {
+            return Promise.resolve({
+              success: true,
+              flock: {
+                birdType: 'Broiler',
+                quantity: 500,
+                startDate: '2026-06-13',
+              },
+              stage: 'Grower',
+              gramsPerBirdPerDay: 90,
+              totalDailyKgForFlock: 45,
+              nextStage: null,
+              weeksUntilNextStage: null,
+              supplementNote: 'Transition gradually over 2-3 days.',
+            });
+          }
+          return Promise.resolve({
+            success: true,
+            flock: null,
+            dueToday: [],
+            upcoming7Days: [],
+            missed: [],
+          });
+        }),
+      },
+    });
+
+    await service.ask(
+      { id: userId },
+      { message: 'How much feed do my birds need?' },
+    );
+
+    expect(aiProviderService.generateFarmAssistantReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feedAdvice: expect.stringContaining('Grower'),
+      }),
+    );
+  });
+
+  it('persists and returns the diagnosisAssessment from the AI provider', async () => {
+    const diagnosisAssessment = {
+      possibleConditions: [{ name: 'Newcastle Disease', likelihood: 'high' }],
+      urgencyTier: 'emergency',
+      immediateActions: ['Isolate affected birds'],
+      isolationAdvice: 'Separate weak birds from the flock.',
+      vetReferralRecommended: true,
+    };
+    const { service, messages } = setup({
+      aiProviderService: {
+        generateFarmAssistantReply: jest.fn().mockResolvedValue({
+          reply: 'This needs urgent vet attention.',
+          quickReplies: [],
+          requiresVetAttention: true,
+          diagnosisAssessment,
+          inputTokens: 100,
+          outputTokens: 50,
+          latencyMs: 200,
+          modelId: 'amazon.nova-lite-v1:0',
+        }),
+      },
+    });
+
+    const result = await service.ask(
+      { id: userId },
+      { message: 'Many birds died suddenly with greenish diarrhoea' },
+    );
+
+    expect(result.diagnosisAssessment).toEqual(diagnosisAssessment);
+    expect(messages[messages.length - 1].metadata).toEqual(
+      expect.objectContaining({ diagnosisAssessment }),
+    );
+  });
+
   it("loads the farmer's persistent profile and passes it to the AI provider", async () => {
     const { service, aiProviderService, farmerProfileRepository } = setup({
       farmerProfileRepository: {

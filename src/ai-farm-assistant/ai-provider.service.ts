@@ -9,6 +9,7 @@ import {
   ConverseCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import { AiSettingsService } from './ai-settings.service';
+import { AiToolRegistryService } from '../ai-platform/services/ai-tool-registry.service';
 
 export type FarmAssistantSuggestedProduct = {
   id: string;
@@ -25,6 +26,8 @@ export type FarmAssistantProviderMessage = {
 
 export type FarmAssistantProviderInput = {
   message: string;
+  userId: string;
+  conversationId?: string | null;
   farmContext?: Record<string, unknown> | null;
   ragContext?: string | null;
   documentContext?: string | null;
@@ -32,6 +35,7 @@ export type FarmAssistantProviderInput = {
   userLocation?: string | null;
   farmerProfile?: string | null;
   vaccinationStatus?: string | null;
+  feedAdvice?: string | null;
   history: FarmAssistantProviderMessage[];
   products: FarmAssistantSuggestedProduct[];
   requiresVetAttention: boolean;
@@ -39,10 +43,19 @@ export type FarmAssistantProviderInput = {
   imageMimeType?: string;
 };
 
+export type DiagnosisAssessment = {
+  possibleConditions: { name: string; likelihood: 'high' | 'medium' | 'low' }[];
+  urgencyTier: 'routine' | 'monitor' | 'vet_soon' | 'emergency';
+  immediateActions: string[];
+  isolationAdvice: string | null;
+  vetReferralRecommended: boolean;
+};
+
 export type FarmAssistantProviderOutput = {
   reply: string;
   quickReplies: string[];
   requiresVetAttention: boolean;
+  diagnosisAssessment: DiagnosisAssessment | null;
   inputTokens: number | null;
   outputTokens: number | null;
   latencyMs: number | null;
@@ -52,8 +65,10 @@ export type FarmAssistantProviderOutput = {
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
     content?: {
+      role?: string;
       parts?: Array<{
         text?: string;
+        functionCall?: { name: string; args?: Record<string, unknown> };
       }>;
     };
   }>;
@@ -76,6 +91,7 @@ PERSONALITY & PERSONALIZATION:
 - Be interactive: when important details are missing, ask 1 clear follow-up question at the end instead of overwhelming the farmer with many questions
 - Be proactive, not just reactive: when you already have enough detail (from the profile, farm context, or conversation) to answer fully, add one relevant observation the farmer didn't ask about but would want to know — e.g. an upcoming vaccination window, a feed-transition point, or a market-weight milestone for their bird's age. Skip this if the situation is an emergency or the farmer just wants a quick fact
 - When a "Vaccination status" section is provided, treat it as ground truth for this farmer's actual flock (not a generic schedule) — answer "what's due" or "what did I miss" directly from it, and lead with anything due now or overdue as your proactive observation
+- When a "Feed recommendation" section is provided, treat it as ground truth for this farmer's actual flock — answer feed stage/quantity questions precisely from it, and mention an upcoming feed-stage switch as your proactive observation when relevant
 - Keep responses concise unless the farmer asks for a detailed plan
 - Avoid stiff phrases like "Dear user", "as an AI", "it is recommended that", or long textbook-style paragraphs
 - Use light encouragement naturally, but do not overdo hype
@@ -101,12 +117,31 @@ IMAGE ANALYSIS: When the farmer shares a photo, carefully examine it before resp
 - Eye condition (cloudiness, discharge, swelling)
 - Housing and environment (overcrowding, wet litter, poor ventilation, dirty feeders/drinkers)
 Structure your image response as: 1) what you observe, 2) what it may indicate, 3) immediate action steps. Always remind the farmer that a definitive diagnosis requires a qualified vet.
+Before assessing, check whether the photo actually lets you do so: if it's too blurry, too dark, too far away, cropped, or simply doesn't clearly show the animal or the symptom being asked about, say so plainly and ask for a clearer or closer photo instead of guessing. Only proceed with an assessment when you can genuinely make out the relevant details — a confident-sounding guess from a photo you can't really read is worse than admitting you can't tell.
 
 SAFETY: When symptoms suggest high mortality, severe weakness, bleeding, paralysis, twisted neck, greenish diarrhoea, or sudden unexplained deaths — add a clear 🚨 emergency block advising immediate veterinary contact. Never claim to provide a final veterinary diagnosis.
 
+STRUCTURED DIAGNOSIS: When the farmer describes symptoms, shares a photo of a sick or injured animal, or shares a vet document raising a health concern, also fill in the diagnosisAssessment field of your JSON response:
+- possibleConditions: 1-5 plausible conditions ranked most-likely-first, each with a qualitative likelihood of "high", "medium", or "low". Never state a numeric confidence percentage — you are not a diagnostic lab test, and a made-up number would be more misleading than an honest qualitative estimate.
+- urgencyTier: exactly one of "emergency" (matches the SAFETY criteria above — high mortality, severe weakness, bleeding, paralysis, twisted neck, greenish diarrhoea, sudden unexplained deaths), "vet_soon" (concerning but not immediately life-threatening), "monitor" (mild or ambiguous signs), or "routine" (general wellness, no real concern).
+- immediateActions: concrete steps the farmer should take right now.
+- isolationAdvice: whether and how to separate affected animals, or null if not relevant.
+- vetReferralRecommended: true whenever urgencyTier is "vet_soon" or "emergency", or whenever you are not confident enough to rule out a serious cause.
+For general questions with no health concern (feed, vaccination schedule, orders, credit, etc.), leave diagnosisAssessment as null — do not force a diagnosis where none was asked for.
+If a shared photo is too unclear to actually assess (per IMAGE ANALYSIS above), do not populate possibleConditions with guesses from a photo you couldn't read — leave diagnosisAssessment null and ask for a better photo in your reply instead. It's fine to still fill in diagnosisAssessment from symptoms the farmer described in text even when the photo itself was unusable.
+
 PRODUCTS: Only recommend products or categories available on Agrofount when product data is provided in the prompt.
 
-Always respond with a valid JSON object with exactly these keys: reply (markdown string), quickReplies (array of up to 5 short action strings), requiresVetAttention (boolean).`;
+TOOLS: When tools are available to you, use them instead of guessing — call order.track when the farmer asks about an order, delivery, or shipment status; call credit.eligibility when asked about credit or loan eligibility; call commerce.product_search when a specific product or price question needs a real catalog lookup. Never fabricate order status, credit numbers, or prices — if a tool call fails or returns nothing useful, say so plainly instead of inventing an answer. Only call a tool when the farmer's question actually needs it; general advice questions don't need a tool call.
+
+Always respond with a valid JSON object with exactly these keys: reply (markdown string), quickReplies (array of up to 5 short action strings), requiresVetAttention (boolean), diagnosisAssessment (object per the STRUCTURED DIAGNOSIS rules above, or null). This applies to your final answer only — if you need to call a tool first, do that before producing this JSON object.`;
+
+const MAX_TOOL_ROUNDS = 3;
+const CHAT_TOOL_NAMES = [
+  'commerce.product_search',
+  'order.track',
+  'credit.eligibility',
+];
 
 @Injectable()
 export class AiProviderService {
@@ -116,7 +151,67 @@ export class AiProviderService {
   constructor(
     private readonly configService: ConfigService,
     private readonly aiSettingsService: AiSettingsService,
+    private readonly aiToolRegistryService: AiToolRegistryService,
   ) {}
+
+  private getChatTools() {
+    return this.aiToolRegistryService
+      .listTools('farmer')
+      .filter((tool) => CHAT_TOOL_NAMES.includes(tool.name));
+  }
+
+  private async runTool(
+    name: string,
+    toolInput: Record<string, unknown>,
+    input: FarmAssistantProviderInput,
+  ): Promise<Record<string, unknown>> {
+    try {
+      return await this.aiToolRegistryService.executeTool(name, toolInput, {
+        actorType: 'farmer',
+        userId: input.userId,
+        conversationId: input.conversationId,
+      });
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private parseProviderReply(
+    rawContent: string,
+    input: FarmAssistantProviderInput,
+    usage: {
+      inputTokens: number | null;
+      outputTokens: number | null;
+      latencyMs: number | null;
+      modelId: string | null;
+    },
+  ): FarmAssistantProviderOutput {
+    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      this.logger.warn(
+        'AI response did not contain valid JSON, falling back to rule-based reply',
+      );
+      return this.generateRuleBasedReply(input, usage);
+    }
+
+    let parsed: Record<string, any>;
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch {
+      try {
+        parsed = JSON.parse(this.sanitizeJsonString(jsonMatch[0]));
+      } catch {
+        this.logger.warn(
+          'AI response JSON could not be parsed after sanitization, falling back to rule-based reply',
+        );
+        return this.generateRuleBasedReply(input, usage);
+      }
+    }
+    return this.normalizeProviderOutput(parsed, input, usage);
+  }
 
   async generateFarmAssistantReply(
     input: FarmAssistantProviderInput,
@@ -196,78 +291,116 @@ export class AiProviderService {
       mimeToFormat[input.imageMimeType ?? ''] ?? 'jpeg';
 
     const userContent = this.buildUserContent(input);
+    const tools = this.getChatTools();
+    const toolConfig = tools.length
+      ? ({
+          tools: tools.map((tool) => ({
+            toolSpec: {
+              name: tool.name,
+              description: tool.description,
+              inputSchema: { json: tool.inputSchema },
+            },
+          })),
+        } as any)
+      : undefined;
 
-    const command = new ConverseCommand({
-      modelId,
-      system: [{ text: FARM_ASSISTANT_SYSTEM_INSTRUCTION }],
-      messages: [
-        {
-          role: 'user',
-          content: input.imageBuffer
-            ? [
-                {
-                  image: {
-                    format: imageFormat,
-                    source: { bytes: new Uint8Array(input.imageBuffer) },
-                  },
+    const messages: any[] = [
+      {
+        role: 'user',
+        content: input.imageBuffer
+          ? [
+              {
+                image: {
+                  format: imageFormat,
+                  source: { bytes: new Uint8Array(input.imageBuffer) },
                 },
-                { text: userContent },
-              ]
-            : [{ text: userContent }],
-        },
-      ],
-      inferenceConfig: { temperature: 0.65, maxTokens: 1536 },
-    });
+              },
+              { text: userContent },
+            ]
+          : [{ text: userContent }],
+      },
+    ];
 
     const startMs = Date.now();
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
     try {
-      const response = await this.getBedrockClient().send(command);
-      const latencyMs = Date.now() - startMs;
-      const inputTokens = response.usage?.inputTokens ?? null;
-      const outputTokens = response.usage?.outputTokens ?? null;
-      const rawContent = response.output?.message?.content?.[0]?.text;
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        const command = new ConverseCommand({
+          modelId,
+          system: [{ text: FARM_ASSISTANT_SYSTEM_INSTRUCTION }],
+          messages,
+          toolConfig,
+          inferenceConfig: { temperature: 0.65, maxTokens: 1536 },
+        });
 
-      if (!rawContent) {
-        throw new ServiceUnavailableException(
-          'AI assistant returned an empty response',
-        );
-      }
+        const response = await this.getBedrockClient().send(command);
+        totalInputTokens += response.usage?.inputTokens ?? 0;
+        totalOutputTokens += response.usage?.outputTokens ?? 0;
+        const latencyMs = Date.now() - startMs;
 
-      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        this.logger.warn(
-          'Bedrock response did not contain valid JSON, falling back to rule-based reply',
+        const assistantMessage = response.output?.message;
+        if (!assistantMessage) {
+          throw new ServiceUnavailableException(
+            'AI assistant returned an empty response',
+          );
+        }
+        messages.push(assistantMessage);
+
+        const toolUseBlocks = (assistantMessage.content || []).filter(
+          (block: any) => block.toolUse,
         );
-        return this.generateRuleBasedReply(input, {
-          inputTokens,
-          outputTokens,
+
+        if (
+          response.stopReason === 'tool_use' &&
+          toolUseBlocks.length > 0 &&
+          round < MAX_TOOL_ROUNDS
+        ) {
+          const resultContent = await Promise.all(
+            toolUseBlocks.map(async (block: any) => {
+              const result = await this.runTool(
+                block.toolUse.name,
+                (block.toolUse.input as Record<string, unknown>) || {},
+                input,
+              );
+              return {
+                toolResult: {
+                  toolUseId: block.toolUse.toolUseId,
+                  content: [{ json: result }],
+                },
+              };
+            }),
+          );
+          messages.push({ role: 'user', content: resultContent });
+          continue;
+        }
+
+        const rawContent = (assistantMessage.content || []).find(
+          (block: any) => block.text,
+        )?.text;
+
+        if (!rawContent) {
+          throw new ServiceUnavailableException(
+            'AI assistant returned an empty response',
+          );
+        }
+
+        return this.parseProviderReply(rawContent, input, {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
           latencyMs,
           modelId,
         });
       }
 
-      let parsed: Record<string, any>;
-      try {
-        parsed = JSON.parse(jsonMatch[0]);
-      } catch {
-        try {
-          parsed = JSON.parse(this.sanitizeJsonString(jsonMatch[0]));
-        } catch {
-          this.logger.warn(
-            'Bedrock response JSON could not be parsed after sanitization, falling back to rule-based reply',
-          );
-          return this.generateRuleBasedReply(input, {
-            inputTokens,
-            outputTokens,
-            latencyMs,
-            modelId,
-          });
-        }
-      }
-      return this.normalizeProviderOutput(parsed, input, {
-        inputTokens,
-        outputTokens,
-        latencyMs,
+      this.logger.warn(
+        'Bedrock tool-calling exceeded max rounds, falling back to rule-based reply',
+      );
+      return this.generateRuleBasedReply(input, {
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        latencyMs: Date.now() - startMs,
         modelId,
       });
     } catch (error) {
@@ -283,8 +416,8 @@ export class AiProviderService {
         );
       }
       return this.generateRuleBasedReply(input, {
-        inputTokens: null,
-        outputTokens: null,
+        inputTokens: totalInputTokens || null,
+        outputTokens: totalOutputTokens || null,
         latencyMs: Date.now() - startMs,
         modelId,
       });
@@ -327,106 +460,133 @@ export class AiProviderService {
 
     parts.push({ text: userContent });
 
+    const tools = this.getChatTools();
+    const geminiTools = tools.length
+      ? [
+          {
+            functionDeclarations: tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.inputSchema,
+            })),
+          },
+        ]
+      : undefined;
+
+    const contents: any[] = [{ role: 'user', parts }];
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-          modelId,
-        )}:generateContent?key=${encodeURIComponent(apiKey)}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{ text: FARM_ASSISTANT_SYSTEM_INSTRUCTION }],
-            },
-            contents: [{ role: 'user', parts }],
-            generationConfig: {
-              temperature: 0.65,
-              maxOutputTokens: 1536,
-              responseMimeType: 'application/json',
-            },
-          }),
-        },
-      );
-      const latencyMs = Date.now() - startMs;
-      const responseBody = (await response.json().catch(() => null)) as
-        | GeminiGenerateContentResponse
-        | { error?: { message?: string } }
-        | null;
-
-      if (!response.ok) {
-        const errorMessage =
-          responseBody && 'error' in responseBody && responseBody.error?.message
-            ? responseBody.error.message
-            : `HTTP ${response.status}`;
-        this.logger.warn(
-          `Gemini farm assistant response failed (${errorMessage}); falling back to rule-based reply`,
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+            modelId,
+          )}:generateContent?key=${encodeURIComponent(apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              systemInstruction: {
+                parts: [{ text: FARM_ASSISTANT_SYSTEM_INSTRUCTION }],
+              },
+              contents,
+              tools: geminiTools,
+              generationConfig: {
+                temperature: 0.65,
+                maxOutputTokens: 1536,
+                responseMimeType: geminiTools ? undefined : 'application/json',
+              },
+            }),
+          },
         );
-        return this.generateRuleBasedReply(input, {
-          inputTokens: null,
-          outputTokens: null,
-          latencyMs,
-          modelId,
-        });
-      }
+        const latencyMs = Date.now() - startMs;
+        const responseBody = (await response.json().catch(() => null)) as
+          | GeminiGenerateContentResponse
+          | { error?: { message?: string } }
+          | null;
 
-      const geminiBody = responseBody as GeminiGenerateContentResponse | null;
-      const rawContent = geminiBody?.candidates?.[0]?.content?.parts
-        ?.map((part) => part.text)
-        .filter(Boolean)
-        .join('');
-      const inputTokens = geminiBody?.usageMetadata?.promptTokenCount ?? null;
-      const outputTokens =
-        geminiBody?.usageMetadata?.candidatesTokenCount ?? null;
-
-      if (!rawContent) {
-        this.logger.warn(
-          'Gemini response did not contain text, falling back to rule-based reply',
-        );
-        return this.generateRuleBasedReply(input, {
-          inputTokens,
-          outputTokens,
-          latencyMs,
-          modelId,
-        });
-      }
-
-      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        this.logger.warn(
-          'Gemini response did not contain valid JSON, falling back to rule-based reply',
-        );
-        return this.generateRuleBasedReply(input, {
-          inputTokens,
-          outputTokens,
-          latencyMs,
-          modelId,
-        });
-      }
-
-      let parsed: Record<string, any>;
-      try {
-        parsed = JSON.parse(jsonMatch[0]);
-      } catch {
-        try {
-          parsed = JSON.parse(this.sanitizeJsonString(jsonMatch[0]));
-        } catch {
+        if (!response.ok) {
+          const errorMessage =
+            responseBody &&
+            'error' in responseBody &&
+            responseBody.error?.message
+              ? responseBody.error.message
+              : `HTTP ${response.status}`;
           this.logger.warn(
-            'Gemini response JSON could not be parsed after sanitization, falling back to rule-based reply',
+            `Gemini farm assistant response failed (${errorMessage}); falling back to rule-based reply`,
           );
           return this.generateRuleBasedReply(input, {
-            inputTokens,
-            outputTokens,
+            inputTokens: totalInputTokens || null,
+            outputTokens: totalOutputTokens || null,
             latencyMs,
             modelId,
           });
         }
+
+        const geminiBody = responseBody as GeminiGenerateContentResponse | null;
+        totalInputTokens += geminiBody?.usageMetadata?.promptTokenCount ?? 0;
+        totalOutputTokens +=
+          geminiBody?.usageMetadata?.candidatesTokenCount ?? 0;
+
+        const candidateContent = geminiBody?.candidates?.[0]?.content;
+        const functionCallParts = (candidateContent?.parts || []).filter(
+          (part) => part.functionCall,
+        );
+
+        if (functionCallParts.length > 0 && round < MAX_TOOL_ROUNDS) {
+          contents.push({ role: 'model', parts: candidateContent?.parts });
+          const responseParts = await Promise.all(
+            functionCallParts.map(async (part) => {
+              const result = await this.runTool(
+                part.functionCall!.name,
+                part.functionCall!.args || {},
+                input,
+              );
+              return {
+                functionResponse: {
+                  name: part.functionCall!.name,
+                  response: result,
+                },
+              };
+            }),
+          );
+          contents.push({ role: 'function', parts: responseParts });
+          continue;
+        }
+
+        const rawContent = candidateContent?.parts
+          ?.map((part) => part.text)
+          .filter(Boolean)
+          .join('');
+
+        if (!rawContent) {
+          this.logger.warn(
+            'Gemini response did not contain text, falling back to rule-based reply',
+          );
+          return this.generateRuleBasedReply(input, {
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            latencyMs,
+            modelId,
+          });
+        }
+
+        return this.parseProviderReply(rawContent, input, {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          latencyMs,
+          modelId,
+        });
       }
 
-      return this.normalizeProviderOutput(parsed, input, {
-        inputTokens,
-        outputTokens,
-        latencyMs,
+      this.logger.warn(
+        'Gemini tool-calling exceeded max rounds, falling back to rule-based reply',
+      );
+      return this.generateRuleBasedReply(input, {
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        latencyMs: Date.now() - startMs,
         modelId,
       });
     } catch (error) {
@@ -435,8 +595,8 @@ export class AiProviderService {
         error instanceof Error ? error.stack : String(error),
       );
       return this.generateRuleBasedReply(input, {
-        inputTokens: null,
-        outputTokens: null,
+        inputTokens: totalInputTokens || null,
+        outputTokens: totalOutputTokens || null,
         latencyMs: Date.now() - startMs,
         modelId,
       });
@@ -469,6 +629,10 @@ export class AiProviderService {
     }${
       input.vaccinationStatus
         ? `Vaccination status for this farmer's active flock (computed fact, not a guess — use this to answer precisely and as your proactive observation when relevant):\n${input.vaccinationStatus}\n\n`
+        : ''
+    }${
+      input.feedAdvice
+        ? `Feed recommendation for this farmer's active flock (computed fact, not a guess — use this to answer feed stage/quantity questions precisely and as your proactive observation when relevant):\n${input.feedAdvice}\n\n`
         : ''
     }Farm context for this conversation: ${JSON.stringify(
       input.farmContext || {},
@@ -530,10 +694,29 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
 
     let reply =
       '🐔 I’m with you. To guide you properly, I need one quick detail first:\n\n**What type of birds or livestock are we talking about, and how old are they?**\n\nIf you can also share your **flock size**, **location**, and what you’re noticing, I’ll make the advice more specific to your farm. 💪';
+    let diagnosisAssessment: DiagnosisAssessment | null = null;
 
     if (input.imageBuffer) {
       reply =
         '🐔 I can see you shared a bird photo, but my detailed image-reading model is not available right now, so I don’t want to pretend I can diagnose the picture perfectly.\n\nFrom your question, treat this as a **sick-bird check** and act quickly:\n\n- ✅ **Isolate this bird** from the flock for observation\n- 💧 Make sure it has **clean water** and easy access to feed\n- 🏠 Check the brooder/pen for **cold drafts, heat stress, wet litter, poor ventilation, or overcrowding**\n- 👀 Look closely for **drooping wings, closed eyes, ruffled feathers, limping, coughing, watery/bloody droppings, or not eating**\n\n🚨 **Call a qualified vet urgently** if the bird is weak, unable to stand, breathing badly, has bloody diarrhoea, or if more birds start showing signs.\n\nCan you tell me the bird’s **age** and what symptoms you’re seeing apart from the photo — is it eating, walking normally, and passing normal droppings?';
+      diagnosisAssessment = {
+        possibleConditions: [
+          { name: 'Respiratory or digestive illness', likelihood: 'medium' },
+          {
+            name: 'Environmental stress (heat, cold, overcrowding)',
+            likelihood: 'medium',
+          },
+        ],
+        urgencyTier: input.requiresVetAttention ? 'emergency' : 'vet_soon',
+        immediateActions: [
+          'Isolate this bird from the flock for observation',
+          'Ensure clean water and easy access to feed',
+          'Check the brooder/pen for cold drafts, heat stress, wet litter, poor ventilation, or overcrowding',
+        ],
+        isolationAdvice:
+          'Isolate this bird from the flock for observation until symptoms are clearer.',
+        vetReferralRecommended: true,
+      };
     } else if (
       lowerMessage.includes('feed') ||
       lowerMessage.includes('starter')
@@ -556,6 +739,23 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
     ) {
       reply =
         '⚠️ I’m sorry you’re dealing with weak birds or deaths — that can move fast, so let’s act carefully.\n\nPossible causes include:\n\n- 🦠 **Disease** like Newcastle, Gumboro, or Coccidiosis\n- 🌡️ **Heat/cold stress**, especially during brooding\n- 💧 **Water problems** — blocked drinkers, dirty water, or dehydration\n- 🌾 **Feed issues** — mouldy feed or wrong feed stage\n- 🏠 **Overcrowding or poor ventilation**\n\nDo these now:\n1. **Separate** very weak birds from the flock\n2. Check **water, temperature, and airflow** immediately\n3. Count how many are sick or dead and note the symptoms\n4. Call a **qualified vet** if deaths continue or more birds weaken\n\nWhat symptoms are you seeing exactly — diarrhoea, twisted neck, coughing, or just weakness?';
+      diagnosisAssessment = {
+        possibleConditions: [
+          { name: 'Newcastle Disease', likelihood: 'medium' },
+          { name: 'Gumboro (IBD)', likelihood: 'medium' },
+          { name: 'Coccidiosis', likelihood: 'medium' },
+          { name: 'Heat or cold stress', likelihood: 'low' },
+        ],
+        urgencyTier: input.requiresVetAttention ? 'emergency' : 'vet_soon',
+        immediateActions: [
+          'Separate very weak birds from the flock',
+          'Check water, temperature, and airflow immediately',
+          'Count how many are sick or dead and note the symptoms',
+        ],
+        isolationAdvice:
+          'Isolate weak or symptomatic birds from the rest of the flock immediately.',
+        vetReferralRecommended: true,
+      };
     } else if (
       lowerMessage.includes('dropping') ||
       lowerMessage.includes('droppings') ||
@@ -580,6 +780,7 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
         birdType,
       ),
       requiresVetAttention: input.requiresVetAttention,
+      diagnosisAssessment,
       inputTokens: usage?.inputTokens ?? null,
       outputTokens: usage?.outputTokens ?? null,
       latencyMs: usage?.latencyMs ?? null,
@@ -618,10 +819,62 @@ Respond ONLY with a JSON object with keys: reply, quickReplies, requiresVetAtten
           : this.defaultQuickReplies(input.requiresVetAttention, birdType),
       requiresVetAttention:
         Boolean(value.requiresVetAttention) || input.requiresVetAttention,
+      diagnosisAssessment: this.normalizeDiagnosisAssessment(
+        value.diagnosisAssessment,
+      ),
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       latencyMs: usage.latencyMs,
       modelId: usage.modelId,
+    };
+  }
+
+  private normalizeDiagnosisAssessment(
+    value: unknown,
+  ): DiagnosisAssessment | null {
+    if (!value || typeof value !== 'object') return null;
+    const raw = value as Record<string, any>;
+
+    const allowedUrgency = ['routine', 'monitor', 'vet_soon', 'emergency'];
+    const allowedLikelihood = ['high', 'medium', 'low'];
+
+    const possibleConditions = Array.isArray(raw.possibleConditions)
+      ? raw.possibleConditions
+          .filter(
+            (item: any) =>
+              item && typeof item.name === 'string' && item.name.trim(),
+          )
+          .slice(0, 5)
+          .map((item: any) => ({
+            name: item.name.trim(),
+            likelihood: allowedLikelihood.includes(item.likelihood)
+              ? item.likelihood
+              : 'medium',
+          }))
+      : [];
+
+    if (possibleConditions.length === 0) return null;
+
+    const urgencyTier = allowedUrgency.includes(raw.urgencyTier)
+      ? raw.urgencyTier
+      : 'monitor';
+
+    const immediateActions = Array.isArray(raw.immediateActions)
+      ? raw.immediateActions
+          .filter((item: any) => typeof item === 'string' && item.trim())
+          .slice(0, 6)
+      : [];
+
+    return {
+      possibleConditions,
+      urgencyTier,
+      immediateActions,
+      isolationAdvice:
+        typeof raw.isolationAdvice === 'string' && raw.isolationAdvice.trim()
+          ? raw.isolationAdvice.trim()
+          : null,
+      vetReferralRecommended:
+        Boolean(raw.vetReferralRecommended) || urgencyTier === 'emergency',
     };
   }
 

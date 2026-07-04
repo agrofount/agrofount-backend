@@ -32,6 +32,7 @@ import {
   timingSafeEqual,
 } from 'crypto';
 import { VerifyPhoneDto } from './dto/verify-phoneDto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 import { AppConfig } from '../config/app.config';
 import { VoucherService } from '../voucher/voucher.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -97,7 +98,11 @@ export class AuthService {
     }
 
     if (!user.isVerified) {
-      throw new BadRequestException('Please verify your email');
+      throw new BadRequestException({
+        message: 'Please verify your account to continue.',
+        errorCode: 'ACCOUNT_UNVERIFIED',
+        channel: user.email ? 'email' : 'phone',
+      });
     }
 
     const isValid = await bcrypt.compare(passwd, user.password);
@@ -461,6 +466,63 @@ export class AuthService {
     }
 
     return { challengeId: isEmail ? undefined : randomUUID() };
+  }
+
+  async resendOtp(
+    dto: ResendOtpDto,
+  ): Promise<{ challengeId: string; expiresInSeconds: number }> {
+    const { phone, challengeId } = dto;
+
+    const user = await this.userRepository.findOne({ where: { phone } });
+    if (!user) {
+      throw new NotFoundException('No account found with that phone number.');
+    }
+    if (user.isVerified) {
+      throw new BadRequestException(
+        'This account is already verified. Please log in.',
+      );
+    }
+
+    if (challengeId) {
+      await this.cacheManager
+        .del(`auth:otp:${challengeId}`)
+        .catch(() => undefined);
+    }
+
+    const newChallengeId = await this.issueOtpChallenge(
+      user,
+      'phone-verification',
+    );
+    return { challengeId: newChallengeId, expiresInSeconds: 600 };
+  }
+
+  async resendVerificationEmail(identifier: string): Promise<void> {
+    const isEmail = identifier.includes('@');
+    if (!isEmail) return;
+
+    const user = await this.userRepository.findOne({
+      where: { email: identifier.trim().toLowerCase() },
+    });
+    if (!user || user.isVerified) return;
+
+    const verificationToken = this.generateToken();
+    user.verificationToken = this.hashToken(verificationToken);
+    user.verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await this.userRepository.save(user);
+
+    const frontendUrl = this.configService.get<string>('app.frontend_url');
+    const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
+
+    void this.notificationService
+      .sendNotification(
+        NotificationChannels.EMAIL,
+        { email: user.email },
+        MessageTypes.VERIFY_EMAIL,
+        { verification_link: verificationUrl },
+      )
+      .catch((error) =>
+        Logger.error('Failed to resend verification email', error),
+      );
   }
 
   async resetPassword(data: ResetPasswordDto): Promise<void> {

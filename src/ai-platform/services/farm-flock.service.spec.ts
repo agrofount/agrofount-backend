@@ -93,6 +93,70 @@ describe('FarmFlockService', () => {
     });
   });
 
+  describe('computeFeedRecommendation', () => {
+    it('returns nulls when there is no flock', () => {
+      const { service } = setup();
+      expect(service.computeFeedRecommendation(null)).toEqual({
+        flock: null,
+        stage: null,
+        gramsPerBirdPerDay: null,
+        totalDailyKgForFlock: null,
+        nextStage: null,
+        weeksUntilNextStage: null,
+        supplementNote: null,
+      });
+    });
+
+    it('reports Grower stage and total flock quantity at exactly 3 weeks', () => {
+      const { service } = setup();
+      const flock = {
+        birdType: 'Broiler',
+        quantity: 500,
+        startDate: '2026-06-13', // 21 days before NOW = 3 weeks
+        status: FarmFlockStatus.Active,
+      } as any;
+
+      const result = service.computeFeedRecommendation(flock);
+
+      expect(result.stage).toBe('Grower');
+      expect(result.gramsPerBirdPerDay).toBe(90);
+      expect(result.totalDailyKgForFlock).toBe(45);
+    });
+
+    it('flags the upcoming stage switch near a band boundary', () => {
+      const { service } = setup();
+      const flock = {
+        birdType: 'Broiler',
+        quantity: 500,
+        startDate: '2026-05-30', // 35 days before NOW = 5 weeks
+        status: FarmFlockStatus.Active,
+      } as any;
+
+      const result = service.computeFeedRecommendation(flock);
+
+      expect(result.stage).toBe('Grower');
+      expect(result.gramsPerBirdPerDay).toBe(120);
+      expect(result.nextStage).toBe('Finisher');
+      expect(result.weeksUntilNextStage).toBe(1);
+    });
+
+    it('reports no next stage once the flock reaches Finisher', () => {
+      const { service } = setup();
+      const flock = {
+        birdType: 'Broiler',
+        quantity: 500,
+        startDate: '2026-05-23', // 42 days before NOW = 6 weeks
+        status: FarmFlockStatus.Active,
+      } as any;
+
+      const result = service.computeFeedRecommendation(flock);
+
+      expect(result.stage).toBe('Finisher');
+      expect(result.nextStage).toBeNull();
+      expect(result.weeksUntilNextStage).toBeNull();
+    });
+  });
+
   describe('upsertFromChatContext', () => {
     it('does nothing when required fields are missing', async () => {
       const { service, flocks } = setup();

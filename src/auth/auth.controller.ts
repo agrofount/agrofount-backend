@@ -20,6 +20,7 @@ import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SignInDto } from './dto/signin-auth.dto';
 import { LocalAdminAuthGuard } from './guards/local-admin-auth.guard';
 import { VerifyPhoneDto } from './dto/verify-phoneDto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 import { AdminEntity } from '../admins/entities/admin.entity';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -185,6 +186,30 @@ export class AuthController extends BaseController {
     return {
       success: true,
       message: 'Phone verified successfully',
+    };
+  }
+
+  @Post('resend-otp')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Resend phone verification OTP' })
+  async resendOtp(@Body() dto: ResendOtpDto) {
+    const data = await this.authService.resendOtp(dto);
+    return {
+      success: true,
+      data,
+      message: 'A new OTP has been sent to your phone.',
+    };
+  }
+
+  @Post('resend-verification-email')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Resend email verification link' })
+  async resendVerificationEmail(@Body() dto: ForgotPasswordDto) {
+    await this.authService.resendVerificationEmail(dto.identifier);
+    return {
+      success: true,
+      message:
+        'If an account with that email exists and is not yet verified, a new verification link has been sent.',
     };
   }
 
