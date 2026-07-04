@@ -210,7 +210,11 @@ describe('AiFarmAssistantService', () => {
       aiToolRegistryService: {
         executeTool: jest.fn().mockResolvedValue({
           success: true,
-          flock: { birdType: 'Broiler', quantity: 500, startDate: '2026-06-27' },
+          flock: {
+            birdType: 'Broiler',
+            quantity: 500,
+            startDate: '2026-06-27',
+          },
           dueToday: [
             {
               vaccineName: 'Newcastle Disease (Lasota) - Dose 1',
@@ -234,7 +238,11 @@ describe('AiFarmAssistantService', () => {
 
     expect(farmFlockService.upsertFromChatContext).toHaveBeenCalledWith(
       userId,
-      expect.objectContaining({ birdType: 'Broiler', quantity: 500, birdAgeWeeks: 1 }),
+      expect.objectContaining({
+        birdType: 'Broiler',
+        quantity: 500,
+        birdAgeWeeks: 1,
+      }),
     );
     expect(aiProviderService.generateFarmAssistantReply).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -245,7 +253,7 @@ describe('AiFarmAssistantService', () => {
     );
   });
 
-  it('loads the farmer\'s persistent profile and passes it to the AI provider', async () => {
+  it("loads the farmer's persistent profile and passes it to the AI provider", async () => {
     const { service, aiProviderService, farmerProfileRepository } = setup({
       farmerProfileRepository: {
         findOne: jest.fn().mockResolvedValue({

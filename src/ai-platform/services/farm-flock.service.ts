@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { FarmFlockEntity, FarmFlockStatus } from '../entities/farm-flock.entity';
+import {
+  FarmFlockEntity,
+  FarmFlockStatus,
+} from '../entities/farm-flock.entity';
 import { POULTRY_VACCINATION_SCHEDULE } from '../constants/poultry-vaccination-schedule.constant';
 
 export type VaccinationScheduleItem = {

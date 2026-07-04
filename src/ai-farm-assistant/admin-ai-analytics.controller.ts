@@ -108,7 +108,8 @@ export class AdminAiAnalyticsController {
   @Get('resource-consumption')
   @RequiredPermissions('read_ai_analytics')
   @ApiOperation({
-    summary: 'AI provider resource consumption — credits, tokens, cost, daily usage',
+    summary:
+      'AI provider resource consumption — credits, tokens, cost, daily usage',
   })
   getResourceConsumption(@Query() query: AiAnalyticsQueryDto) {
     return this.analyticsService.getResourceConsumption(query.from, query.to);

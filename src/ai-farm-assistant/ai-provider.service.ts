@@ -138,7 +138,8 @@ export class AiProviderService {
     provider: 'bedrock' | 'gemini' | 'local';
     modelId: string;
   }> {
-    let providerLabel = this.configService.get<string>('AI_PROVIDER') || 'bedrock';
+    let providerLabel =
+      this.configService.get<string>('AI_PROVIDER') || 'bedrock';
     let dbModel: string | null = null;
 
     try {

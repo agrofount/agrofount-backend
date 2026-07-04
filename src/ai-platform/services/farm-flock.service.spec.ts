@@ -17,16 +17,21 @@ describe('FarmFlockService', () => {
     const flockRepository = {
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => {
-        const saved = { id: value.id || `flock-${flocks.length + 1}`, ...value };
+        const saved = {
+          id: value.id || `flock-${flocks.length + 1}`,
+          ...value,
+        };
         const index = flocks.findIndex((item) => item.id === saved.id);
         if (index >= 0) flocks[index] = saved;
         else flocks.push(saved);
         return saved;
       }),
-      findOne: jest.fn(async ({ where }: any) =>
-        flocks.find(
-          (item) => item.userId === where.userId && item.status === where.status,
-        ) || null,
+      findOne: jest.fn(
+        async ({ where }: any) =>
+          flocks.find(
+            (item) =>
+              item.userId === where.userId && item.status === where.status,
+          ) || null,
       ),
       find: jest.fn(async () => flocks),
     };

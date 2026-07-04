@@ -19,8 +19,5 @@ export function calculateAyoCredits(params: {
     (inputTokens / 1_000_000) * params.costPer1MInputTokensUSD +
     (outputTokens / 1_000_000) * params.costPer1MOutputTokensUSD;
 
-  return Math.max(
-    1,
-    Math.ceil(estimatedCostUSD * AYO_CREDITS_PER_USD - 1e-9),
-  );
+  return Math.max(1, Math.ceil(estimatedCostUSD * AYO_CREDITS_PER_USD - 1e-9));
 }
