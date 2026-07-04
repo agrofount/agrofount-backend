@@ -596,14 +596,14 @@ export class AiFarmAssistantService {
   private async findSuggestedProducts(
     message: string,
   ): Promise<FarmAssistantSuggestedProduct[]> {
-    const keywords = this.extractProductKeywords(message);
-    if (keywords.length === 0) return [];
+    const searchTerms = this.extractProductSearchTerms(message);
+    if (searchTerms.length === 0) return [];
 
-    const where = keywords.flatMap((keyword) => [
-      { product: { name: ILike(`%${keyword}%`) } },
-      { product: { subCategory: ILike(`%${keyword}%`) } },
-      { product: { primaryCategory: ILike(`%${keyword}%`) as any } },
-      { product: { category: ILike(`%${keyword}%`) as any } },
+    const where = searchTerms.flatMap((term) => [
+      { product: { name: ILike(`%${term}%`) } },
+      { product: { subCategory: ILike(`%${term}%`) } },
+      { product: { primaryCategory: ILike(`%${term}%`) as any } },
+      { product: { category: ILike(`%${term}%`) as any } },
     ]);
 
     const productLocations = await this.productLocationRepository.find({
@@ -632,23 +632,80 @@ export class AiFarmAssistantService {
       .slice(0, 5);
   }
 
-  private extractProductKeywords(message: string): string[] {
-    const lowerMessage = message.toLowerCase();
-    const keywordMap: Record<string, string[]> = {
-      feed: ['feed', 'starter', 'grower', 'finisher', 'mash', 'pellet'],
-      vaccine: ['vaccine', 'vaccination', 'newcastle', 'gumboro', 'lasota'],
-      medication: ['drug', 'medicine', 'medication', 'vitamin', 'antibiotic'],
-      equipment: ['equipment', 'brooder', 'drinkers', 'feeder', 'cage'],
-      broiler: ['broiler'],
-      layer: ['layer'],
-      chick: ['chick', 'day old', 'doc'],
-    };
+  // "Need" groups are genuine purchase-intent categories - if the farmer's
+  // message matches one, we search the catalog using real product-relevant
+  // terms (not the group's own label, which rarely appears in a product name).
+  private static readonly NEED_KEYWORD_GROUPS: {
+    triggers: string[];
+    searchTerms: string[];
+  }[] = [
+    {
+      triggers: ['feed', 'starter', 'grower', 'finisher', 'mash', 'pellet'],
+      searchTerms: ['feed', 'starter', 'grower', 'finisher', 'mash', 'pellet'],
+    },
+    {
+      triggers: ['vaccine', 'vaccination', 'newcastle', 'gumboro', 'lasota'],
+      searchTerms: ['vaccine', 'newcastle', 'gumboro', 'lasota'],
+    },
+    {
+      triggers: ['drug', 'medicine', 'medication', 'vitamin', 'antibiotic'],
+      searchTerms: ['medicine', 'vitamin', 'antibiotic', 'drug'],
+    },
+    {
+      triggers: [
+        'brooder',
+        'brooding',
+        'temperature',
+        'heat lamp',
+        'too cold',
+        'too hot',
+      ],
+      searchTerms: [
+        'brooding lamp',
+        'heat lamp',
+        'heater',
+        'bulb',
+        'thermometer',
+        'brooder',
+      ],
+    },
+    {
+      triggers: ['drinker', 'drinkers', 'feeder', 'cage'],
+      searchTerms: ['drinker', 'feeder', 'cage'],
+    },
+  ];
 
-    return Object.entries(keywordMap)
-      .filter(([, triggers]) =>
-        triggers.some((trigger) => lowerMessage.includes(trigger)),
-      )
-      .map(([keyword]) => keyword)
-      .slice(0, 5);
+  // Bird-type words describe the farmer's own flock, not a purchase intent -
+  // mentioning "my broilers" or "day-old chicks" shouldn't by itself trigger
+  // a recommendation to buy broilers/chicks. Only used as a last-resort
+  // fallback when nothing more specific matched.
+  private static readonly BIRD_TYPE_GROUPS: {
+    triggers: string[];
+    searchTerms: string[];
+  }[] = [
+    { triggers: ['broiler'], searchTerms: ['broiler'] },
+    { triggers: ['layer'], searchTerms: ['layer'] },
+    { triggers: ['chick', 'day old', 'doc'], searchTerms: ['chick'] },
+  ];
+
+  private extractProductSearchTerms(message: string): string[] {
+    const lowerMessage = message.toLowerCase();
+    const matchTerms = (
+      groups: { triggers: string[]; searchTerms: string[] }[],
+    ) =>
+      groups
+        .filter((group) =>
+          group.triggers.some((trigger) => lowerMessage.includes(trigger)),
+        )
+        .flatMap((group) => group.searchTerms);
+
+    const needTerms = [
+      ...new Set(matchTerms(AiFarmAssistantService.NEED_KEYWORD_GROUPS)),
+    ];
+    if (needTerms.length > 0) return needTerms.slice(0, 6);
+
+    return [
+      ...new Set(matchTerms(AiFarmAssistantService.BIRD_TYPE_GROUPS)),
+    ].slice(0, 6);
   }
 }

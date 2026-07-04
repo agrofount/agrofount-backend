@@ -422,6 +422,29 @@ describe('AiFarmAssistantService', () => {
     ]);
   });
 
+  it('recommends brooding equipment, not day-old chicks, for a brooder-temperature question', async () => {
+    const { service, productLocationRepository } = setup();
+
+    await service.ask(
+      { id: userId },
+      {
+        message: 'What temperature should my brooder be at for day-old chicks?',
+      },
+    );
+
+    const where = productLocationRepository.find.mock.calls[0][0].where;
+    const patterns = where.flatMap((clause: any) =>
+      Object.values(clause.product).map((op: any) => op.value),
+    );
+
+    expect(patterns).toEqual(
+      expect.arrayContaining([expect.stringContaining('thermometer')]),
+    );
+    expect(patterns).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('chick')]),
+    );
+  });
+
   it('sets requiresVetAttention for severe disease symptoms', async () => {
     const { service } = setup();
 
