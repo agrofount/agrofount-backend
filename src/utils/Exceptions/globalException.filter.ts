@@ -36,13 +36,19 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const responseBody =
       exception instanceof HttpException ? exception.getResponse() : undefined;
     const extra =
-      responseBody && typeof responseBody === 'object' && !Array.isArray(responseBody)
+      responseBody &&
+      typeof responseBody === 'object' &&
+      !Array.isArray(responseBody)
         ? Object.fromEntries(
             Object.entries(responseBody).filter(
               ([key]) =>
-                !['statusCode', 'message', 'error', 'timestamp', 'path'].includes(
-                  key,
-                ),
+                ![
+                  'statusCode',
+                  'message',
+                  'error',
+                  'timestamp',
+                  'path',
+                ].includes(key),
             ),
           )
         : {};
