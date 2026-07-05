@@ -96,8 +96,18 @@ describe('SellerInterestService', () => {
       }),
     );
     expect(outboxService.create).toHaveBeenCalledTimes(2);
+    expect(outboxService.create.mock.calls[0][0]).toBe('notification.send');
     expect(outboxService.create.mock.calls[0][1]).toEqual(
-      expect.objectContaining({ recipient: { email: dto.email } }),
+      expect.objectContaining({
+        channel: 'EMAIL',
+        recipient: { email: dto.email },
+        messageType: 'SELLER_INTEREST_CONFIRMATION',
+        params: {
+          customer_name: dto.contactName,
+          business_name: dto.businessName,
+          reference: expect.any(String),
+        },
+      }),
     );
     expect(outboxService.create.mock.calls[1][1]).toEqual(
       expect.objectContaining({
@@ -109,6 +119,21 @@ describe('SellerInterestService', () => {
     );
     expect(outboxService.dispatch).toHaveBeenCalledTimes(2);
     expect(result).toEqual(expect.objectContaining({ email: dto.email }));
+  });
+
+  it('falls back to productName for business_name when businessName is not provided', async () => {
+    const { service, outboxService } = setup();
+    const dtoWithoutBusinessName = { ...dto, businessName: undefined };
+
+    await service.create(dtoWithoutBusinessName as any, [file]);
+
+    expect(outboxService.create.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          business_name: dto.productName,
+        }),
+      }),
+    );
   });
 
   it('requires at least one product sample', async () => {

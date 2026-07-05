@@ -17,7 +17,10 @@ import {
   SellerInterestStatus,
 } from './entities/seller-interest.entity';
 import { SELLER_INTEREST_PAGINATION_CONFIG } from './config/seller-interest-pagination.config';
-import { MessageTypes } from '../notification/types/notification.type';
+import {
+  MessageTypes,
+  NotificationChannels,
+} from '../notification/types/notification.type';
 
 const MAX_SAMPLES = 3;
 
@@ -77,7 +80,7 @@ export class SellerInterestService {
           'SELLER_INTEREST_ADMIN_EMAIL is not configured; skipping the seller interest admin notification email',
         );
       }
-      const messages = this.buildEmails(dto, interestId, sampleUrls);
+      const adminMessage = this.buildAdminEmail(dto, interestId, sampleUrls);
 
       const result = await this.dataSource.transaction(async (manager) => {
         const sellerInterestRepo = manager.getRepository(SellerInterestEntity);
@@ -93,14 +96,16 @@ export class SellerInterestService {
         });
         const saved = await sellerInterestRepo.save(entity);
         const sellerEmail = await this.outboxService.create(
-          'email.custom',
+          'notification.send',
           {
+            channel: NotificationChannels.EMAIL,
             recipient: { email: dto.email },
-            subject: messages.seller.subject,
-            htmlContent: messages.seller.html,
-            textContent: messages.seller.text,
-            ...(adminEmail ? { replyTo: adminEmail } : {}),
             messageType: MessageTypes.SELLER_INTEREST_CONFIRMATION,
+            params: {
+              customer_name: dto.contactName,
+              business_name: dto.businessName || dto.productName,
+              reference: interestId,
+            },
           },
           manager,
         );
@@ -111,9 +116,9 @@ export class SellerInterestService {
             'email.custom',
             {
               recipient: { email: adminEmail },
-              subject: messages.admin.subject,
-              htmlContent: messages.admin.html,
-              textContent: messages.admin.text,
+              subject: adminMessage.subject,
+              htmlContent: adminMessage.html,
+              textContent: adminMessage.text,
               replyTo: dto.email,
               messageType: MessageTypes.SELLER_INTEREST_ADMIN_NOTIFICATION,
             },
@@ -212,7 +217,7 @@ export class SellerInterestService {
     return result.saved;
   }
 
-  private buildEmails(
+  private buildAdminEmail(
     dto: CreateSellerInterestDto,
     interestId: string,
     sampleUrls: string[],
@@ -227,62 +232,48 @@ export class SellerInterestService {
           }</a> (link expires in 7 days)</li>`,
       )
       .join('');
-    const sellerSubject = 'We received your Agrofount seller interest';
     const adminSubject = `New seller interest: ${dto.productName}`;
 
     return {
-      seller: {
-        subject: sellerSubject,
-        html: `<p>Hello ${value(
-          dto.contactName,
-        )},</p><p>Thank you for your interest in selling on Agrofount. We received the details for <strong>${value(
-          dto.productName,
-        )}</strong> and our team will contact you after reviewing the submission.</p><p>Reference: <strong>${value(
-          interestId,
-        )}</strong></p><p>Agrofount</p>`,
-        text: `Hello ${dto.contactName},\n\nThank you for your interest in selling on Agrofount. We received the details for ${dto.productName}. Our team will contact you after reviewing the submission.\n\nReference: ${interestId}\n\nAgrofount`,
-      },
-      admin: {
-        subject: adminSubject,
-        html: `<h2>New seller interest</h2><p><strong>Reference:</strong> ${value(
-          interestId,
-        )}</p><h3>Contact details</h3><ul><li>Name: ${value(
-          dto.contactName,
-        )}</li><li>Email: ${value(dto.email)}</li><li>Phone: ${value(
-          dto.phone,
-        )}</li><li>Business: ${value(
-          dto.businessName,
-        )}</li><li>Business type: ${value(
-          dto.businessType,
-        )}</li><li>Location: ${value(
-          dto.location,
-        )}</li></ul><h3>Product details</h3><ul><li>Product: ${value(
-          dto.productName,
-        )}</li><li>Category: ${value(
-          dto.productCategory,
-        )}</li><li>Quantity: ${value(dto.quantityAvailable)} ${value(
-          dto.unit,
-        )}</li><li>Price per unit: ${value(
-          dto.pricePerUnit,
-        )}</li></ul><p><strong>Description:</strong><br>${value(
-          dto.productDescription,
-        )}</p><p><strong>Additional notes:</strong><br>${value(
-          dto.additionalNotes,
-        )}</p><h3>Samples</h3><ul>${sampleLinks}</ul>`,
-        text: `New seller interest\nReference: ${interestId}\nName: ${
-          dto.contactName
-        }\nEmail: ${dto.email}\nPhone: ${dto.phone}\nBusiness: ${
-          dto.businessName || 'Not provided'
-        }\nBusiness type: ${dto.businessType || 'Not provided'}\nLocation: ${
-          dto.location
-        }\nProduct: ${dto.productName}\nCategory: ${
-          dto.productCategory
-        }\nQuantity: ${dto.quantityAvailable} ${dto.unit}\nPrice per unit: ${
-          dto.pricePerUnit ?? 'Not provided'
-        }\nDescription: ${dto.productDescription}\nAdditional notes: ${
-          dto.additionalNotes || 'Not provided'
-        }\nSamples: ${sampleUrls.join(', ')}`,
-      },
+      subject: adminSubject,
+      html: `<h2>New seller interest</h2><p><strong>Reference:</strong> ${value(
+        interestId,
+      )}</p><h3>Contact details</h3><ul><li>Name: ${value(
+        dto.contactName,
+      )}</li><li>Email: ${value(dto.email)}</li><li>Phone: ${value(
+        dto.phone,
+      )}</li><li>Business: ${value(
+        dto.businessName,
+      )}</li><li>Business type: ${value(
+        dto.businessType,
+      )}</li><li>Location: ${value(
+        dto.location,
+      )}</li></ul><h3>Product details</h3><ul><li>Product: ${value(
+        dto.productName,
+      )}</li><li>Category: ${value(
+        dto.productCategory,
+      )}</li><li>Quantity: ${value(dto.quantityAvailable)} ${value(
+        dto.unit,
+      )}</li><li>Price per unit: ${value(
+        dto.pricePerUnit,
+      )}</li></ul><p><strong>Description:</strong><br>${value(
+        dto.productDescription,
+      )}</p><p><strong>Additional notes:</strong><br>${value(
+        dto.additionalNotes,
+      )}</p><h3>Samples</h3><ul>${sampleLinks}</ul>`,
+      text: `New seller interest\nReference: ${interestId}\nName: ${
+        dto.contactName
+      }\nEmail: ${dto.email}\nPhone: ${dto.phone}\nBusiness: ${
+        dto.businessName || 'Not provided'
+      }\nBusiness type: ${dto.businessType || 'Not provided'}\nLocation: ${
+        dto.location
+      }\nProduct: ${dto.productName}\nCategory: ${
+        dto.productCategory
+      }\nQuantity: ${dto.quantityAvailable} ${dto.unit}\nPrice per unit: ${
+        dto.pricePerUnit ?? 'Not provided'
+      }\nDescription: ${dto.productDescription}\nAdditional notes: ${
+        dto.additionalNotes || 'Not provided'
+      }\nSamples: ${sampleUrls.join(', ')}`,
     };
   }
 
