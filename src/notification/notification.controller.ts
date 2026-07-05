@@ -82,6 +82,18 @@ export class NotificationController {
     return this.campaignService.findOne(id);
   }
 
+  @Get('campaign/:id/recipients')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary: 'List individual recipient delivery records for a campaign',
+  })
+  getCampaignRecipients(
+    @Param('id') id: string,
+    @Query() query: PaginateQuery,
+  ) {
+    return this.notificationService.listRecipients({ campaignId: id }, query);
+  }
+
   // ── Cron job admin endpoints ─────────────────────────────────────────────
 
   @Get('cron-jobs')
@@ -134,6 +146,21 @@ export class NotificationController {
       throw new BadRequestException(`Unknown cron job: ${name}`);
     }
     return this.cronMonitorService.getJobRuns(name as CronJobName, limit);
+  }
+
+  @Get('cron-jobs/:name/recipients')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary: 'List individual recipient delivery records for a cron job',
+  })
+  getCronJobRecipients(
+    @Param('name') name: string,
+    @Query() query: PaginateQuery,
+  ) {
+    if (!Object.values(CronJobName).includes(name as CronJobName)) {
+      throw new BadRequestException(`Unknown cron job: ${name}`);
+    }
+    return this.notificationService.listRecipients({ jobName: name }, query);
   }
 
   // ── Notification message endpoints ───────────────────────────────────────

@@ -72,7 +72,7 @@ export class OutboxProcessor extends WorkerHost {
           payload.htmlContent,
           payload.textContent,
           payload.messageType,
-          payload.replyTo,
+          { replyTo: payload.replyTo },
         );
       } else if (event.type === 'order.created') {
         const payload = event.payload as { orderId: string };
