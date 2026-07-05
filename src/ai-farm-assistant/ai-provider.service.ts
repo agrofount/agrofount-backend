@@ -100,6 +100,8 @@ If a higher-priority source is missing or silent on the question, fall through t
 
 KNOWLEDGE BASE GROUNDING: When "Knowledge base context" documents are provided, treat them as the primary source for anything they cover — don't contradict them with general knowledge unless they're obviously unsafe or clearly outdated. If more than one document is provided, synthesize across all of them rather than answering from only the first one you see. When a specific fact comes from one of them, you may reference it naturally by its title (e.g. "the Newcastle Disease guide mentions...") instead of hedging with "I think" or "generally". If the provided documents don't actually answer the farmer's question, say so plainly before falling back to your own general knowledge — never silently blend the two as if both were equally authoritative.
 
+SEASONAL AWARENESS: A "Seasonal context" fact is provided with the current month and Nigeria's typical season (Harmattan, hot dry season, rainy season, or the transitional period between them) and what that usually means for flock management. Factor it in only when it would genuinely change your advice or health assessment — e.g. heat stress and water intake during the hot dry season, dust/respiratory risk during Harmattan, or wet litter, coccidiosis, fungal disease, and delivery/transport delays during the rainy season. It can also serve as your one proactive observation (per PERSONALITY below) when nothing more specific to this farmer applies. Don't force a seasonal mention into every reply or treat it as trivia — most messages don't need it at all.
+
 PERSONALITY & PERSONALIZATION:
 - Sound human, friendly, and relaxed — like a text from a helpful farm advisor, not a formal report
 - When the farmer's name is provided, use it naturally but sparingly — only in the first message of a conversation or occasionally when it genuinely fits (e.g. a moment of encouragement). Never open every reply with their name; that feels robotic
@@ -110,7 +112,7 @@ PERSONALITY & PERSONALIZATION:
 - Acknowledge what the farmer said before giving advice, especially if they mention stress, losses, cost, or uncertainty — but do this in one short phrase, not a paragraph
 - Be interactive: when important details are missing, ask the single follow-up question most likely to change your recommendation — not just any missing detail — instead of overwhelming the farmer with many questions
 - Mirror the farmer's own language register — if they write in Nigerian Pidgin or a mix of Pidgin and English, reply the same way rather than switching to formal English; if they write in standard English, reply in standard English
-- Be proactive, not just reactive: when you already have enough detail (from the profile, farm context, or conversation) to answer fully, you may add ONE short relevant observation the farmer didn't ask about but would want to know. Skip this if the situation is an emergency or the farmer just wants a quick fact. When more than one candidate observation applies, use this priority order and mention only the top one: (1) a vaccination due now or overdue, (2) an upcoming feed-stage switch, (3) any other upcoming vaccination window or market-weight milestone for their bird's age
+- Be proactive, not just reactive: when you already have enough detail (from the profile, farm context, or conversation) to answer fully, you may add ONE short relevant observation the farmer didn't ask about but would want to know. Skip this if the situation is an emergency or the farmer just wants a quick fact. When more than one candidate observation applies, use this priority order and mention only the top one: (1) a vaccination due now or overdue, (2) an upcoming feed-stage switch, (3) any other upcoming vaccination window or market-weight milestone for their bird's age, (4) a relevant seasonal risk per SEASONAL AWARENESS below
 - When a "Vaccination status" section is provided, treat it as ground truth for this farmer's actual flock (not a generic schedule) — answer "what's due" or "what did I miss" directly and briefly from it
 - When a "Feed recommendation" section is provided, treat it as ground truth for this farmer's actual flock — answer feed stage/quantity questions precisely and briefly from it
 - Avoid stiff phrases like "Dear user", "as an AI", "it is recommended that", or long textbook-style paragraphs
@@ -204,6 +206,45 @@ const FARM_ASSISTANT_RESPONSE_SCHEMA = {
   },
   required: ['reply', 'quickReplies', 'requiresVetAttention'],
 };
+
+// Nigeria's farming-relevant seasons by calendar month (0 = January). Computed
+// server-side rather than left for the model to infer, same as vaccination
+// status/feed advice — a deterministic fact, not a guess.
+const NIGERIA_SEASONS: Array<{
+  months: number[];
+  season: string;
+  notes: string;
+}> = [
+  {
+    months: [11, 0],
+    season: 'Harmattan (peak dry season)',
+    notes:
+      'dry, dusty winds and big day-night temperature swings — watch for dust-related respiratory stress and dehydration from the dry air',
+  },
+  {
+    months: [1],
+    season: 'Harmattan (tail end)',
+    notes: 'still dry and dusty, starting to warm up ahead of the hot season',
+  },
+  {
+    months: [2, 3],
+    season: 'hot dry season',
+    notes:
+      'hot and dry ahead of the rains — heat stress risk is at its highest, watch water intake and ventilation',
+  },
+  {
+    months: [4, 5, 6, 7, 8],
+    season: 'rainy season',
+    notes:
+      'frequent rain and high humidity — watch for wet litter, coccidiosis and fungal disease risk, and mud-related delivery/transport delays',
+  },
+  {
+    months: [9, 10],
+    season: 'transitional (rains ending, Harmattan approaching)',
+    notes:
+      'variable weather as the rains taper off and dry, dusty conditions return',
+  },
+];
 
 // A model can decide not to bother calling a tool and just guess instead —
 // for anything touching real order/financial data, guessing is fabrication,
@@ -726,6 +767,15 @@ export class AiProviderService {
     }
   }
 
+  private getSeasonContext(date: Date = new Date()): string {
+    const month = date.getMonth();
+    const bucket =
+      NIGERIA_SEASONS.find((entry) => entry.months.includes(month)) ??
+      NIGERIA_SEASONS[0];
+    const monthName = date.toLocaleString('en-US', { month: 'long' });
+    return `${monthName} — Nigeria is typically in its ${bucket.season}: ${bucket.notes}.`;
+  }
+
   private buildUserContent(input: FarmAssistantProviderInput): string {
     const productContext = input.products.length
       ? input.products
@@ -757,9 +807,9 @@ export class AiProviderService {
       input.feedAdvice
         ? `Feed recommendation for this farmer's active flock (computed fact, not a guess — use this to answer feed stage/quantity questions precisely and as your proactive observation when relevant):\n${input.feedAdvice}\n\n`
         : ''
-    }Farm context for this conversation: ${JSON.stringify(
-      input.farmContext || {},
-    )}
+    }Seasonal context (computed fact — factor in only when genuinely relevant, per the SEASONAL AWARENESS rule): ${this.getSeasonContext()}
+
+Farm context for this conversation: ${JSON.stringify(input.farmContext || {})}
 
 Relevant Agrofount products:
 ${productContext}

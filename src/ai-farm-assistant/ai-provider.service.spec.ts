@@ -6,6 +6,7 @@ describe('AiProviderService', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   function setup(
@@ -170,6 +171,60 @@ describe('AiProviderService', () => {
     expect(url).toContain('gemini-db-model');
     expect(result.reply).toBe('from db-configured gemini');
   });
+
+  it.each([
+    ['2026-01-15', 'January', 'Harmattan (peak dry season)'],
+    ['2026-03-10', 'March', 'hot dry season'],
+    ['2026-07-05', 'July', 'rainy season'],
+    ['2026-10-20', 'October', 'transitional'],
+  ])(
+    'includes a computed seasonal context fact for %s',
+    async (isoDate, monthName, expectedSeason) => {
+      jest.useFakeTimers().setSystemTime(new Date(isoDate));
+
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      reply: 'ok',
+                      quickReplies: [],
+                      requiresVetAttention: false,
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+          usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 5 },
+        }),
+      });
+      global.fetch = fetchMock as any;
+
+      const { service } = setup({
+        AI_PROVIDER: 'gemini',
+        GEMINI_API_KEY: 'test-gemini-key',
+      });
+
+      await service.generateFarmAssistantReply({
+        message: 'how are my birds doing?',
+        userId: 'user-1',
+        history: [],
+        products: [],
+        requiresVetAttention: false,
+      });
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      const userText = body.contents[0].parts[0].text as string;
+      expect(userText).toContain('Seasonal context');
+      expect(userText).toContain(monthName);
+      expect(userText).toContain(expectedSeason);
+    },
+  );
 
   it('lets Gemini call a tool and use the result in its final reply', async () => {
     const toolDefinitions = [
