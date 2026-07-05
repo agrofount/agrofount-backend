@@ -264,6 +264,117 @@ describe('AiProviderService', () => {
     expect(result.outputTokens).toBe(16);
   });
 
+  it('drops tools and forces schema-constrained JSON on the final Gemini round instead of leaving a tool call unresolved', async () => {
+    const toolDefinitions = [
+      {
+        name: 'commerce.product_search',
+        description: 'Search product catalog',
+        category: 'commerce',
+        allowedActors: ['farmer'],
+        readOnly: true,
+        inputSchema: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+        },
+      },
+    ];
+
+    const toolCallResponse = {
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        candidates: [
+          {
+            content: {
+              role: 'model',
+              parts: [
+                {
+                  functionCall: {
+                    name: 'commerce.product_search',
+                    args: { query: 'layer feed' },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 4 },
+      }),
+    };
+    const finalTextResponse = {
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    reply: 'Here is what I found after checking the catalog.',
+                    quickReplies: [],
+                    requiresVetAttention: false,
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 5 },
+      }),
+    };
+
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(toolCallResponse)
+      .mockResolvedValueOnce(toolCallResponse)
+      .mockResolvedValueOnce(toolCallResponse)
+      .mockResolvedValueOnce(finalTextResponse);
+    global.fetch = fetchMock as any;
+
+    const { service } = setup(
+      { AI_PROVIDER: 'gemini', GEMINI_API_KEY: 'test-gemini-key' },
+      null,
+      {
+        listTools: jest.fn().mockReturnValue(toolDefinitions),
+        executeTool: jest.fn().mockResolvedValue({
+          success: true,
+          products: [{ name: 'Layer Feed 25kg', price: 15000 }],
+        }),
+      },
+    );
+
+    const result = await service.generateFarmAssistantReply({
+      message: 'do you have layer feed?',
+      userId: 'user-1',
+      conversationId: 'conv-1',
+      history: [],
+      products: [],
+      requiresVetAttention: false,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
+    // Rounds 0-2 keep tools attached and no JSON schema, preserving normal
+    // tool-calling behaviour.
+    for (const body of bodies.slice(0, 3)) {
+      expect(body.tools).toBeDefined();
+      expect(body.generationConfig.responseMimeType).toBeUndefined();
+      expect(body.generationConfig.responseSchema).toBeUndefined();
+    }
+    // The final round drops tools and forces schema-constrained JSON so the
+    // model can't leave a tool call unresolved.
+    const finalBody = bodies[3];
+    expect(finalBody.tools).toBeUndefined();
+    expect(finalBody.generationConfig.responseMimeType).toBe(
+      'application/json',
+    );
+    expect(finalBody.generationConfig.responseSchema).toBeDefined();
+
+    expect(result.reply).toBe(
+      'Here is what I found after checking the catalog.',
+    );
+  });
+
   it('forces order.track via Gemini tool_config when the message mentions an order', async () => {
     const toolDefinitions = [
       {
@@ -459,6 +570,91 @@ describe('AiProviderService', () => {
     expect(result.reply).toBe('Your credit eligibility looks good.');
     expect(result.inputTokens).toBe(40);
     expect(result.outputTokens).toBe(15);
+  });
+
+  it('drops tools on the final Bedrock round instead of leaving a tool call unresolved', async () => {
+    const toolDefinitions = [
+      {
+        name: 'credit.eligibility',
+        description: 'Compute credit eligibility',
+        category: 'credit',
+        allowedActors: ['farmer'],
+        readOnly: true,
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ];
+
+    const toolUseResult = {
+      stopReason: 'tool_use',
+      usage: { inputTokens: 5, outputTokens: 2 },
+      output: {
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              toolUse: {
+                toolUseId: 'tu-1',
+                name: 'credit.eligibility',
+                input: {},
+              },
+            },
+          ],
+        },
+      },
+    };
+    const finalTextResult = {
+      stopReason: 'end_turn',
+      usage: { inputTokens: 5, outputTokens: 5 },
+      output: {
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              text: JSON.stringify({
+                reply: 'Here is your answer after checking eligibility.',
+                quickReplies: [],
+                requiresVetAttention: false,
+              }),
+            },
+          ],
+        },
+      },
+    };
+
+    const sendMock = jest
+      .fn()
+      .mockResolvedValueOnce(toolUseResult)
+      .mockResolvedValueOnce(toolUseResult)
+      .mockResolvedValueOnce(toolUseResult)
+      .mockResolvedValueOnce(finalTextResult);
+
+    const { service } = setup({ AI_PROVIDER: 'bedrock' }, null, {
+      listTools: jest.fn().mockReturnValue(toolDefinitions),
+      executeTool: jest.fn().mockResolvedValue({
+        success: true,
+        eligibility: { score: 80, riskCategory: 'low' },
+      }),
+    });
+    (service as any).bedrockClient = { send: sendMock };
+
+    const result = await service.generateFarmAssistantReply({
+      message: 'am I eligible for credit?',
+      userId: 'user-1',
+      conversationId: 'conv-1',
+      history: [],
+      products: [],
+      requiresVetAttention: false,
+    });
+
+    expect(sendMock).toHaveBeenCalledTimes(4);
+    const inputs = sendMock.mock.calls.map((call) => call[0].input);
+    for (const input of inputs.slice(0, 3)) {
+      expect(input.toolConfig).toBeDefined();
+    }
+    expect(inputs[3].toolConfig).toBeUndefined();
+    expect(result.reply).toBe(
+      'Here is your answer after checking eligibility.',
+    );
   });
 
   it('forces order.track via Bedrock toolChoice on the first round only', async () => {
