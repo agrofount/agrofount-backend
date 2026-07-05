@@ -11,6 +11,65 @@ import { OrderEntity } from '../../order/entities/order.entity';
 import { MessageTypes } from '../types/notification.type';
 import { FarmFlockService } from '../../ai-platform/services/farm-flock.service';
 
+type FarmingTipContent = {
+  title: string;
+  summary: string;
+  points: [string, string, string, string, string, string];
+  quote: string;
+  bannerImage: string;
+};
+
+const FARMING_TIPS: FarmingTipContent[] = [
+  {
+    title: "Brooding right: the first 14 days decide your flock's future",
+    summary:
+      'Most early chick losses trace back to brooding mistakes in the first two weeks, not disease. Getting temperature, spacing, and access to feed and water right from day one sets the tone for the whole cycle.',
+    points: [
+      'Keep brooder temperature at 32-35°C for week 1, then reduce by about 2-3°C each week until fully feathered.',
+      'Watch chick behaviour, not just the thermometer: huddling means too cold, panting and spreading away from the heat source means too hot.',
+      'Provide at least 1 linear inch of feeder space and 0.5 inch of waterer space per chick, increasing as they grow.',
+      'Start feed and clean water within the first hour of arrival; delayed access in the first 24 hours has a lasting effect on growth.',
+      'Keep litter dry and 5-10cm deep, topping up rather than replacing entirely to avoid stressing the flock.',
+      'Vaccinate on schedule and record every dose. A missed or delayed vaccination is one of the most common causes of preventable outbreaks.',
+    ],
+    quote:
+      'A flock that starts strong in the brooder rarely needs rescuing later.',
+    bannerImage: '',
+  },
+  {
+    title: 'Feed is your biggest cost. Here is how to stop wasting it',
+    summary:
+      'Feed typically makes up 60-70% of production cost in poultry and livestock farming. Small changes in how you store and serve feed can meaningfully improve your margins without changing your feed budget.',
+    points: [
+      'Store feed off the ground on pallets, in a dry, rodent-proof space, and use it within 2-3 weeks of milling to preserve nutrient quality.',
+      'Use feeders with a lip or guard to cut spillage; poorly designed feeders can waste 5-10% of feed.',
+      'Match feed type to bird age: starter, grower, and finisher/layer feeds are formulated differently, and switching too early or late affects growth and egg production.',
+      'Feed at consistent times each day. Irregular feeding schedules increase stress and reduce feed conversion efficiency.',
+      'Do not overfill feeders; filling to one-third to one-half encourages less scattering and spoilage.',
+      'Track feed intake per bird weekly. A sudden drop is often the earliest warning sign of disease, before visible symptoms appear.',
+    ],
+    quote:
+      'You cannot save your way to profit by cutting feed quality, but you can save a lot by cutting feed waste.',
+    bannerImage: '',
+  },
+  {
+    title: 'Biosecurity is free. Outbreaks are not.',
+    summary:
+      'Many disease outbreaks are introduced by people, vehicles, and equipment moving between farms, not just by other birds. A few consistent habits cost almost nothing but prevent some of the most expensive losses a farm can suffer.',
+    points: [
+      'Keep one designated entry point to the farm, with a footbath refreshed regularly with disinfectant.',
+      'Do not allow visitors who have been on another farm that same day, especially if that farm has had recent illness.',
+      'Quarantine new birds for at least 2 weeks before introducing them to the existing flock.',
+      'Clean and disinfect equipment, crates, and vehicles between uses, not just between flock cycles.',
+      'Control rodents and wild birds around feed stores; they are common carriers of disease into an otherwise closed flock.',
+      'Isolate any bird showing signs of illness immediately and observe the rest of the flock closely for 48-72 hours.',
+    ],
+    quote:
+      'The farms that rarely lose a flock to disease are usually the ones with the most boring biosecurity routine.',
+    bannerImage: '',
+  },
+];
+
 @Injectable()
 export class NotificationTriggersJob {
   private readonly logger = new Logger(NotificationTriggersJob.name);
@@ -142,21 +201,15 @@ export class NotificationTriggersJob {
           });
 
           if (user.email) {
-            await this.notificationService.sendCustomEmail(
+            await this.notificationService.sendNotification(
+              'EMAIL',
               { userId: user.id, email: user.email },
-              'We miss you on Agrofount',
-              this.buildSimpleEmail(
-                'We miss you!',
-                `Hi ${name}, it has been a while since you last shopped with us. Fresh produce and great deals are waiting!`,
-                'Shop Now',
-                process.env.FRONTEND_URL ?? '',
-              ),
-              `Hi ${name}, come back and check out what's new on Agrofount!`,
               MessageTypes.LOGIN_INACTIVITY_REMINDER,
               {
-                jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
-                channel: 'EMAIL',
+                customer_name: name,
+                login_link: `${process.env.FRONTEND_URL ?? ''}/login`,
               },
+              { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
             );
             sent++;
           }
@@ -330,21 +383,35 @@ export class NotificationTriggersJob {
         .getMany();
 
       total = users.length;
+      const tip = this.getWeeklyFarmingTip();
+      const [point1, point2, point3, point4, point5, point6] = tip.points;
+
       for (const user of users) {
         try {
           const name = user.firstname ?? 'there';
-          await this.notificationService.sendCustomEmail(
+          await this.notificationService.sendNotification(
+            'EMAIL',
             { userId: user.id, email: user.email },
-            'Farming Tips from Agrofount',
-            this.buildSimpleEmail(
-              "This week's farming tip",
-              `Hi ${name}, here is your weekly farming insight to help you grow better and sell smarter on Agrofount.`,
-              'Explore Tips',
-              `${process.env.FRONTEND_URL ?? ''}/blog`,
-            ),
-            'Your weekly farming tip from Agrofount.',
             MessageTypes.EDUCATIONAL_CONTENT,
-            { jobName: CronJobName.EDUCATIONAL_CONTENT, channel: 'EMAIL' },
+            {
+              article_title: tip.title,
+              banner_image: tip.bannerImage,
+              customer_name: name,
+              article_summary: tip.summary,
+              point_1: point1,
+              point_2: point2,
+              point_3: point3,
+              point_4: point4,
+              point_5: point5,
+              point_6: point6,
+              highlight_quote: tip.quote,
+              article_link: `${process.env.FRONTEND_URL ?? ''}/blog`,
+              facebook_url: process.env.SOCIAL_FACEBOOK_URL ?? '',
+              instagram_url: process.env.SOCIAL_INSTAGRAM_URL ?? '',
+              linkedin_url: process.env.SOCIAL_LINKEDIN_URL ?? '',
+              youtube_url: process.env.SOCIAL_YOUTUBE_URL ?? '',
+            },
+            { jobName: CronJobName.EDUCATIONAL_CONTENT },
           );
           sent++;
         } catch (err) {
@@ -365,6 +432,11 @@ export class NotificationTriggersJob {
       });
       throw err;
     }
+  }
+
+  private getWeeklyFarmingTip(): FarmingTipContent {
+    const weekIndex = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
+    return FARMING_TIPS[weekIndex % FARMING_TIPS.length];
   }
 
   @Cron('0 9 * * *')
