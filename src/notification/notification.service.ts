@@ -51,6 +51,37 @@ export class NotificationService {
     return this.messageRepo.save(message);
   }
 
+  async recordDelivery(dto: CreateNotificationDto) {
+    try {
+      await this.create(dto);
+    } catch (error) {
+      this.logger.warn(
+        `Notification sent but delivery record could not be saved: ${
+          error?.message || error
+        }`,
+      );
+    }
+  }
+
+  async listRecipients(
+    filters: { campaignId?: string; jobName?: string },
+    query: PaginateQuery,
+  ): Promise<Paginated<MessageEntity>> {
+    return paginate(query, this.messageRepo, {
+      sortableColumns: ['createdAt', 'status', 'channel'],
+      nullSort: 'last',
+      searchableColumns: ['recipientEmail', 'recipientPhone', 'userId'],
+      defaultSortBy: [['createdAt', 'DESC']],
+      filterableColumns: {
+        channel: [FilterOperator.EQ],
+        status: [FilterOperator.EQ],
+      },
+      where: filters,
+      defaultLimit: 25,
+      maxLimit: 100,
+    });
+  }
+
   async enqueueNotifications() {
     const today = new Date().toISOString().split('T')[0]; // e.g. "2025-08-20"
     const jobId = `price-updates-${today}`;
@@ -295,12 +326,18 @@ export class NotificationService {
     recipient: MessageRecipient,
     messageType: MessageTypes,
     params: Record<string, any>,
+    options?: { campaignId?: string; jobName?: string },
   ): Promise<any> {
     switch (type) {
       case 'EMAIL':
-        return this.sendEmail(recipient, params, messageType);
+        return this.sendEmail(recipient, params, messageType, options);
       case 'SMS':
-        return this.sendSms(recipient.phoneNumber, messageType, params);
+        return this.sendSms(
+          recipient.phoneNumber,
+          messageType,
+          params,
+          options,
+        );
       case 'TEAMS_NOTIFICATION':
         return this.teamsService.sendTeamsNotification(messageType, params);
       case 'PUSH_NOTIFICATION':
@@ -318,7 +355,12 @@ export class NotificationService {
     htmlContent: string,
     textContent: string,
     messageType: MessageTypes,
-    replyTo?: string,
+    options?: {
+      replyTo?: string;
+      campaignId?: string;
+      jobName?: string;
+      channel?: string;
+    },
   ): Promise<void> {
     if (!recipient.email) {
       throw new BadGatewayException(
@@ -326,32 +368,46 @@ export class NotificationService {
       );
     }
 
-    await this.sendInBlue.sendCustomEmail(
-      recipient.email,
-      subject,
-      htmlContent,
-      textContent,
-      replyTo,
-    );
     try {
-      await this.create({
+      await this.sendInBlue.sendCustomEmail(
+        recipient.email,
+        subject,
+        htmlContent,
+        textContent,
+        options?.replyTo,
+      );
+    } catch (error) {
+      await this.recordDelivery({
         messageType,
         userId: recipient.userId,
         sender: 'Agrofount',
+        recipientEmail: recipient.email,
+        channel: options?.channel ?? 'EMAIL',
+        campaignId: options?.campaignId,
+        jobName: options?.jobName,
+        status: 'FAILED',
+        errorMessage: error?.message || String(error),
       });
-    } catch (error) {
-      this.logger.warn(
-        `Custom email sent but message audit could not be saved: ${
-          error?.message || error
-        }`,
-      );
+      throw error;
     }
+
+    await this.recordDelivery({
+      messageType,
+      userId: recipient.userId,
+      sender: 'Agrofount',
+      recipientEmail: recipient.email,
+      channel: options?.channel ?? 'EMAIL',
+      campaignId: options?.campaignId,
+      jobName: options?.jobName,
+      status: 'SENT',
+    });
   }
 
   private async sendEmail(
     recipient: MessageRecipient,
     params: Record<string, any>,
     messageType: MessageTypes,
+    options?: { campaignId?: string; jobName?: string },
   ): Promise<void> {
     if (!recipient.email) {
       throw new BadGatewayException(
@@ -361,13 +417,34 @@ export class NotificationService {
 
     const templateId = EmailTemplateIds[messageType];
 
-    await this.sendInBlue.sendEmail(recipient.email, templateId, params);
+    try {
+      await this.sendInBlue.sendEmail(recipient.email, templateId, params);
+    } catch (error) {
+      await this.recordDelivery({
+        messageType,
+        templateId,
+        userId: recipient.userId,
+        sender: 'Agrofount Shop',
+        recipientEmail: recipient.email,
+        channel: 'EMAIL',
+        campaignId: options?.campaignId,
+        jobName: options?.jobName,
+        status: 'FAILED',
+        errorMessage: error?.message || String(error),
+      });
+      throw error;
+    }
 
-    await this.create({
+    await this.recordDelivery({
       messageType,
       templateId,
       userId: recipient.userId,
       sender: 'Agrofount Shop',
+      recipientEmail: recipient.email,
+      channel: 'EMAIL',
+      campaignId: options?.campaignId,
+      jobName: options?.jobName,
+      status: 'SENT',
     });
   }
 
@@ -375,6 +452,7 @@ export class NotificationService {
     recipient: string,
     messageType: MessageTypes,
     params: Record<string, any> = {},
+    options?: { campaignId?: string; jobName?: string },
   ) {
     const { sender_id } = this.configService.get<TermiiConfig>('termii');
 
@@ -384,27 +462,29 @@ export class NotificationService {
       );
     }
 
+    const recordSms = (message?: string) =>
+      this.recordDelivery({
+        messageType,
+        userId: params.userId,
+        sender: sender_id,
+        message,
+        channel: 'SMS',
+        recipientPhone: recipient,
+        campaignId: options?.campaignId,
+        jobName: options?.jobName,
+      });
+
     // Determine the message content based on the message type
     switch (messageType) {
       case MessageTypes.SEND_OTP:
         const otpRes = await this.sendOTP(recipient);
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-        });
+        await recordSms();
 
         return otpRes;
 
       case MessageTypes.VERIFY_PHONE_OTP:
         const res = await this.verifyOTP(params.pinId, params.otp);
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-        });
+        await recordSms();
 
         return res;
 
@@ -412,14 +492,7 @@ export class NotificationService {
         const voucherMessage = `Your voucher code is ${params.voucher_code}. Amount: ${params.amount}. Valid for 30 days.`;
 
         const smsRes = await this.sendSmsMessage(voucherMessage, recipient);
-
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-          message: voucherMessage,
-        });
+        await recordSms(voucherMessage);
 
         return smsRes;
 
@@ -430,14 +503,7 @@ export class NotificationService {
           paymentMessage,
           recipient,
         );
-
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-          message: paymentMessage,
-        });
+        await recordSms(paymentMessage);
 
         return paymentSmsRes;
 
@@ -447,14 +513,7 @@ export class NotificationService {
           orderUpdateMessage,
           recipient,
         );
-
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-          message: orderUpdateMessage,
-        });
+        await recordSms(orderUpdateMessage);
 
         return orderUpdateSmsRes;
 
@@ -464,15 +523,23 @@ export class NotificationService {
           pendingOrderMessage,
           recipient,
         );
-
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-          message: pendingOrderMessage,
-        });
+        await recordSms(pendingOrderMessage);
 
         return pendingOrderSmsRes;
+
+      case MessageTypes.CRON_JOB_SUMMARY:
+        const cronSummaryMessage = `Ayo Cron: ${params.jobName} ${
+          params.error ? 'FAILED' : 'completed'
+        } - ${params.sent}/${params.total} sent${
+          params.error ? ` (error: ${params.error})` : ''
+        }.`;
+        const cronSummarySmsRes = await this.sendSmsMessage(
+          cronSummaryMessage,
+          recipient,
+        );
+        await recordSms(cronSummaryMessage);
+
+        return cronSummarySmsRes;
 
       default:
         throw new Error(`Unsupported SMS message type: ${messageType}`);
@@ -600,13 +667,21 @@ export class NotificationService {
     phone: string,
     userId: string,
     message: string,
+    options?: { campaignId?: string; jobName?: string },
   ): Promise<any> {
     const result = await this.sendSmsMessage(message, phone);
-    await this.create({
+    const failed = result?.success === false;
+    await this.recordDelivery({
       messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
       userId,
       sender: 'Agrofount',
       message,
+      channel: 'SMS',
+      recipientPhone: phone,
+      campaignId: options?.campaignId,
+      jobName: options?.jobName,
+      status: failed ? 'FAILED' : 'SENT',
+      errorMessage: failed ? result.error : undefined,
     });
     return result;
   }

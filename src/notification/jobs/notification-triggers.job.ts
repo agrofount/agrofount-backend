@@ -73,6 +73,7 @@ export class NotificationTriggersJob {
             ),
             `Please leave feedback for order ${order.code}.`,
             MessageTypes.ORDER_FEEDBACK_REQUEST,
+            { jobName: CronJobName.ORDER_FEEDBACK_REQUESTS, channel: 'EMAIL' },
           );
           sent++;
         } catch (err) {
@@ -130,6 +131,15 @@ export class NotificationTriggersJob {
             message: "It's been a while. Check out what's new on Agrofount.",
             ctaLink: process.env.FRONTEND_URL,
           });
+          await this.notificationService.recordDelivery({
+            messageType: MessageTypes.LOGIN_INACTIVITY_REMINDER,
+            userId: user.id,
+            sender: 'Agrofount',
+            message: 'We miss you!',
+            channel: 'IN_APP',
+            jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
+            status: 'SENT',
+          });
 
           if (user.email) {
             await this.notificationService.sendCustomEmail(
@@ -143,6 +153,10 @@ export class NotificationTriggersJob {
               ),
               `Hi ${name}, come back and check out what's new on Agrofount!`,
               MessageTypes.LOGIN_INACTIVITY_REMINDER,
+              {
+                jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
+                channel: 'EMAIL',
+              },
             );
             sent++;
           }
@@ -290,6 +304,7 @@ export class NotificationTriggersJob {
         }/verify-email?token=${rawToken}`,
         account_link: `${process.env.FRONTEND_URL ?? ''}/account`,
       },
+      { jobName: CronJobName.UNVERIFIED_ACCOUNT_REMINDERS },
     );
   }
 
@@ -329,6 +344,7 @@ export class NotificationTriggersJob {
             ),
             'Your weekly farming tip from Agrofount.',
             MessageTypes.EDUCATIONAL_CONTENT,
+            { jobName: CronJobName.EDUCATIONAL_CONTENT, channel: 'EMAIL' },
           );
           sent++;
         } catch (err) {

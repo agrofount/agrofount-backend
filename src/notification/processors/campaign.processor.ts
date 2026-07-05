@@ -79,54 +79,132 @@ export class CampaignProcessor extends WorkerHost {
       phoneNumber: user.phone,
     };
 
-    switch (channel.toUpperCase()) {
+    const upperChannel = channel.toUpperCase();
+
+    switch (upperChannel) {
       case 'EMAIL':
-        if (!user.email) return;
+        if (!user.email) {
+          await this.notificationService.recordDelivery({
+            messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+            userId: user.id,
+            sender: 'Agrofount',
+            message: campaign.title,
+            channel: upperChannel,
+            campaignId: campaign.id,
+            status: 'SKIPPED',
+            errorMessage: 'Recipient has no email address on file',
+          });
+          return;
+        }
         await this.notificationService.sendCustomEmail(
           recipient,
           campaign.title,
           this.buildEmailHtml(campaign),
           campaign.message,
           MessageTypes.CAMPAIGN_NOTIFICATION,
+          { campaignId: campaign.id, channel: upperChannel },
         );
         break;
 
       case 'SMS':
-        if (!user.phone) return;
+        if (!user.phone) {
+          await this.notificationService.recordDelivery({
+            messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+            userId: user.id,
+            sender: 'Agrofount',
+            message: campaign.title,
+            channel: upperChannel,
+            campaignId: campaign.id,
+            status: 'SKIPPED',
+            errorMessage: 'Recipient has no phone number on file',
+          });
+          return;
+        }
         await this.notificationService.sendSmsForCampaign(
           user.phone,
           user.id,
           campaign.message,
+          { campaignId: campaign.id },
         );
         break;
 
       case 'IN_APP':
-        this.notificationGateway.emitToUser(user.id, 'notification', {
-          title: campaign.title,
-          message: campaign.message,
-          ctaText: campaign.ctaText,
-          ctaLink: campaign.ctaLink,
-          category: campaign.category,
-          campaignId: campaign.id,
-        });
-        await this.notificationService.create({
+        try {
+          this.notificationGateway.emitToUser(user.id, 'notification', {
+            title: campaign.title,
+            message: campaign.message,
+            ctaText: campaign.ctaText,
+            ctaLink: campaign.ctaLink,
+            category: campaign.category,
+            campaignId: campaign.id,
+          });
+          await this.notificationService.recordDelivery({
+            messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+            userId: user.id,
+            sender: 'Agrofount',
+            message: campaign.title,
+            channel: upperChannel,
+            campaignId: campaign.id,
+            status: 'SENT',
+          });
+        } catch (error) {
+          await this.notificationService.recordDelivery({
+            messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+            userId: user.id,
+            sender: 'Agrofount',
+            message: campaign.title,
+            channel: upperChannel,
+            campaignId: campaign.id,
+            status: 'FAILED',
+            errorMessage: error?.message || String(error),
+          });
+          throw error;
+        }
+        break;
+
+      case 'PUSH':
+        try {
+          this.notificationGateway.emitToUser(user.id, 'push', {
+            title: campaign.title,
+            body: campaign.message,
+            ctaLink: campaign.ctaLink,
+          });
+          await this.notificationService.recordDelivery({
+            messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+            userId: user.id,
+            sender: 'Agrofount',
+            message: campaign.title,
+            channel: upperChannel,
+            campaignId: campaign.id,
+            status: 'SENT',
+          });
+        } catch (error) {
+          await this.notificationService.recordDelivery({
+            messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+            userId: user.id,
+            sender: 'Agrofount',
+            message: campaign.title,
+            channel: upperChannel,
+            campaignId: campaign.id,
+            status: 'FAILED',
+            errorMessage: error?.message || String(error),
+          });
+          throw error;
+        }
+        break;
+
+      case 'WHATSAPP':
+        await this.notificationService.recordDelivery({
           messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
           userId: user.id,
           sender: 'Agrofount',
           message: campaign.title,
+          channel: upperChannel,
+          campaignId: campaign.id,
+          status: 'SKIPPED',
+          errorMessage: 'WhatsApp channel not yet integrated',
         });
         break;
-
-      case 'PUSH':
-        this.notificationGateway.emitToUser(user.id, 'push', {
-          title: campaign.title,
-          body: campaign.message,
-          ctaLink: campaign.ctaLink,
-        });
-        break;
-
-      case 'WHATSAPP':
-        throw new Error('WhatsApp channel is not yet integrated');
 
       default:
         this.logger.warn(`Unknown channel: ${channel}`);
