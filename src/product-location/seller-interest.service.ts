@@ -217,6 +217,14 @@ export class SellerInterestService {
     return result.saved;
   }
 
+  async updateNotes(id: string, notes: string) {
+    const interest = await this.repository.findOne({ where: { id } });
+    if (!interest) throw new NotFoundException('Seller interest not found');
+
+    interest.internalNotes = notes;
+    return this.repository.save(interest);
+  }
+
   private buildAdminEmail(
     dto: CreateSellerInterestDto,
     interestId: string,
