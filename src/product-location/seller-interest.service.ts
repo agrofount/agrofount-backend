@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -11,15 +12,19 @@ import { DataSource, Repository } from 'typeorm';
 import { OutboxService } from '../outbox/outbox.service';
 import { UploadService } from '../upload/upload.service';
 import { CreateSellerInterestDto } from './dto/create-seller-interest.dto';
-import { SellerInterestEntity } from './entities/seller-interest.entity';
+import {
+  SellerInterestEntity,
+  SellerInterestStatus,
+} from './entities/seller-interest.entity';
 import { SELLER_INTEREST_PAGINATION_CONFIG } from './config/seller-interest-pagination.config';
 import { MessageTypes } from '../notification/types/notification.type';
 
 const MAX_SAMPLES = 3;
-const ADMIN_EMAIL_FALLBACK = 'dayo.akinbami@agrofount.com';
 
 @Injectable()
 export class SellerInterestService {
+  private readonly logger = new Logger(SellerInterestService.name);
+
   constructor(
     @InjectRepository(SellerInterestEntity)
     private readonly repository: Repository<SellerInterestEntity>,
@@ -64,9 +69,14 @@ export class SellerInterestService {
           return result.url;
         }),
       );
-      const adminEmail =
-        this.configService.get<string>('SELLER_INTEREST_ADMIN_EMAIL') ||
-        ADMIN_EMAIL_FALLBACK;
+      const adminEmail = this.configService.get<string>(
+        'SELLER_INTEREST_ADMIN_EMAIL',
+      );
+      if (!adminEmail) {
+        this.logger.warn(
+          'SELLER_INTEREST_ADMIN_EMAIL is not configured; skipping the seller interest admin notification email',
+        );
+      }
       const messages = this.buildEmails(dto, interestId, sampleUrls);
 
       const result = await this.dataSource.transaction(async (manager) => {
@@ -89,27 +99,30 @@ export class SellerInterestService {
             subject: messages.seller.subject,
             htmlContent: messages.seller.html,
             textContent: messages.seller.text,
-            replyTo: adminEmail,
+            ...(adminEmail ? { replyTo: adminEmail } : {}),
             messageType: MessageTypes.SELLER_INTEREST_CONFIRMATION,
           },
           manager,
         );
-        const adminNotification = await this.outboxService.create(
-          'email.custom',
-          {
-            recipient: { email: adminEmail },
-            subject: messages.admin.subject,
-            htmlContent: messages.admin.html,
-            textContent: messages.admin.text,
-            replyTo: dto.email,
-            messageType: MessageTypes.SELLER_INTEREST_ADMIN_NOTIFICATION,
-          },
-          manager,
-        );
-        return {
-          saved,
-          outboxIds: [sellerEmail.id, adminNotification.id],
-        };
+        const outboxIds = [sellerEmail.id];
+
+        if (adminEmail) {
+          const adminNotification = await this.outboxService.create(
+            'email.custom',
+            {
+              recipient: { email: adminEmail },
+              subject: messages.admin.subject,
+              htmlContent: messages.admin.html,
+              textContent: messages.admin.text,
+              replyTo: dto.email,
+              messageType: MessageTypes.SELLER_INTEREST_ADMIN_NOTIFICATION,
+            },
+            manager,
+          );
+          outboxIds.push(adminNotification.id);
+        }
+
+        return { saved, outboxIds };
       });
       persisted = true;
 
@@ -148,6 +161,55 @@ export class SellerInterestService {
       ),
     );
     return { ...interest, samples };
+  }
+
+  async updateStatus(id: string, status: SellerInterestStatus) {
+    const interest = await this.repository.findOne({ where: { id } });
+    if (!interest) throw new NotFoundException('Seller interest not found');
+
+    const shouldNotify =
+      status === SellerInterestStatus.Approved ||
+      status === SellerInterestStatus.Rejected;
+    const adminEmail = this.configService.get<string>(
+      'SELLER_INTEREST_ADMIN_EMAIL',
+    );
+    const message = shouldNotify
+      ? this.buildStatusUpdateEmail(interest, status)
+      : null;
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const sellerInterestRepo = manager.getRepository(SellerInterestEntity);
+      interest.status = status;
+      const saved = await sellerInterestRepo.save(interest);
+
+      let outboxId: string | null = null;
+      if (message) {
+        const outbox = await this.outboxService.create(
+          'email.custom',
+          {
+            recipient: { email: interest.email },
+            subject: message.subject,
+            htmlContent: message.html,
+            textContent: message.text,
+            ...(adminEmail ? { replyTo: adminEmail } : {}),
+            messageType:
+              status === SellerInterestStatus.Approved
+                ? MessageTypes.SELLER_INTEREST_APPROVED
+                : MessageTypes.SELLER_INTEREST_REJECTED,
+          },
+          manager,
+        );
+        outboxId = outbox.id;
+      }
+
+      return { saved, outboxId };
+    });
+
+    if (result.outboxId) {
+      await this.outboxService.dispatch(result.outboxId);
+    }
+
+    return result.saved;
   }
 
   private buildEmails(
@@ -221,6 +283,28 @@ export class SellerInterestService {
           dto.additionalNotes || 'Not provided'
         }\nSamples: ${sampleUrls.join(', ')}`,
       },
+    };
+  }
+
+  private buildStatusUpdateEmail(
+    interest: SellerInterestEntity,
+    status: SellerInterestStatus,
+  ) {
+    const name = this.escapeHtml(interest.contactName);
+    const product = this.escapeHtml(interest.productName);
+
+    if (status === SellerInterestStatus.Approved) {
+      return {
+        subject: 'Your Agrofount seller application has been approved',
+        html: `<p>Hello ${name},</p><p>Good news! Your seller interest submission for <strong>${product}</strong> has been approved. Our team will reach out shortly with next steps.</p><p>Agrofount</p>`,
+        text: `Hello ${interest.contactName},\n\nGood news! Your seller interest submission for ${interest.productName} has been approved. Our team will reach out shortly with next steps.\n\nAgrofount`,
+      };
+    }
+
+    return {
+      subject: 'Update on your Agrofount seller application',
+      html: `<p>Hello ${name},</p><p>Thank you for your interest in selling on Agrofount. After review, we're unable to move forward with your submission for <strong>${product}</strong> at this time.</p><p>Agrofount</p>`,
+      text: `Hello ${interest.contactName},\n\nThank you for your interest in selling on Agrofount. After review, we're unable to move forward with your submission for ${interest.productName} at this time.\n\nAgrofount`,
     };
   }
 
