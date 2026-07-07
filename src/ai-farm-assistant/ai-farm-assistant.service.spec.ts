@@ -422,6 +422,21 @@ describe('AiFarmAssistantService', () => {
     ]);
   });
 
+  it('matches products by description in addition to name and category', async () => {
+    const { service, productLocationRepository } = setup();
+
+    await service.ask(
+      { id: userId },
+      { message: 'I need broiler starter feed' },
+    );
+
+    const [callArgs] = productLocationRepository.find.mock.calls[0];
+    const matchesDescription = callArgs.where.some(
+      (clause: any) => clause.product?.description !== undefined,
+    );
+    expect(matchesDescription).toBe(true);
+  });
+
   it('recommends brooding equipment, not day-old chicks, for a brooder-temperature question', async () => {
     const { service, productLocationRepository } = setup();
 

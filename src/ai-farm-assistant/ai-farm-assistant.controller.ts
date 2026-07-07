@@ -21,6 +21,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ConfigService } from '@nestjs/config';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UserAuthGuard } from '../auth/guards/user.guard';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
@@ -28,12 +29,17 @@ import { UserEntity } from '../user/entities/user.entity';
 import { AskFarmAssistantDto } from './dto/ask-farm-assistant.dto';
 import { AiFarmAssistantService } from './ai-farm-assistant.service';
 
+const DEFAULT_STREAM_CHUNK_DELAY_MS = 40;
+
 @Controller('ai-farm-assistant')
 @ApiTags('AI Farm Assistant')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, UserAuthGuard)
 export class AiFarmAssistantController {
-  constructor(private readonly farmAssistantService: AiFarmAssistantService) {}
+  constructor(
+    private readonly farmAssistantService: AiFarmAssistantService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('ask')
   @Throttle({ default: { limit: 20, ttl: 60 * 60 * 1000 } })
@@ -98,12 +104,16 @@ export class AiFarmAssistantController {
         requiresVetAttention: response.requiresVetAttention,
       });
 
+      const chunkDelayMs =
+        Number(this.configService.get('AI_STREAM_CHUNK_DELAY_MS')) ||
+        DEFAULT_STREAM_CHUNK_DELAY_MS;
+
       for (const delta of this.chunkMessage(response.reply || '')) {
         if (res.destroyed) {
           return;
         }
         this.writeSse(res, 'chunk', { delta });
-        await this.sleep(10);
+        await this.sleep(chunkDelayMs);
       }
 
       this.writeSse(res, 'done', response);
