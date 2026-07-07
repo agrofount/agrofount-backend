@@ -108,3 +108,71 @@ describe('AiToolRegistryService - vaccination.schedule', () => {
     expect(result.gramsPerBirdPerDay).toBe(45);
   });
 });
+
+describe('AiToolRegistryService - commerce.product_search', () => {
+  function setup() {
+    const productLocationRepository = {
+      find: jest.fn().mockResolvedValue([
+        {
+          id: 'location-1',
+          price: '15000.00',
+          isAvailable: true,
+          isDraft: false,
+          uom: 'bag',
+          product: {
+            id: 'product-1',
+            name: 'Layer Feed 25kg',
+            category: 'Poultry',
+            subCategory: 'Feed',
+            brand: 'Agrofount',
+            images: ['https://cdn.example/layer-feed.jpg'],
+          },
+          state: { name: 'Lagos' },
+          country: { name: 'Nigeria' },
+        },
+      ]),
+    };
+    const analyticsService = {
+      recordToolInvocation: jest.fn().mockResolvedValue(undefined),
+    };
+    const aiSecurityService = {
+      sanitizeInput: jest.fn((value: string) => value),
+    };
+
+    const service = new AiToolRegistryService(
+      productLocationRepository as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      analyticsService as any,
+      aiSecurityService as any,
+      {} as any,
+    );
+
+    return { service, productLocationRepository };
+  }
+
+  it('matches products by description and primaryCategory in addition to name/category/subCategory', async () => {
+    const { service, productLocationRepository } = setup();
+
+    await service.executeTool(
+      'commerce.product_search',
+      { query: 'heat stress' },
+      { actorType: 'farmer', userId: 'user-1' },
+    );
+
+    const [callArgs] = productLocationRepository.find.mock.calls[0];
+    const matchedFields = callArgs.where.map(
+      (clause: any) => Object.keys(clause.product)[0],
+    );
+    expect(matchedFields).toEqual(
+      expect.arrayContaining([
+        'name',
+        'category',
+        'subCategory',
+        'primaryCategory',
+        'description',
+      ]),
+    );
+  });
+});

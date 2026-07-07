@@ -604,6 +604,7 @@ export class AiFarmAssistantService {
       { product: { subCategory: ILike(`%${term}%`) } },
       { product: { primaryCategory: ILike(`%${term}%`) as any } },
       { product: { category: ILike(`%${term}%`) as any } },
+      { product: { description: ILike(`%${term}%`) } },
     ]);
 
     const productLocations = await this.productLocationRepository.find({

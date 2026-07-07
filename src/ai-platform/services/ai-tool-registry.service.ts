@@ -229,6 +229,8 @@ export class AiToolRegistryService {
         { product: { name: ILike(`%${query}%`) } },
         { product: { category: ILike(`%${query}%`) } as any },
         { product: { subCategory: ILike(`%${query}%`) } },
+        { product: { primaryCategory: ILike(`%${query}%`) } as any },
+        { product: { description: ILike(`%${query}%`) } },
       ],
       relations: ['product', 'state', 'country'],
       take: limit,

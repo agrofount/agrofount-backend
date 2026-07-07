@@ -245,48 +245,32 @@ export class NotificationTriggersJob {
       CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
     );
 
-    const windows = [3, 7, 14].map((days) => ({
-      days,
-      since: new Date(Date.now() - (days + 1) * 24 * 60 * 60 * 1000),
-      until: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
-    }));
-
     let sent = 0;
     let total = 0;
 
     try {
-      for (const window of windows) {
-        const users = await this.dataSource
-          .createQueryBuilder(UserEntity, 'user')
-          .where('user.isVerified = false')
-          .andWhere('user.deletedAt IS NULL')
-          .andWhere('user.createdAt BETWEEN :since AND :until', {
-            since: window.since,
-            until: window.until,
-          })
-          .select(['user.id', 'user.email', 'user.firstname'])
-          .getMany();
+      const users = await this.dataSource
+        .createQueryBuilder(UserEntity, 'user')
+        .where('user.isVerified = false')
+        .andWhere('user.deletedAt IS NULL')
+        .select(['user.id', 'user.email', 'user.firstname'])
+        .getMany();
 
-        total += users.length;
-        let windowSent = 0;
-        for (const user of users) {
-          if (!user.email) continue;
-          try {
-            await this.dispatchUnverifiedReminder(user);
-            windowSent++;
-          } catch (err) {
-            this.logger.warn(
-              `Unverified reminder (day ${window.days}) failed for user ${
-                user.id
-              }: ${(err as Error).message}`,
-            );
-          }
+      total = users.length;
+      for (const user of users) {
+        if (!user.email) continue;
+        try {
+          await this.dispatchUnverifiedReminder(user);
+          sent++;
+        } catch (err) {
+          this.logger.warn(
+            `Unverified reminder failed for user ${user.id}: ${
+              (err as Error).message
+            }`,
+          );
         }
-        sent += windowSent;
-        this.logger.log(
-          `Unverified reminder day-${window.days}: ${windowSent}/${users.length}`,
-        );
       }
+      this.logger.log(`Unverified reminders: ${sent}/${users.length}`);
 
       await this.cronMonitor.finishRun(run, { sent, total });
     } catch (err) {
