@@ -27,7 +27,10 @@ import { NotificationTriggersJob } from './jobs/notification-triggers.job';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import type { CampaignAudience } from './entities/notification-campaign.entity';
+import { CampaignAudienceType } from './entities/notification-campaign.entity';
 import { CronJobName } from './enums/cron-job-name.enum';
+import { CronJobTarget } from './types/cron-job-target.type';
+import { paginateArray } from './utils/paginate-array.util';
 
 @Controller('message')
 @ApiTags('Notification')
@@ -72,6 +75,8 @@ export class NotificationController {
   estimateAudience(@Body() body: Record<string, unknown>) {
     return this.campaignService.estimateAudience(
       (body?.audience as CampaignAudience) ?? { all: true },
+      (body?.audienceType as CampaignAudienceType) ??
+        CampaignAudienceType.Users,
     );
   }
 
@@ -151,9 +156,33 @@ export class NotificationController {
   @Get('cron-jobs/:name/recipients')
   @UseGuards(JwtAuthGuard, AdminAuthGuard)
   @ApiOperation({
-    summary: 'List individual recipient delivery records for a cron job',
+    summary:
+      'List who this cron job would currently target (live query, not a sent-message log)',
   })
-  getCronJobRecipients(
+  async getCronJobRecipients(
+    @Param('name') name: string,
+    @Query() query: PaginateQuery,
+  ) {
+    if (!Object.values(CronJobName).includes(name as CronJobName)) {
+      throw new BadRequestException(`Unknown cron job: ${name}`);
+    }
+    const targets = await this.triggersJob.getTargetsForJob(
+      name as CronJobName,
+    );
+    return paginateArray(targets, query, (target: CronJobTarget) => [
+      target.name,
+      target.email,
+      target.phone,
+    ]);
+  }
+
+  @Get('cron-jobs/:name/deliveries')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      'List individual message delivery records (sent/skipped/failed log) for a cron job',
+  })
+  getCronJobDeliveries(
     @Param('name') name: string,
     @Query() query: PaginateQuery,
   ) {

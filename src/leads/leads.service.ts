@@ -4,13 +4,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
+import { DataSource, ILike, Repository } from 'typeorm';
 import { Workbook } from 'exceljs';
 import { LeadEntity, LeadSource, LeadStatus } from './entities/lead.entity';
+import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
 import { NotifyLeadDto } from './dto/notify-lead.dto';
 import { NotificationService } from '../notification/notification.service';
 import { MessageTypes } from '../notification/types/notification.type';
+import { UserEntity } from '../user/entities/user.entity';
+import { extractLeadInsights, hasPurchaseIntent } from './lead-insights.util';
 
 @Injectable()
 export class LeadsService {
@@ -18,6 +21,7 @@ export class LeadsService {
     @InjectRepository(LeadEntity)
     private readonly leadRepo: Repository<LeadEntity>,
     private readonly notificationService: NotificationService,
+    private readonly dataSource: DataSource,
   ) {}
 
   private isXlsxBuffer(buffer: Buffer): boolean {
@@ -74,14 +78,84 @@ export class LeadsService {
       .map((l) => l.split(sep).map((v) => v.trim().replace(/^"|"$/g, '')));
   }
 
+  async create(dto: CreateLeadDto): Promise<LeadEntity> {
+    const phone = dto.phone.trim();
+    const existing = await this.leadRepo.findOne({ where: { phone } });
+    if (existing) return existing;
+
+    const lead = this.leadRepo.create({
+      name: dto.name.trim(),
+      phone,
+      email: dto.email?.trim() || undefined,
+      state: dto.state?.trim() || undefined,
+      gender: dto.gender?.trim() || undefined,
+      campaignId: dto.campaignId?.trim() || undefined,
+      campaignName: dto.campaignName?.trim() || undefined,
+      source: LeadSource.Website,
+      status: LeadStatus.New,
+    });
+    return this.leadRepo.save(lead);
+  }
+
+  async linkConversionByContact(
+    userId: string,
+    contact: { email?: string | null; phone?: string | null },
+  ): Promise<void> {
+    if (!contact.email && !contact.phone) return;
+
+    const where: Record<string, unknown>[] = [];
+    if (contact.email) where.push({ email: contact.email });
+    if (contact.phone) where.push({ phone: contact.phone });
+
+    const lead = await this.leadRepo.findOne({ where });
+    if (!lead || lead.convertedUserId) return;
+
+    lead.convertedUserId = userId;
+    lead.convertedAt = new Date();
+    if (lead.status !== LeadStatus.Rejected) {
+      lead.status = LeadStatus.Converted;
+    }
+    await this.leadRepo.save(lead);
+  }
+
+  // Fixed Meta/TikTok lead-gen fields the importer already maps onto real
+  // LeadEntity columns. Any other column (e.g. a form's own custom questions,
+  // which vary by campaign) is captured into customFields instead of being
+  // silently dropped.
+  private static readonly KNOWN_LEAD_COLUMNS = new Set([
+    'phone_number',
+    'phone',
+    'name',
+    'lead_id',
+    'gender',
+    'province/state',
+    'province_state',
+    'state',
+    'ad_id',
+    'ad_name',
+    'adgroup_id',
+    'adgroup_name',
+    'campaign_id',
+    'campaign_name',
+    'form_id',
+    'form_name',
+    'created_time',
+  ]);
+
   async uploadBulk(
     fileBuffer: Buffer,
     adminId: string,
-  ): Promise<{ inserted: number; skipped: number; total: number }> {
+  ): Promise<{
+    inserted: number;
+    updated: number;
+    skipped: number;
+    total: number;
+  }> {
     const rows = await this.parseToRows(fileBuffer);
     if (rows.length < 2) throw new BadRequestException('File has no data rows');
 
-    const headers = rows[0].map((h) =>
+    const rawHeaders = rows[0];
+    const headers = rawHeaders.map((h) =>
       h
         .toLowerCase()
         .replace(/[/\\]+/g, '_')
@@ -94,7 +168,21 @@ export class LeadsService {
       return idx >= 0 ? (row[idx] ?? '').trim() : '';
     };
 
+    const extractCustomFields = (
+      row: string[],
+    ): Record<string, string> | undefined => {
+      const fields: Record<string, string> = {};
+      headers.forEach((normalized, idx) => {
+        if (LeadsService.KNOWN_LEAD_COLUMNS.has(normalized)) return;
+        const value = (row[idx] ?? '').trim();
+        if (!value) return;
+        fields[rawHeaders[idx]?.trim() || normalized] = value;
+      });
+      return Object.keys(fields).length ? fields : undefined;
+    };
+
     let inserted = 0;
+    let updated = 0;
     let skipped = 0;
 
     for (let i = 1; i < rows.length; i++) {
@@ -107,52 +195,66 @@ export class LeadsService {
       }
 
       const sourceLeadId = col(row, 'lead_id');
-      const existingByLeadId = sourceLeadId
-        ? await this.leadRepo.findOne({ where: { sourceLeadId } })
-        : null;
-      if (existingByLeadId) {
-        skipped++;
-        continue;
-      }
-
-      const existingByPhone = await this.leadRepo.findOne({ where: { phone } });
-      if (existingByPhone) {
-        skipped++;
-        continue;
-      }
+      const existing = await this.leadRepo.findOne({
+        where: sourceLeadId ? [{ sourceLeadId }, { phone }] : [{ phone }],
+      });
 
       const rawTime = col(row, 'created_time');
       const parsedTime = rawTime ? new Date(rawTime) : null;
       const sourceCreatedAt =
         parsedTime && !isNaN(parsedTime.getTime()) ? parsedTime : null;
 
+      // Only the raw imported fields are (re)written on a match — status,
+      // notes, managedBy, and conversion tracking are admin/lifecycle state
+      // and must survive a re-upload untouched.
+      const importedFields = {
+        sourceLeadId: sourceLeadId || undefined,
+        name,
+        phone,
+        gender: col(row, 'gender') || undefined,
+        state:
+          col(row, 'province/state') ||
+          col(row, 'province_state') ||
+          col(row, 'state') ||
+          undefined,
+        adId: col(row, 'ad_id') || undefined,
+        adName: col(row, 'ad_name') || undefined,
+        campaignId: col(row, 'campaign_id') || undefined,
+        campaignName: col(row, 'campaign_name') || undefined,
+        formId: col(row, 'form_id') || undefined,
+        formName: col(row, 'form_name') || undefined,
+        customFields: extractCustomFields(row),
+        sourceCreatedAt: sourceCreatedAt ?? undefined,
+      };
+
+      if (existing) {
+        await this.leadRepo.save(this.leadRepo.merge(existing, importedFields));
+        updated++;
+        continue;
+      }
+
+      // Auto-qualify only on first import, based on a genuine, keyword-
+      // matching stated interest — never re-evaluated on a later re-upload,
+      // so it can't silently override an admin's own status decision.
+      const { statedInterest } = extractLeadInsights(
+        importedFields.customFields,
+      );
+      const initialStatus = hasPurchaseIntent(statedInterest)
+        ? LeadStatus.Qualified
+        : LeadStatus.New;
+
       await this.leadRepo.save(
         this.leadRepo.create({
-          sourceLeadId: sourceLeadId || undefined,
-          name,
-          phone,
-          gender: col(row, 'gender') || undefined,
-          state:
-            col(row, 'province/state') ||
-            col(row, 'province_state') ||
-            col(row, 'state') ||
-            undefined,
-          adId: col(row, 'ad_id') || undefined,
-          adName: col(row, 'ad_name') || undefined,
-          campaignId: col(row, 'campaign_id') || undefined,
-          campaignName: col(row, 'campaign_name') || undefined,
-          formId: col(row, 'form_id') || undefined,
-          formName: col(row, 'form_name') || undefined,
+          ...importedFields,
           source: LeadSource.Meta,
-          status: LeadStatus.New,
+          status: initialStatus,
           managedBy: adminId,
-          sourceCreatedAt: sourceCreatedAt ?? undefined,
         }),
       );
       inserted++;
     }
 
-    return { inserted, skipped, total: rows.length - 1 };
+    return { inserted, updated, skipped, total: rows.length - 1 };
   }
 
   async findAll(params: {
@@ -225,6 +327,40 @@ export class LeadsService {
     const conversionRate =
       total > 0 ? Math.round((converted / total) * 100 * 10) / 10 : 0;
 
+    // Distinct from the status-based `converted` count above: a lead can be
+    // linked to a registered account (convertedUserId set) even if its status
+    // stayed Rejected (see LeadsService.linkConversionByContact).
+    const { convertedWithAccount, avgConversionDays } = await this.leadRepo
+      .createQueryBuilder('l')
+      .select(
+        'COUNT(*) FILTER (WHERE l."convertedUserId" IS NOT NULL)',
+        'convertedWithAccount',
+      )
+      .addSelect(
+        'AVG(EXTRACT(EPOCH FROM (l."convertedAt" - l."createdAt")) / 86400) FILTER (WHERE l."convertedAt" IS NOT NULL)',
+        'avgConversionDays',
+      )
+      .getRawOne<{
+        convertedWithAccount: string;
+        avgConversionDays: string | null;
+      }>()
+      .then((row) => ({
+        convertedWithAccount: Number(row?.convertedWithAccount ?? 0),
+        avgConversionDays: row?.avgConversionDays
+          ? Math.round(Number(row.avgConversionDays) * 10) / 10
+          : null,
+      }));
+
+    const [{ registeredNoOrderCount }] = await this.dataSource
+      .createQueryBuilder(UserEntity, 'user')
+      .select('COUNT(*)', 'registeredNoOrderCount')
+      .where('user.deletedAt IS NULL')
+      .andWhere('user.isVerified = true')
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM orders o WHERE o."userId" = user.id)',
+      )
+      .getRawMany<{ registeredNoOrderCount: string }>();
+
     return {
       total,
       new: statusMap[LeadStatus.New] ?? 0,
@@ -233,6 +369,9 @@ export class LeadsService {
       converted,
       rejected: statusMap[LeadStatus.Rejected] ?? 0,
       conversionRate,
+      convertedWithAccount,
+      avgConversionDays,
+      registeredNoOrderCount: Number(registeredNoOrderCount ?? 0),
     };
   }
 

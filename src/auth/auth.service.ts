@@ -38,6 +38,7 @@ import { VoucherService } from '../voucher/voucher.service';
 import { WalletService } from '../wallet/wallet.service';
 import { VoucherEntity } from '../voucher/entities/voucher.entity';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { LeadsService } from '../leads/leads.service';
 import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 import {
   AuthPrincipalType,
@@ -80,6 +81,7 @@ export class AuthService {
     @InjectRepository(AuthSessionEntity)
     private readonly sessionRepository: Repository<AuthSessionEntity>,
     private readonly dataSource: DataSource,
+    private readonly leadsService: LeadsService,
   ) {}
 
   async validateUser(
@@ -276,6 +278,12 @@ export class AuthService {
       if (!savedUser) {
         throw new BadRequestException('User not created');
       }
+
+      void this.leadsService
+        .linkConversionByContact(savedUser.id, { email, phone })
+        .catch((error) =>
+          Logger.error('Failed to link lead conversion on registration', error),
+        );
 
       if (email) {
         const frontendUrl = this.configService.get<string>('app.frontend_url');

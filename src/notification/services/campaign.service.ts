@@ -5,6 +5,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import {
   CampaignAudience,
+  CampaignAudienceType,
   CampaignFrequency,
   CampaignStatus,
   NotificationCampaignEntity,
@@ -12,6 +13,7 @@ import {
 import { CreateCampaignDto } from '../dto/create-campaign.dto';
 import { UserEntity } from '../../user/entities/user.entity';
 import { BusinessType, UserTypes } from '../../auth/enums/role.enum';
+import { LeadEntity, LeadStatus } from '../../leads/entities/lead.entity';
 
 @Injectable()
 export class CampaignService {
@@ -30,6 +32,7 @@ export class CampaignService {
       category: dto.category,
       channels: dto.channels,
       audience: dto.audience ?? { all: true },
+      audienceType: dto.audienceType ?? CampaignAudienceType.Users,
       ctaText: dto.ctaText,
       ctaLink: dto.ctaLink,
       bannerImageUrl: dto.bannerImageUrl,
@@ -90,44 +93,95 @@ export class CampaignService {
     };
   }
 
-  async resolveAudience(audience: CampaignAudience): Promise<UserEntity[]> {
-    const query = this.dataSource
-      .createQueryBuilder(UserEntity, 'user')
-      .where('user.deletedAt IS NULL');
+  private applyUserAudienceFilters(
+    query: ReturnType<DataSource['createQueryBuilder']>,
+    audience: CampaignAudience,
+  ) {
+    if (audience?.all) return query;
 
-    if (!audience?.all) {
-      if (audience?.states?.length) {
-        query.andWhere('user.state IN (:...states)', {
-          states: audience.states,
-        });
-      }
-      const validBT = Object.values(BusinessType);
-      const safeBT = (audience.businessTypes ?? []).filter((t) =>
-        validBT.includes(t as BusinessType),
-      );
-      if (safeBT.length) {
-        query.andWhere('user.businessType IN (:...businessTypes)', {
-          businessTypes: safeBT,
-        });
-      }
-      if (audience?.isVerified !== undefined) {
-        query.andWhere('user.isVerified = :isVerified', {
-          isVerified: audience.isVerified,
-        });
-      }
-      const validUT = Object.values(UserTypes);
-      const safeUT = (audience.userTypes ?? []).filter((t) =>
-        validUT.includes(t as UserTypes),
-      );
-      if (safeUT.length) {
-        query.andWhere('user.userType IN (:...userTypes)', {
-          userTypes: safeUT,
-        });
-      }
+    if (audience?.states?.length) {
+      query.andWhere('user.state IN (:...states)', { states: audience.states });
     }
+    const validBT = Object.values(BusinessType);
+    const safeBT = (audience.businessTypes ?? []).filter((t) =>
+      validBT.includes(t as BusinessType),
+    );
+    if (safeBT.length) {
+      query.andWhere('user.businessType IN (:...businessTypes)', {
+        businessTypes: safeBT,
+      });
+    }
+    if (audience?.isVerified !== undefined) {
+      query.andWhere('user.isVerified = :isVerified', {
+        isVerified: audience.isVerified,
+      });
+    }
+    const validUT = Object.values(UserTypes);
+    const safeUT = (audience.userTypes ?? []).filter((t) =>
+      validUT.includes(t as UserTypes),
+    );
+    if (safeUT.length) {
+      query.andWhere('user.userType IN (:...userTypes)', {
+        userTypes: safeUT,
+      });
+    }
+    return query;
+  }
+
+  private applyLeadAudienceFilters(
+    query: ReturnType<DataSource['createQueryBuilder']>,
+    audience: CampaignAudience,
+  ) {
+    if (audience?.all) return query;
+
+    if (audience?.states?.length) {
+      query.andWhere('lead.state IN (:...states)', { states: audience.states });
+    }
+    const validStatus = Object.values(LeadStatus);
+    const safeStatus = (audience.leadStatuses ?? []).filter((s) =>
+      validStatus.includes(s as LeadStatus),
+    );
+    if (safeStatus.length) {
+      query.andWhere('lead.status IN (:...statuses)', { statuses: safeStatus });
+    }
+    if (audience?.leadSources?.length) {
+      query.andWhere('lead.source IN (:...sources)', {
+        sources: audience.leadSources,
+      });
+    }
+    return query;
+  }
+
+  async resolveAudience(audience: CampaignAudience): Promise<UserEntity[]> {
+    const query = this.applyUserAudienceFilters(
+      this.dataSource
+        .createQueryBuilder(UserEntity, 'user')
+        .where('user.deletedAt IS NULL'),
+      audience,
+    );
 
     return query
       .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
+      .getMany();
+  }
+
+  async resolveLeadAudience(audience: CampaignAudience): Promise<LeadEntity[]> {
+    const query = this.applyLeadAudienceFilters(
+      this.dataSource
+        .createQueryBuilder(LeadEntity, 'lead')
+        .where('lead.deletedAt IS NULL'),
+      audience,
+    );
+
+    return query
+      .select([
+        'lead.id',
+        'lead.name',
+        'lead.email',
+        'lead.phone',
+        'lead.state',
+        'lead.customFields',
+      ])
       .getMany();
   }
 
@@ -152,41 +206,22 @@ export class CampaignService {
 
   async estimateAudience(
     audience: CampaignAudience,
+    audienceType: CampaignAudienceType = CampaignAudienceType.Users,
   ): Promise<{ count: number }> {
-    const query = this.dataSource
-      .createQueryBuilder(UserEntity, 'user')
-      .where('user.deletedAt IS NULL');
-
-    if (!audience?.all) {
-      if (audience?.states?.length) {
-        query.andWhere('user.state IN (:...states)', {
-          states: audience.states,
-        });
-      }
-      const validBT = Object.values(BusinessType);
-      const safeBT = (audience.businessTypes ?? []).filter((t) =>
-        validBT.includes(t as BusinessType),
-      );
-      if (safeBT.length) {
-        query.andWhere('user.businessType IN (:...businessTypes)', {
-          businessTypes: safeBT,
-        });
-      }
-      if (audience?.isVerified !== undefined) {
-        query.andWhere('user.isVerified = :isVerified', {
-          isVerified: audience.isVerified,
-        });
-      }
-      const validUT = Object.values(UserTypes);
-      const safeUT = (audience.userTypes ?? []).filter((t) =>
-        validUT.includes(t as UserTypes),
-      );
-      if (safeUT.length) {
-        query.andWhere('user.userType IN (:...userTypes)', {
-          userTypes: safeUT,
-        });
-      }
-    }
+    const query =
+      audienceType === CampaignAudienceType.Leads
+        ? this.applyLeadAudienceFilters(
+            this.dataSource
+              .createQueryBuilder(LeadEntity, 'lead')
+              .where('lead.deletedAt IS NULL'),
+            audience,
+          )
+        : this.applyUserAudienceFilters(
+            this.dataSource
+              .createQueryBuilder(UserEntity, 'user')
+              .where('user.deletedAt IS NULL'),
+            audience,
+          );
 
     const count = await query.getCount();
     return { count };

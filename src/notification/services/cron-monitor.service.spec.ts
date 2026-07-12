@@ -19,6 +19,10 @@ describe('CronMonitorService', () => {
       update: jest.fn().mockReturnThis(),
       set: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
+      insert: jest.fn().mockReturnThis(),
+      into: jest.fn().mockReturnThis(),
+      values: jest.fn().mockReturnThis(),
+      orIgnore: jest.fn().mockReturnThis(),
       execute: jest.fn().mockResolvedValue(undefined),
     };
     const configRepo = {
@@ -43,7 +47,7 @@ describe('CronMonitorService', () => {
       configService as any,
     );
 
-    return { service, notificationService, runRepo, queryBuilder };
+    return { service, notificationService, runRepo, queryBuilder, configRepo };
   }
 
   const baseRun = {
@@ -134,5 +138,49 @@ describe('CronMonitorService', () => {
       'CRON_JOB_SUMMARY',
       expect.any(Object),
     );
+  });
+
+  describe('onModuleInit', () => {
+    it('never touches an already-configured job (regression: used to reset enabled back to false on every restart)', async () => {
+      const { service, configRepo, queryBuilder } = setup();
+      configRepo.find.mockResolvedValue(
+        Object.values(CronJobName).map((jobName) => ({
+          jobName,
+          enabled: true,
+        })),
+      );
+
+      await service.onModuleInit();
+
+      expect(configRepo.upsert).not.toHaveBeenCalled();
+      expect(queryBuilder.insert).not.toHaveBeenCalled();
+    });
+
+    it('inserts only the job names missing a config row', async () => {
+      const { service, configRepo, queryBuilder } = setup();
+      const [firstJob, ...restJobs] = Object.values(CronJobName);
+      configRepo.find.mockResolvedValue(
+        restJobs.map((jobName) => ({ jobName, enabled: true })),
+      );
+
+      await service.onModuleInit();
+
+      expect(queryBuilder.insert).toHaveBeenCalled();
+      expect(queryBuilder.values).toHaveBeenCalledWith([
+        { jobName: firstJob, enabled: false },
+      ]);
+      expect(queryBuilder.orIgnore).toHaveBeenCalled();
+    });
+
+    it('does nothing when every job already has a config row', async () => {
+      const { service, configRepo, queryBuilder } = setup();
+      configRepo.find.mockResolvedValue(
+        Object.values(CronJobName).map((jobName) => ({ jobName })),
+      );
+
+      await service.onModuleInit();
+
+      expect(queryBuilder.insert).not.toHaveBeenCalled();
+    });
   });
 });

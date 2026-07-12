@@ -12,7 +12,7 @@ import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { OrderEntity } from './entities/order.entity';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
 import {
   PaymentChannel,
   PaymentMethod,
@@ -426,8 +426,11 @@ export class OrderService {
   async findAll(
     query: PaginateQuery,
     user: UserEntity | AdminEntity,
+    state?: string,
   ): Promise<Paginated<OrderEntity>> {
     try {
+      const isAdmin = user.userType === UserTypes.System;
+
       // Define pagination options
       const paginationOptions: PaginateConfig<OrderEntity> = {
         sortableColumns: [
@@ -446,20 +449,23 @@ export class OrderService {
           createdAt: [FilterOperator.GTE, FilterOperator.LTE],
           status: [FilterOperator.EQ],
         },
-        where:
-          user.userType === UserTypes.System
-            ? undefined
-            : { user: { id: user.id } },
+        // `where` is only honored by nestjs-paginate when a plain Repository
+        // is passed in — once we switch to a query builder below (needed to
+        // filter on the JSON `address.state` field), it's silently ignored,
+        // so the same ownership restriction is re-applied manually there.
+        where: state
+          ? undefined
+          : isAdmin
+          ? undefined
+          : { user: { id: user.id } },
         relations: ['user'],
         defaultLimit: 25,
         maxLimit: 100,
       };
 
-      const result = await paginate(
-        query,
-        this.orderRepository,
-        paginationOptions,
-      );
+      const target = this.buildFindAllTarget(state, isAdmin, user);
+
+      const result = await paginate(query, target, paginationOptions);
 
       // Transform the data array so @Exclude takes effect
       result.data = plainToInstance(OrderEntity, result.data);
@@ -469,6 +475,29 @@ export class OrderService {
       this.logger.error('Failed to fetch orders', error?.stack || error);
       throw new InternalServerErrorException('Failed to fetch orders');
     }
+  }
+
+  // `address` is a JSON column, so filtering by state can't go through
+  // filterableColumns — it needs a JSON path expression on a query builder
+  // instead of the repository nestjs-paginate would use by default (it
+  // builds its own with the alias '__root'). When we switch to our own
+  // query builder, nestjs-paginate silently stops applying `config.where`,
+  // so the non-admin ownership restriction has to be re-applied here too.
+  buildFindAllTarget(
+    state: string | undefined,
+    isAdmin: boolean,
+    user: UserEntity | AdminEntity,
+  ): Repository<OrderEntity> | SelectQueryBuilder<OrderEntity> {
+    if (!state) return this.orderRepository;
+
+    const qb = this.orderRepository.createQueryBuilder('__root');
+    qb.andWhere(`__root.address ->> 'state' ILIKE :state`, {
+      state: `%${state}%`,
+    });
+    if (!isAdmin) {
+      qb.andWhere('__root.userId = :userId', { userId: user.id });
+    }
+    return qb;
   }
 
   async getMonthlyTarget() {

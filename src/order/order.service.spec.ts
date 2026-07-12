@@ -65,3 +65,56 @@ describe('OrderService pricing invariants', () => {
     ).toThrow(BadRequestException);
   });
 });
+
+describe('OrderService.buildFindAllTarget', () => {
+  function setup() {
+    const qb = { andWhere: jest.fn().mockReturnThis() };
+    const orderRepository = {
+      createQueryBuilder: jest.fn().mockReturnValue(qb),
+    };
+    const service = Object.create(OrderService.prototype) as OrderService;
+    (service as any).orderRepository = orderRepository;
+    return { service, orderRepository, qb };
+  }
+
+  it('returns the plain repository when no state filter is requested', () => {
+    const { service, orderRepository } = setup();
+
+    const target = service.buildFindAllTarget(undefined, false, {
+      id: 'user-1',
+    } as any);
+
+    expect(target).toBe(orderRepository);
+    expect(orderRepository.createQueryBuilder).not.toHaveBeenCalled();
+  });
+
+  it('scopes a state-filtered query to the requesting user when not an admin', () => {
+    const { service, orderRepository, qb } = setup();
+
+    const target = service.buildFindAllTarget('Lagos', false, {
+      id: 'user-1',
+    } as any);
+
+    expect(target).toBe(qb);
+    expect(orderRepository.createQueryBuilder).toHaveBeenCalledWith('__root');
+    expect(qb.andWhere).toHaveBeenCalledWith(
+      `__root.address ->> 'state' ILIKE :state`,
+      { state: '%Lagos%' },
+    );
+    expect(qb.andWhere).toHaveBeenCalledWith('__root.userId = :userId', {
+      userId: 'user-1',
+    });
+  });
+
+  it('does not scope to a single user for an admin, so all matching orders are visible', () => {
+    const { service, qb } = setup();
+
+    service.buildFindAllTarget('Lagos', true, { id: 'admin-1' } as any);
+
+    expect(qb.andWhere).toHaveBeenCalledTimes(1);
+    expect(qb.andWhere).toHaveBeenCalledWith(
+      `__root.address ->> 'state' ILIKE :state`,
+      { state: '%Lagos%' },
+    );
+  });
+});
