@@ -27,6 +27,8 @@ import { UserEntity } from '../user/entities/user.entity';
 import { LeadsService } from './leads.service';
 import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
 import { NotifyLeadDto } from './dto/notify-lead.dto';
+import { LeadEntity } from './entities/lead.entity';
+import { extractLeadInsights } from './lead-insights.util';
 
 @Controller('leads')
 @ApiTags('Leads')
@@ -59,10 +61,11 @@ export class LeadsController {
   ) {
     if (!files?.length) throw new BadRequestException('No files were uploaded');
 
-    const totals = { inserted: 0, skipped: 0, total: 0 };
+    const totals = { inserted: 0, updated: 0, skipped: 0, total: 0 };
     const results: {
       filename: string;
       inserted: number;
+      updated: number;
       skipped: number;
       total: number;
     }[] = [];
@@ -70,6 +73,7 @@ export class LeadsController {
     for (const file of files) {
       const result = await this.leadsService.uploadBulk(file.buffer, user.id);
       totals.inserted += result.inserted;
+      totals.updated += result.updated;
       totals.skipped += result.skipped;
       totals.total += result.total;
       results.push({ filename: file.originalname, ...result });
@@ -86,26 +90,28 @@ export class LeadsController {
 
   @Get()
   @ApiOperation({ summary: 'List leads with optional filters' })
-  findAll(
+  async findAll(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('source') source?: string,
   ) {
-    return this.leadsService.findAll({
+    const result = await this.leadsService.findAll({
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       search,
       status,
       source,
     });
+    return { ...result, data: result.data.map(withInsights) };
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a single lead' })
-  findOne(@Param('id') id: string) {
-    return this.leadsService.findOne(id);
+  async findOne(@Param('id') id: string) {
+    const lead = await this.leadsService.findOne(id);
+    return withInsights(lead);
   }
 
   @Patch(':id/status')
@@ -133,4 +139,8 @@ export class LeadsController {
   remove(@Param('id') id: string) {
     return this.leadsService.remove(id);
   }
+}
+
+function withInsights(lead: LeadEntity) {
+  return { ...lead, insights: extractLeadInsights(lead.customFields) };
 }

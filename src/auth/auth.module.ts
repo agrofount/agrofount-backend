@@ -13,6 +13,7 @@ import { VoucherModule } from '../voucher/voucher.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { AdminEntity } from '../admins/entities/admin.entity';
 import { AuthSessionEntity } from './entities/auth-session.entity';
+import { LeadsModule } from '../leads/leads.module';
 import type { SignOptions } from 'jsonwebtoken';
 
 @Module({
@@ -37,6 +38,7 @@ import type { SignOptions } from 'jsonwebtoken';
     NotificationModule,
     VoucherModule,
     WalletModule,
+    LeadsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, LocalStrategy, JwtStrategy],

@@ -1,15 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { createHash, randomBytes } from 'crypto';
-import { DataSource } from 'typeorm';
+import { DataSource, MoreThan } from 'typeorm';
 import { NotificationService } from '../notification.service';
 import { NotificationGateway } from '../gateways/notification.gateway';
 import { CronMonitorService } from '../services/cron-monitor.service';
 import { CronJobName } from '../enums/cron-job-name.enum';
 import { UserEntity } from '../../user/entities/user.entity';
 import { OrderEntity } from '../../order/entities/order.entity';
+import { MessageEntity } from '../entities/message.entity';
 import { MessageTypes } from '../types/notification.type';
 import { FarmFlockService } from '../../ai-platform/services/farm-flock.service';
+import {
+  VoucherEntity,
+  VoucherStatus,
+} from '../../voucher/entities/voucher.entity';
+import {
+  AiRunStatus,
+  AiToolInvocationEntity,
+} from '../../ai-platform/entities/ai-tool-invocation.entity';
+import { LeadEntity } from '../../leads/entities/lead.entity';
+import {
+  extractLeadInsights,
+  LeadInsights,
+} from '../../leads/lead-insights.util';
 
 type FarmingTipContent = {
   title: string;
@@ -622,6 +636,262 @@ export class NotificationTriggersJob {
         } catch (err) {
           this.logger.warn(
             `Vaccination reminder failed for flock ${flock.id}: ${
+              (err as Error).message
+            }`,
+          );
+        }
+      }
+
+      await this.cronMonitor.finishRun(run, { sent, total });
+    } catch (err) {
+      await this.cronMonitor.finishRun(run, {
+        sent,
+        total,
+        error: (err as Error).message,
+      });
+      throw err;
+    }
+  }
+
+  // One-shot 24h windows at fixed days-since-registration, mirroring the
+  // PENDING_ORDER_REMINDERS trick — running this daily naturally advances
+  // each user through exactly one touchpoint per day offset, never repeating.
+  private static readonly REGISTERED_NO_ORDER_TOUCHPOINTS: {
+    dayOffset: number;
+    heading: string;
+    body: string;
+  }[] = [
+    {
+      dayOffset: 3,
+      heading: 'Ready to place your first order?',
+      body: 'You joined Agrofount a few days ago — take a look at what farmers near you are buying and get your first order in.',
+    },
+    {
+      dayOffset: 7,
+      heading: "Still thinking it over? We're here when you're ready",
+      body: "Browse feed, vaccines, and equipment from trusted suppliers whenever you're ready to order.",
+    },
+    {
+      dayOffset: 14,
+      heading: "Don't miss out on your welcome offer",
+      body: 'Your Agrofount account is set up and ready — place your first order before any welcome voucher on your account expires.',
+    },
+  ];
+
+  // If this user came from a tracked lead with a stated interest/new-farmer
+  // answer (see LeadsService.linkConversionByContact), blend that into the
+  // generic touchpoint copy instead of sending a fully generic nudge.
+  private personalizeRegisteredNudge(
+    touchpoint: { heading: string; body: string },
+    insights: LeadInsights,
+  ): { heading: string; body: string } {
+    let { heading, body } = touchpoint;
+
+    if (insights.statedInterest) {
+      heading = `Still interested in ${insights.statedInterest}?`;
+      body = `You told us you were interested in "${insights.statedInterest}" — ${body}`;
+    }
+
+    if (insights.isNewFarmer) {
+      body = `${body} New to poultry farming? Ayo, our AI farm assistant, can walk you through the basics anytime.`;
+    }
+
+    return { heading, body };
+  }
+
+  @Cron('0 11 * * *')
+  async sendRegisteredNoOrderNudges() {
+    if (
+      !(await this.cronMonitor.isEnabled(CronJobName.REGISTERED_NO_ORDER_NUDGE))
+    )
+      return;
+    const run = await this.cronMonitor.startRun(
+      CronJobName.REGISTERED_NO_ORDER_NUDGE,
+    );
+
+    let sent = 0;
+    let total = 0;
+
+    try {
+      for (const touchpoint of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
+        const windowEnd = new Date(
+          Date.now() - touchpoint.dayOffset * 24 * 60 * 60 * 1000,
+        );
+        const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000);
+
+        const users = await this.dataSource
+          .createQueryBuilder(UserEntity, 'user')
+          .where('user.deletedAt IS NULL')
+          .andWhere('user.isVerified = true')
+          .andWhere('user.createdAt BETWEEN :start AND :end', {
+            start: windowStart,
+            end: windowEnd,
+          })
+          .andWhere(
+            'NOT EXISTS (SELECT 1 FROM orders o WHERE o."userId" = user.id)',
+          )
+          .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
+          .getMany();
+
+        total += users.length;
+
+        for (const user of users) {
+          if (!user.email) continue;
+          try {
+            const voucher = await this.dataSource
+              .getRepository(VoucherEntity)
+              .findOne({
+                where: { user: { id: user.id }, status: VoucherStatus.Active },
+              });
+
+            const lead = await this.dataSource
+              .getRepository(LeadEntity)
+              .findOne({ where: { convertedUserId: user.id } });
+            const { heading, body: personalizedBody } =
+              this.personalizeRegisteredNudge(
+                touchpoint,
+                extractLeadInsights(lead?.customFields),
+              );
+
+            const body = voucher
+              ? `${personalizedBody} Use code ${voucher.code} for ₦${voucher.amount} off.`
+              : personalizedBody;
+
+            await this.notificationService.sendCustomEmail(
+              { userId: user.id, email: user.email },
+              heading,
+              this.buildSimpleEmail(
+                heading,
+                body,
+                'Shop Now',
+                process.env.FRONTEND_URL ?? '',
+              ),
+              body,
+              MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+              {
+                jobName: CronJobName.REGISTERED_NO_ORDER_NUDGE,
+                channel: 'EMAIL',
+              },
+            );
+            sent++;
+          } catch (err) {
+            this.logger.warn(
+              `Registered-no-order nudge failed for user ${user.id}: ${
+                (err as Error).message
+              }`,
+            );
+          }
+        }
+      }
+
+      await this.cronMonitor.finishRun(run, { sent, total });
+    } catch (err) {
+      await this.cronMonitor.finishRun(run, {
+        sent,
+        total,
+        error: (err as Error).message,
+      });
+      throw err;
+    }
+  }
+
+  // "Purchase intent" candidates: farmers who searched a product or checked
+  // credit eligibility via Ayo but still have zero orders. A separate,
+  // independently-toggleable job from the generic no-order nudge above so the
+  // two can be tuned/disabled independently while this signal is validated.
+  private static readonly AYO_INTENT_TOOLS = [
+    'commerce.product_search',
+    'credit.eligibility',
+  ];
+
+  @Cron('0 12 * * *')
+  async sendAyoIntentFollowUps() {
+    if (!(await this.cronMonitor.isEnabled(CronJobName.AYO_INTENT_FOLLOW_UP)))
+      return;
+    const run = await this.cronMonitor.startRun(
+      CronJobName.AYO_INTENT_FOLLOW_UP,
+    );
+
+    let sent = 0;
+    let total = 0;
+
+    try {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      const candidates = await this.dataSource
+        .createQueryBuilder(AiToolInvocationEntity, 'inv')
+        .select('DISTINCT inv.userId', 'userId')
+        .where('inv.toolName IN (:...tools)', {
+          tools: NotificationTriggersJob.AYO_INTENT_TOOLS,
+        })
+        .andWhere('inv.status = :status', { status: AiRunStatus.Succeeded })
+        .andWhere('inv.createdAt >= :since', { since })
+        .andWhere('inv.userId IS NOT NULL')
+        .andWhere(
+          'NOT EXISTS (SELECT 1 FROM orders o WHERE o."userId" = inv."userId")',
+        )
+        .getRawMany<{ userId: string }>();
+
+      total = candidates.length;
+
+      for (const { userId } of candidates) {
+        try {
+          const alreadyNudged = await this.dataSource
+            .getRepository(MessageEntity)
+            .findOne({
+              where: {
+                userId,
+                jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
+                createdAt: MoreThan(since),
+              },
+            });
+          if (alreadyNudged) continue;
+
+          const user = await this.dataSource
+            .getRepository(UserEntity)
+            .findOne({ where: { id: userId } });
+          if (!user || user.deletedAt || !user.isVerified) continue;
+          if (!user.email) continue;
+
+          const lastProductSearch = await this.dataSource
+            .getRepository(AiToolInvocationEntity)
+            .findOne({
+              where: {
+                userId,
+                toolName: 'commerce.product_search',
+                status: AiRunStatus.Succeeded,
+              },
+              order: { createdAt: 'DESC' },
+            });
+          const searchedQuery = lastProductSearch?.inputSummary?.query;
+
+          const heading = searchedQuery
+            ? `Still looking for ${searchedQuery}?`
+            : 'Still exploring Agrofount?';
+          const body = searchedQuery
+            ? `You asked Ayo about "${searchedQuery}" recently — it's still available. Want help placing an order?`
+            : "You checked something out with Ayo recently — we're here if you're ready to order or need help getting started.";
+
+          await this.notificationService.sendCustomEmail(
+            { userId, email: user.email },
+            heading,
+            this.buildSimpleEmail(
+              heading,
+              body,
+              'Shop Now',
+              process.env.FRONTEND_URL ?? '',
+            ),
+            body,
+            MessageTypes.AYO_INTENT_FOLLOW_UP,
+            {
+              jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
+              channel: 'EMAIL',
+            },
+          );
+          sent++;
+        } catch (err) {
+          this.logger.warn(
+            `Ayo intent follow-up failed for user ${userId}: ${
               (err as Error).message
             }`,
           );

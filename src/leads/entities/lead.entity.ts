@@ -18,6 +18,7 @@ export enum LeadStatus {
 export enum LeadSource {
   Meta = 'meta',
   Manual = 'manual',
+  Website = 'website',
   Other = 'other',
 }
 
@@ -64,6 +65,9 @@ export class LeadEntity {
 
   @Column({ nullable: true })
   formName: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  customFields: Record<string, string> | null;
 
   @Column({ type: 'enum', enum: LeadStatus, default: LeadStatus.New })
   status: LeadStatus;
