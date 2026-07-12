@@ -27,6 +27,7 @@ import { NotificationTriggersJob } from './jobs/notification-triggers.job';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import type { CampaignAudience } from './entities/notification-campaign.entity';
+import { CampaignAudienceType } from './entities/notification-campaign.entity';
 import { CronJobName } from './enums/cron-job-name.enum';
 
 @Controller('message')
@@ -72,6 +73,8 @@ export class NotificationController {
   estimateAudience(@Body() body: Record<string, unknown>) {
     return this.campaignService.estimateAudience(
       (body?.audience as CampaignAudience) ?? { all: true },
+      (body?.audienceType as CampaignAudienceType) ??
+        CampaignAudienceType.Users,
     );
   }
 

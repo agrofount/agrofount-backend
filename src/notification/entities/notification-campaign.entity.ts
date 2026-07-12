@@ -29,12 +29,20 @@ export enum CampaignFrequency {
   MONTHLY = 'monthly',
 }
 
+export enum CampaignAudienceType {
+  Users = 'users',
+  Leads = 'leads',
+}
+
 export interface CampaignAudience {
   all?: boolean;
   states?: string[];
   businessTypes?: string[];
   isVerified?: boolean;
   userTypes?: string[];
+  // Only used when audienceType is Leads.
+  leadStatuses?: string[];
+  leadSources?: string[];
 }
 
 @Entity('notification_campaign')
@@ -60,6 +68,13 @@ export class NotificationCampaignEntity {
 
   @Column({ type: 'jsonb', default: { all: true } })
   audience: CampaignAudience;
+
+  @Column({
+    type: 'enum',
+    enum: CampaignAudienceType,
+    default: CampaignAudienceType.Users,
+  })
+  audienceType: CampaignAudienceType;
 
   @Column({ nullable: true })
   ctaText?: string;
