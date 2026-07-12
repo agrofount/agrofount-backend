@@ -30,13 +30,25 @@ export class CronMonitorService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const seeds = Object.values(CronJobName).map((name) =>
-      this.configRepo.create({ jobName: name, enabled: false }),
+    // Insert-only seeding: must never touch a row that already exists, or an
+    // admin's enabled=true setting gets silently reset to false on every
+    // app restart/deploy (this previously used `upsert`, which performs an
+    // UPDATE on conflict — overwriting `enabled` back to the seed's `false`
+    // any time it differed from the stored value).
+    const existing = await this.configRepo.find({ select: ['jobName'] });
+    const existingNames = new Set(existing.map((row) => row.jobName));
+    const missing = Object.values(CronJobName).filter(
+      (name) => !existingNames.has(name),
     );
-    await this.configRepo.upsert(seeds, {
-      conflictPaths: ['jobName'],
-      skipUpdateIfNoValuesChanged: true,
-    });
+    if (!missing.length) return;
+
+    await this.configRepo
+      .createQueryBuilder()
+      .insert()
+      .into(CronJobConfigEntity)
+      .values(missing.map((name) => ({ jobName: name, enabled: false })))
+      .orIgnore()
+      .execute();
   }
 
   async isEnabled(jobName: CronJobName): Promise<boolean> {
