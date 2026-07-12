@@ -24,6 +24,7 @@ import {
   extractLeadInsights,
   LeadInsights,
 } from '../../leads/lead-insights.util';
+import { CronJobTarget } from '../types/cron-job-target.type';
 
 type FarmingTipContent = {
   title: string;
@@ -106,29 +107,11 @@ export class NotificationTriggersJob {
       CronJobName.ORDER_FEEDBACK_REQUESTS,
     );
 
-    const cutoffStart = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    const cutoffEnd = new Date(Date.now() - 24 * 60 * 60 * 1000);
     let sent = 0;
     let total = 0;
 
     try {
-      const orders = await this.dataSource
-        .createQueryBuilder(OrderEntity, 'order')
-        .leftJoinAndSelect('order.user', 'user')
-        .where('order.status = :status', { status: 'delivered' })
-        .andWhere('order.updatedAt BETWEEN :start AND :end', {
-          start: cutoffStart,
-          end: cutoffEnd,
-        })
-        .select([
-          'order.id',
-          'order.code',
-          'user.id',
-          'user.email',
-          'user.phone',
-          'user.firstname',
-        ])
-        .getMany();
+      const orders = await this.getOrderFeedbackCandidates();
 
       total = orders.length;
       for (const order of orders) {
@@ -169,6 +152,44 @@ export class NotificationTriggersJob {
     }
   }
 
+  private async getOrderFeedbackCandidates(): Promise<OrderEntity[]> {
+    const cutoffStart = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const cutoffEnd = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    return this.dataSource
+      .createQueryBuilder(OrderEntity, 'order')
+      .leftJoinAndSelect('order.user', 'user')
+      .where('order.status = :status', { status: 'delivered' })
+      .andWhere('order.updatedAt BETWEEN :start AND :end', {
+        start: cutoffStart,
+        end: cutoffEnd,
+      })
+      .select([
+        'order.id',
+        'order.code',
+        'user.id',
+        'user.email',
+        'user.phone',
+        'user.firstname',
+      ])
+      .getMany();
+  }
+
+  private async getOrderFeedbackTargets(): Promise<CronJobTarget[]> {
+    const orders = await this.getOrderFeedbackCandidates();
+    return orders
+      .filter((order) => order.user?.email)
+      .map((order) => ({
+        id: order.id,
+        name: order.user?.firstname
+          ? `${order.user.firstname} — Order ${order.code}`
+          : `Order ${order.code}`,
+        email: order.user?.email,
+        phone: order.user?.phone,
+        reason: 'Delivered order awaiting feedback',
+      }));
+  }
+
   @Cron('0 9 * * 1')
   async sendLoginInactivityReminders() {
     if (
@@ -181,19 +202,11 @@ export class NotificationTriggersJob {
       CronJobName.LOGIN_INACTIVITY_REMINDERS,
     );
 
-    const inactiveSince = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     let sent = 0;
     let total = 0;
 
     try {
-      const users = await this.dataSource
-        .createQueryBuilder(UserEntity, 'user')
-        .where('user.deletedAt IS NULL')
-        .andWhere('user.isVerified = true')
-        .andWhere('user.updatedAt < :since', { since: inactiveSince })
-        .select(['user.id', 'user.email', 'user.firstname'])
-        .limit(1000)
-        .getMany();
+      const users = await this.getLoginInactivityCandidates();
 
       total = users.length;
       for (const user of users) {
@@ -247,6 +260,29 @@ export class NotificationTriggersJob {
     }
   }
 
+  private async getLoginInactivityCandidates(): Promise<UserEntity[]> {
+    const inactiveSince = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    return this.dataSource
+      .createQueryBuilder(UserEntity, 'user')
+      .where('user.deletedAt IS NULL')
+      .andWhere('user.isVerified = true')
+      .andWhere('user.updatedAt < :since', { since: inactiveSince })
+      .select(['user.id', 'user.email', 'user.firstname'])
+      .limit(1000)
+      .getMany();
+  }
+
+  private async getLoginInactivityTargets(): Promise<CronJobTarget[]> {
+    const users = await this.getLoginInactivityCandidates();
+    return users.map((user) => ({
+      id: user.id,
+      name: user.firstname || 'Unnamed user',
+      email: user.email,
+      phone: null,
+      reason: 'Inactive for 14+ days',
+    }));
+  }
+
   @Cron('0 8 * * *')
   async sendUnverifiedAccountReminders() {
     if (
@@ -263,12 +299,7 @@ export class NotificationTriggersJob {
     let total = 0;
 
     try {
-      const users = await this.dataSource
-        .createQueryBuilder(UserEntity, 'user')
-        .where('user.isVerified = false')
-        .andWhere('user.deletedAt IS NULL')
-        .select(['user.id', 'user.email', 'user.firstname'])
-        .getMany();
+      const users = await this.getUnverifiedAccountCandidates();
 
       total = users.length;
       for (const user of users) {
@@ -295,6 +326,28 @@ export class NotificationTriggersJob {
       });
       throw err;
     }
+  }
+
+  private async getUnverifiedAccountCandidates(): Promise<UserEntity[]> {
+    return this.dataSource
+      .createQueryBuilder(UserEntity, 'user')
+      .where('user.isVerified = false')
+      .andWhere('user.deletedAt IS NULL')
+      .select(['user.id', 'user.email', 'user.firstname'])
+      .getMany();
+  }
+
+  private async getUnverifiedAccountTargets(): Promise<CronJobTarget[]> {
+    const users = await this.getUnverifiedAccountCandidates();
+    return users
+      .filter((user) => user.email)
+      .map((user) => ({
+        id: user.id,
+        name: user.firstname || 'Unnamed user',
+        email: user.email,
+        phone: null,
+        reason: 'Unverified account',
+      }));
   }
 
   async sendUnverifiedReminderForUsers(
@@ -371,14 +424,7 @@ export class NotificationTriggersJob {
     let total = 0;
 
     try {
-      const users = await this.dataSource
-        .createQueryBuilder(UserEntity, 'user')
-        .where('user.deletedAt IS NULL')
-        .andWhere('user.isVerified = true')
-        .andWhere('user.email IS NOT NULL')
-        .select(['user.id', 'user.email', 'user.firstname'])
-        .limit(2000)
-        .getMany();
+      const users = await this.getEducationalContentCandidates();
 
       total = users.length;
       const tip = this.getWeeklyFarmingTip();
@@ -432,6 +478,28 @@ export class NotificationTriggersJob {
     }
   }
 
+  private async getEducationalContentCandidates(): Promise<UserEntity[]> {
+    return this.dataSource
+      .createQueryBuilder(UserEntity, 'user')
+      .where('user.deletedAt IS NULL')
+      .andWhere('user.isVerified = true')
+      .andWhere('user.email IS NOT NULL')
+      .select(['user.id', 'user.email', 'user.firstname'])
+      .limit(2000)
+      .getMany();
+  }
+
+  private async getEducationalContentTargets(): Promise<CronJobTarget[]> {
+    const users = await this.getEducationalContentCandidates();
+    return users.map((user) => ({
+      id: user.id,
+      name: user.firstname || 'Unnamed user',
+      email: user.email,
+      phone: null,
+      reason: 'Weekly farming tip subscriber',
+    }));
+  }
+
   private getWeeklyFarmingTip(): FarmingTipContent {
     const weekIndex = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
     return FARMING_TIPS[weekIndex % FARMING_TIPS.length];
@@ -473,11 +541,11 @@ export class NotificationTriggersJob {
     return this.dispatchPendingOrderReminders({ orderIds });
   }
 
-  private async dispatchPendingOrderReminders(filter: {
+  private buildPendingOrderRemindersQuery(filter: {
     cutoffStart?: Date;
     cutoffEnd?: Date;
     orderIds?: string[];
-  }): Promise<{ sent: number; total: number }> {
+  }) {
     const qb = this.dataSource
       .createQueryBuilder(OrderEntity, 'order')
       .leftJoinAndSelect('order.user', 'user')
@@ -504,8 +572,44 @@ export class NotificationTriggersJob {
         end: filter.cutoffEnd,
       });
     }
+    return qb;
+  }
 
-    const orders = await qb.getMany();
+  private static readonly PENDING_ORDER_REMINDER_WINDOW = {
+    cutoffStart: () => new Date(Date.now() - 48 * 60 * 60 * 1000),
+    cutoffEnd: () => new Date(Date.now() - 24 * 60 * 60 * 1000),
+  };
+
+  private async getPendingOrderReminderCandidates(): Promise<OrderEntity[]> {
+    return this.buildPendingOrderRemindersQuery({
+      cutoffStart:
+        NotificationTriggersJob.PENDING_ORDER_REMINDER_WINDOW.cutoffStart(),
+      cutoffEnd:
+        NotificationTriggersJob.PENDING_ORDER_REMINDER_WINDOW.cutoffEnd(),
+    }).getMany();
+  }
+
+  private async getPendingOrderReminderTargets(): Promise<CronJobTarget[]> {
+    const orders = await this.getPendingOrderReminderCandidates();
+    return orders
+      .filter((order) => order.user?.email || order.user?.phone)
+      .map((order) => ({
+        id: order.id,
+        name: order.user?.firstname
+          ? `${order.user.firstname} — Order ${order.code}`
+          : `Order ${order.code}`,
+        email: order.user?.email,
+        phone: order.user?.phone,
+        reason: 'Order pending payment for 24-48h',
+      }));
+  }
+
+  private async dispatchPendingOrderReminders(filter: {
+    cutoffStart?: Date;
+    cutoffEnd?: Date;
+    orderIds?: string[];
+  }): Promise<{ sent: number; total: number }> {
+    const orders = await this.buildPendingOrderRemindersQuery(filter).getMany();
     let sent = 0;
     const total = orders.length;
 
@@ -653,6 +757,26 @@ export class NotificationTriggersJob {
     }
   }
 
+  private async getVaccinationDueTargets(): Promise<CronJobTarget[]> {
+    const flocks =
+      await this.farmFlockService.listActiveFlocksWithDueVaccinesToday();
+    return flocks.map((flock) => {
+      const status = this.farmFlockService.computeVaccinationStatus(flock);
+      const vaccineNames = status.dueToday
+        .map((item) => item.vaccineName)
+        .join(', ');
+      return {
+        id: flock.userId,
+        name: `${flock.birdType} flock`,
+        email: null,
+        phone: null,
+        reason: vaccineNames
+          ? `Vaccine due today: ${vaccineNames}`
+          : 'Vaccine due today',
+      };
+    });
+  }
+
   // One-shot 24h windows at fixed days-since-registration, mirroring the
   // PENDING_ORDER_REMINDERS trick — running this daily naturally advances
   // each user through exactly one touchpoint per day offset, never repeating.
@@ -714,24 +838,9 @@ export class NotificationTriggersJob {
 
     try {
       for (const touchpoint of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
-        const windowEnd = new Date(
-          Date.now() - touchpoint.dayOffset * 24 * 60 * 60 * 1000,
+        const users = await this.getRegisteredNoOrderCandidatesForTouchpoint(
+          touchpoint,
         );
-        const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000);
-
-        const users = await this.dataSource
-          .createQueryBuilder(UserEntity, 'user')
-          .where('user.deletedAt IS NULL')
-          .andWhere('user.isVerified = true')
-          .andWhere('user.createdAt BETWEEN :start AND :end', {
-            start: windowStart,
-            end: windowEnd,
-          })
-          .andWhere(
-            'NOT EXISTS (SELECT 1 FROM orders o WHERE o."userId" = user.id)',
-          )
-          .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
-          .getMany();
 
         total += users.length;
 
@@ -795,6 +904,49 @@ export class NotificationTriggersJob {
     }
   }
 
+  private async getRegisteredNoOrderCandidatesForTouchpoint(touchpoint: {
+    dayOffset: number;
+  }): Promise<UserEntity[]> {
+    const windowEnd = new Date(
+      Date.now() - touchpoint.dayOffset * 24 * 60 * 60 * 1000,
+    );
+    const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000);
+
+    return this.dataSource
+      .createQueryBuilder(UserEntity, 'user')
+      .where('user.deletedAt IS NULL')
+      .andWhere('user.isVerified = true')
+      .andWhere('user.createdAt BETWEEN :start AND :end', {
+        start: windowStart,
+        end: windowEnd,
+      })
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM orders o WHERE o."userId" = user.id)',
+      )
+      .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
+      .getMany();
+  }
+
+  private async getRegisteredNoOrderTargets(): Promise<CronJobTarget[]> {
+    const targets: CronJobTarget[] = [];
+    for (const touchpoint of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
+      const users = await this.getRegisteredNoOrderCandidatesForTouchpoint(
+        touchpoint,
+      );
+      for (const user of users) {
+        if (!user.email) continue;
+        targets.push({
+          id: user.id,
+          name: user.firstname || 'Unnamed user',
+          email: user.email,
+          phone: user.phone,
+          reason: `Day ${touchpoint.dayOffset} no-order nudge`,
+        });
+      }
+    }
+    return targets;
+  }
+
   // "Purchase intent" candidates: farmers who searched a product or checked
   // credit eligibility via Ayo but still have zero orders. A separate,
   // independently-toggleable job from the generic no-order nudge above so the
@@ -816,54 +968,15 @@ export class NotificationTriggersJob {
     let total = 0;
 
     try {
-      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const { userIds, since } = await this.getAyoIntentCandidateIds();
 
-      const candidates = await this.dataSource
-        .createQueryBuilder(AiToolInvocationEntity, 'inv')
-        .select('DISTINCT inv.userId', 'userId')
-        .where('inv.toolName IN (:...tools)', {
-          tools: NotificationTriggersJob.AYO_INTENT_TOOLS,
-        })
-        .andWhere('inv.status = :status', { status: AiRunStatus.Succeeded })
-        .andWhere('inv.createdAt >= :since', { since })
-        .andWhere('inv.userId IS NOT NULL')
-        .andWhere(
-          'NOT EXISTS (SELECT 1 FROM orders o WHERE o."userId" = inv."userId")',
-        )
-        .getRawMany<{ userId: string }>();
+      total = userIds.length;
 
-      total = candidates.length;
-
-      for (const { userId } of candidates) {
+      for (const userId of userIds) {
         try {
-          const alreadyNudged = await this.dataSource
-            .getRepository(MessageEntity)
-            .findOne({
-              where: {
-                userId,
-                jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
-                createdAt: MoreThan(since),
-              },
-            });
-          if (alreadyNudged) continue;
-
-          const user = await this.dataSource
-            .getRepository(UserEntity)
-            .findOne({ where: { id: userId } });
-          if (!user || user.deletedAt || !user.isVerified) continue;
-          if (!user.email) continue;
-
-          const lastProductSearch = await this.dataSource
-            .getRepository(AiToolInvocationEntity)
-            .findOne({
-              where: {
-                userId,
-                toolName: 'commerce.product_search',
-                status: AiRunStatus.Succeeded,
-              },
-              order: { createdAt: 'DESC' },
-            });
-          const searchedQuery = lastProductSearch?.inputSummary?.query;
+          const resolved = await this.resolveAyoIntentCandidate(userId, since);
+          if (!resolved) continue;
+          const { user, searchedQuery } = resolved;
 
           const heading = searchedQuery
             ? `Still looking for ${searchedQuery}?`
@@ -909,6 +1022,86 @@ export class NotificationTriggersJob {
     }
   }
 
+  private async getAyoIntentCandidateIds(): Promise<{
+    userIds: string[];
+    since: Date;
+  }> {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const candidates = await this.dataSource
+      .createQueryBuilder(AiToolInvocationEntity, 'inv')
+      .select('DISTINCT inv.userId', 'userId')
+      .where('inv.toolName IN (:...tools)', {
+        tools: NotificationTriggersJob.AYO_INTENT_TOOLS,
+      })
+      .andWhere('inv.status = :status', { status: AiRunStatus.Succeeded })
+      .andWhere('inv.createdAt >= :since', { since })
+      .andWhere('inv.userId IS NOT NULL')
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM orders o WHERE o."userId" = inv."userId")',
+      )
+      .getRawMany<{ userId: string }>();
+
+    return { userIds: candidates.map((c) => c.userId), since };
+  }
+
+  private async resolveAyoIntentCandidate(
+    userId: string,
+    since: Date,
+  ): Promise<{ user: UserEntity; searchedQuery?: string } | null> {
+    const alreadyNudged = await this.dataSource
+      .getRepository(MessageEntity)
+      .findOne({
+        where: {
+          userId,
+          jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
+          createdAt: MoreThan(since),
+        },
+      });
+    if (alreadyNudged) return null;
+
+    const user = await this.dataSource
+      .getRepository(UserEntity)
+      .findOne({ where: { id: userId } });
+    if (!user || user.deletedAt || !user.isVerified) return null;
+    if (!user.email) return null;
+
+    const lastProductSearch = await this.dataSource
+      .getRepository(AiToolInvocationEntity)
+      .findOne({
+        where: {
+          userId,
+          toolName: 'commerce.product_search',
+          status: AiRunStatus.Succeeded,
+        },
+        order: { createdAt: 'DESC' },
+      });
+    const searchedQuery = lastProductSearch?.inputSummary?.query as
+      | string
+      | undefined;
+
+    return { user, searchedQuery };
+  }
+
+  private async getAyoIntentTargets(): Promise<CronJobTarget[]> {
+    const { userIds, since } = await this.getAyoIntentCandidateIds();
+    const targets: CronJobTarget[] = [];
+    for (const userId of userIds) {
+      const resolved = await this.resolveAyoIntentCandidate(userId, since);
+      if (!resolved) continue;
+      targets.push({
+        id: resolved.user.id,
+        name: resolved.user.firstname || 'Unnamed user',
+        email: resolved.user.email,
+        phone: resolved.user.phone,
+        reason: resolved.searchedQuery
+          ? `Asked Ayo about "${resolved.searchedQuery}", no order yet`
+          : 'Explored Ayo, no order yet',
+      });
+    }
+    return targets;
+  }
+
   private buildSimpleEmail(
     heading: string,
     body: string,
@@ -929,5 +1122,31 @@ export class NotificationTriggersJob {
           You received this because you have an Agrofount account.
         </p>
       </div>`;
+  }
+
+  // Single entry point for "who would this job contact right now" — reuses
+  // the exact same candidate-selection queries the real send methods use, so
+  // this can never drift out of sync with actual sending behavior.
+  async getTargetsForJob(jobName: CronJobName): Promise<CronJobTarget[]> {
+    switch (jobName) {
+      case CronJobName.ORDER_FEEDBACK_REQUESTS:
+        return this.getOrderFeedbackTargets();
+      case CronJobName.LOGIN_INACTIVITY_REMINDERS:
+        return this.getLoginInactivityTargets();
+      case CronJobName.UNVERIFIED_ACCOUNT_REMINDERS:
+        return this.getUnverifiedAccountTargets();
+      case CronJobName.EDUCATIONAL_CONTENT:
+        return this.getEducationalContentTargets();
+      case CronJobName.PENDING_ORDER_REMINDERS:
+        return this.getPendingOrderReminderTargets();
+      case CronJobName.VACCINATION_DUE_REMINDERS:
+        return this.getVaccinationDueTargets();
+      case CronJobName.REGISTERED_NO_ORDER_NUDGE:
+        return this.getRegisteredNoOrderTargets();
+      case CronJobName.AYO_INTENT_FOLLOW_UP:
+        return this.getAyoIntentTargets();
+      default:
+        return [];
+    }
   }
 }
