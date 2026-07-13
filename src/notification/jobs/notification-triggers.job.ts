@@ -9,7 +9,7 @@ import { CronJobName } from '../enums/cron-job-name.enum';
 import { UserEntity } from '../../user/entities/user.entity';
 import { OrderEntity } from '../../order/entities/order.entity';
 import { MessageEntity } from '../entities/message.entity';
-import { MessageTypes } from '../types/notification.type';
+import { EmailTemplateIds, MessageTypes } from '../types/notification.type';
 import { FarmFlockService } from '../../ai-platform/services/farm-flock.service';
 import {
   VoucherEntity,
@@ -25,6 +25,7 @@ import {
   LeadInsights,
 } from '../../leads/lead-insights.util';
 import { CronJobTarget } from '../types/cron-job-target.type';
+import { CronJobMessagePreview } from '../types/cron-job-message-preview.type';
 
 type FarmingTipContent = {
   title: string;
@@ -84,6 +85,55 @@ const FARMING_TIPS: FarmingTipContent[] = [
     bannerImage: '',
   },
 ];
+
+// Used so every job's message preview can render something even when zero
+// live candidates currently match its targeting query.
+const PLACEHOLDER_USER = {
+  id: 'sample-user',
+  firstname: 'Jane',
+  email: 'jane.doe@example.com',
+  phone: '+2348012345678',
+};
+
+type PendingOrderContent = {
+  id: string;
+  code: string;
+  status: string;
+  createdAt: Date;
+  totalPrice: number;
+  items?: { name?: string; unit?: string; quantity?: number; price?: number }[];
+  address?: { street?: string; city?: string; state?: string } | null;
+  user: {
+    id: string;
+    firstname: string | null;
+    email?: string | null;
+    phone?: string | null;
+  };
+};
+
+const PLACEHOLDER_ORDER: PendingOrderContent = {
+  id: 'sample-order',
+  code: 'AGF-00001',
+  status: 'pending',
+  totalPrice: 25000,
+  items: [
+    {
+      name: 'Broiler Starter Feed 25kg',
+      unit: 'bag',
+      quantity: 2,
+      price: 12500,
+    },
+    {
+      name: 'Newcastle Vaccine (Lasota)',
+      unit: 'vial',
+      quantity: 1,
+      price: 3500,
+    },
+  ],
+  address: { street: '12 Farm Road', city: 'Ibadan', state: 'Oyo' },
+  createdAt: new Date(),
+  user: PLACEHOLDER_USER,
+};
 
 @Injectable()
 export class NotificationTriggersJob {
@@ -190,6 +240,35 @@ export class NotificationTriggersJob {
       }));
   }
 
+  private async getOrderFeedbackPreview(): Promise<CronJobMessagePreview> {
+    const orders = await this.getOrderFeedbackCandidates();
+    const real = orders.find((order) => order.user?.email);
+    const usedFallbackSample = !real;
+    const order = real ?? PLACEHOLDER_ORDER;
+    const user = order.user;
+    const name = user.firstname ?? 'there';
+    const heading = "We'd love your feedback!";
+    const body = `Hi ${name}, how was your recent order (${order.code})? A quick rating helps us serve you better.`;
+
+    return {
+      channel: 'EMAIL',
+      subject: `How was your order ${order.code}?`,
+      html: this.buildSimpleEmail(
+        heading,
+        body,
+        'Leave a Review',
+        `${process.env.FRONTEND_URL ?? ''}/orders/${order.id}`,
+      ),
+      text: body,
+      sampleTarget: {
+        name: user.firstname || 'Unnamed user',
+        email: user.email,
+        phone: user.phone,
+      },
+      usedFallbackSample,
+    };
+  }
+
   @Cron('0 9 * * 1')
   async sendLoginInactivityReminders() {
     if (
@@ -227,15 +306,22 @@ export class NotificationTriggersJob {
             status: 'SENT',
           });
 
+          const params = this.buildLoginInactivityParams(name);
           if (user.email) {
             await this.notificationService.sendNotification(
               'EMAIL',
               { userId: user.id, email: user.email },
               MessageTypes.LOGIN_INACTIVITY_REMINDER,
-              {
-                customer_name: name,
-                login_link: `${process.env.FRONTEND_URL ?? ''}/login`,
-              },
+              params,
+              { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
+            );
+            sent++;
+          } else if (user.phone) {
+            await this.notificationService.sendNotification(
+              'SMS',
+              { userId: user.id, phoneNumber: user.phone },
+              MessageTypes.LOGIN_INACTIVITY_REMINDER,
+              params,
               { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
             );
             sent++;
@@ -267,9 +353,16 @@ export class NotificationTriggersJob {
       .where('user.deletedAt IS NULL')
       .andWhere('user.isVerified = true')
       .andWhere('user.updatedAt < :since', { since: inactiveSince })
-      .select(['user.id', 'user.email', 'user.firstname'])
+      .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
       .limit(1000)
       .getMany();
+  }
+
+  private buildLoginInactivityParams(name: string): Record<string, string> {
+    return {
+      customer_name: name,
+      login_link: `${process.env.FRONTEND_URL ?? ''}/login`,
+    };
   }
 
   private async getLoginInactivityTargets(): Promise<CronJobTarget[]> {
@@ -278,9 +371,52 @@ export class NotificationTriggersJob {
       id: user.id,
       name: user.firstname || 'Unnamed user',
       email: user.email,
-      phone: null,
+      phone: user.phone,
       reason: 'Inactive for 14+ days',
     }));
+  }
+
+  private async getLoginInactivityPreview(): Promise<CronJobMessagePreview> {
+    const users = await this.getLoginInactivityCandidates();
+    const real = users.find((user) => user.email || user.phone);
+    const usedFallbackSample = !real;
+    const sample = real ?? PLACEHOLDER_USER;
+    const params = this.buildLoginInactivityParams(sample.firstname ?? 'there');
+    const sampleTarget = {
+      name: sample.firstname || 'Unnamed user',
+      email: sample.email,
+      phone: sample.phone,
+    };
+
+    if (sample.email) {
+      const rendered =
+        await this.notificationService.renderEmailTemplatePreview(
+          EmailTemplateIds.LOGIN_INACTIVITY_REMINDER,
+          params,
+        );
+      return {
+        channel: 'EMAIL',
+        templateId: EmailTemplateIds.LOGIN_INACTIVITY_REMINDER,
+        params,
+        subject: rendered.subject,
+        html: rendered.html,
+        renderError: rendered.renderError,
+        sampleTarget,
+        usedFallbackSample,
+      };
+    }
+
+    const text = this.notificationService.buildSmsPreviewText(
+      MessageTypes.LOGIN_INACTIVITY_REMINDER,
+      params,
+    );
+    return {
+      channel: 'SMS',
+      params,
+      text,
+      sampleTarget,
+      usedFallbackSample,
+    };
   }
 
   @Cron('0 8 * * *')
@@ -348,6 +484,42 @@ export class NotificationTriggersJob {
         phone: null,
         reason: 'Unverified account',
       }));
+  }
+
+  // Unlike a live send, this must never mutate the user (the real send path
+  // writes a fresh verification token), so it fakes the token in the link
+  // instead of calling dispatchUnverifiedReminder.
+  private async getUnverifiedAccountPreview(): Promise<CronJobMessagePreview> {
+    const users = await this.getUnverifiedAccountCandidates();
+    const real = users.find((user) => user.email);
+    const usedFallbackSample = !real;
+    const sample = real ?? PLACEHOLDER_USER;
+    const params = {
+      customer_name: sample.firstname ?? 'there',
+      verification_link: `${
+        process.env.FRONTEND_URL ?? ''
+      }/verify-email?token=sample-preview-token`,
+      account_link: `${process.env.FRONTEND_URL ?? ''}/account`,
+    };
+    const rendered = await this.notificationService.renderEmailTemplatePreview(
+      EmailTemplateIds.UNVERIFIED_ACCOUNT_REMINDER,
+      params,
+    );
+
+    return {
+      channel: 'EMAIL',
+      templateId: EmailTemplateIds.UNVERIFIED_ACCOUNT_REMINDER,
+      params,
+      subject: rendered.subject,
+      html: rendered.html,
+      renderError: rendered.renderError,
+      sampleTarget: {
+        name: sample.firstname || 'Unnamed user',
+        email: sample.email,
+        phone: null,
+      },
+      usedFallbackSample,
+    };
   }
 
   async sendUnverifiedReminderForUsers(
@@ -428,7 +600,6 @@ export class NotificationTriggersJob {
 
       total = users.length;
       const tip = this.getWeeklyFarmingTip();
-      const [point1, point2, point3, point4, point5, point6] = tip.points;
 
       for (const user of users) {
         try {
@@ -437,24 +608,7 @@ export class NotificationTriggersJob {
             'EMAIL',
             { userId: user.id, email: user.email },
             MessageTypes.EDUCATIONAL_CONTENT,
-            {
-              article_title: tip.title,
-              banner_image: tip.bannerImage,
-              customer_name: name,
-              article_summary: tip.summary,
-              point_1: point1,
-              point_2: point2,
-              point_3: point3,
-              point_4: point4,
-              point_5: point5,
-              point_6: point6,
-              highlight_quote: tip.quote,
-              article_link: `${process.env.FRONTEND_URL ?? ''}/blog`,
-              facebook_url: process.env.SOCIAL_FACEBOOK_URL ?? '',
-              instagram_url: process.env.SOCIAL_INSTAGRAM_URL ?? '',
-              linkedin_url: process.env.SOCIAL_LINKEDIN_URL ?? '',
-              youtube_url: process.env.SOCIAL_YOUTUBE_URL ?? '',
-            },
+            this.buildEducationalContentParams(name, tip),
             { jobName: CronJobName.EDUCATIONAL_CONTENT },
           );
           sent++;
@@ -503,6 +657,62 @@ export class NotificationTriggersJob {
   private getWeeklyFarmingTip(): FarmingTipContent {
     const weekIndex = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
     return FARMING_TIPS[weekIndex % FARMING_TIPS.length];
+  }
+
+  private buildEducationalContentParams(
+    name: string,
+    tip: FarmingTipContent,
+  ): Record<string, string> {
+    const [point1, point2, point3, point4, point5, point6] = tip.points;
+    return {
+      article_title: tip.title,
+      banner_image: tip.bannerImage,
+      customer_name: name,
+      article_summary: tip.summary,
+      point_1: point1,
+      point_2: point2,
+      point_3: point3,
+      point_4: point4,
+      point_5: point5,
+      point_6: point6,
+      highlight_quote: tip.quote,
+      article_link: `${process.env.FRONTEND_URL ?? ''}/blog`,
+      facebook_url: process.env.SOCIAL_FACEBOOK_URL ?? '',
+      instagram_url: process.env.SOCIAL_INSTAGRAM_URL ?? '',
+      linkedin_url: process.env.SOCIAL_LINKEDIN_URL ?? '',
+      youtube_url: process.env.SOCIAL_YOUTUBE_URL ?? '',
+    };
+  }
+
+  private async getEducationalContentPreview(): Promise<CronJobMessagePreview> {
+    const users = await this.getEducationalContentCandidates();
+    const real = users[0];
+    const usedFallbackSample = !real;
+    const sample = real ?? PLACEHOLDER_USER;
+    const tip = this.getWeeklyFarmingTip();
+    const params = this.buildEducationalContentParams(
+      sample.firstname ?? 'there',
+      tip,
+    );
+    const rendered = await this.notificationService.renderEmailTemplatePreview(
+      EmailTemplateIds.EDUCATIONAL_CONTENT,
+      params,
+    );
+
+    return {
+      channel: 'EMAIL',
+      templateId: EmailTemplateIds.EDUCATIONAL_CONTENT,
+      params,
+      subject: rendered.subject,
+      html: rendered.html,
+      renderError: rendered.renderError,
+      sampleTarget: {
+        name: sample.firstname || 'Unnamed user',
+        email: sample.email,
+        phone: null,
+      },
+      usedFallbackSample,
+    };
   }
 
   @Cron('0 9 * * *')
@@ -604,6 +814,108 @@ export class NotificationTriggersJob {
       }));
   }
 
+  private buildPendingOrderReminderParams(order: PendingOrderContent): {
+    sharedParams: Record<string, string>;
+    emailParams: Record<string, string>;
+  } {
+    const user = order.user;
+    const name = user.firstname ?? 'there';
+    const dueDate = new Date(order.createdAt.getTime() + 48 * 60 * 60 * 1000);
+    const fmt = (d: Date) =>
+      d.toLocaleDateString('en-NG', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      });
+    const orderLink = `${process.env.FRONTEND_URL ?? ''}/account?tab=orders`;
+    const sharedParams = {
+      customer_name: name,
+      order_id: order.code,
+      order_status: order.status,
+      order_date: fmt(order.createdAt),
+      due_date: fmt(dueDate),
+      order_link: orderLink,
+      userId: user.id,
+    };
+
+    const addr = order.address;
+    const deliveryAddress = addr
+      ? [addr.street, addr.city, addr.state].filter(Boolean).join(', ')
+      : 'N/A';
+    const item1 = order.items?.[0];
+    const item2 = order.items?.[1];
+    const emailParams = {
+      ...sharedParams,
+      order_amount: `₦${Number(order.totalPrice).toLocaleString('en-NG', {
+        minimumFractionDigits: 2,
+      })}`,
+      delivery_address: deliveryAddress,
+      item_1_name: item1?.name ?? '',
+      item_1_description: item1?.unit ?? '',
+      item_1_quantity: String(item1?.quantity ?? ''),
+      item_1_price: item1
+        ? `₦${Number(item1.price).toLocaleString('en-NG', {
+            minimumFractionDigits: 2,
+          })}`
+        : '',
+      item_2_name: item2?.name ?? '',
+      item_2_description: item2?.unit ?? '',
+      item_2_quantity: String(item2?.quantity ?? ''),
+      item_2_price: item2
+        ? `₦${Number(item2.price).toLocaleString('en-NG', {
+            minimumFractionDigits: 2,
+          })}`
+        : '',
+    };
+
+    return { sharedParams, emailParams };
+  }
+
+  private async getPendingOrderReminderPreview(): Promise<CronJobMessagePreview> {
+    const orders = await this.getPendingOrderReminderCandidates();
+    const real = orders.find((order) => order.user?.email || order.user?.phone);
+    const usedFallbackSample = !real;
+    const order: PendingOrderContent = real ?? PLACEHOLDER_ORDER;
+    const user = order.user;
+    const sampleTarget = {
+      name: user.firstname || 'Unnamed user',
+      email: user.email,
+      phone: user.phone,
+    };
+    const { sharedParams, emailParams } =
+      this.buildPendingOrderReminderParams(order);
+
+    if (user.email) {
+      const rendered =
+        await this.notificationService.renderEmailTemplatePreview(
+          EmailTemplateIds.PENDING_ORDER_REMINDER,
+          emailParams,
+        );
+      return {
+        channel: 'EMAIL',
+        templateId: EmailTemplateIds.PENDING_ORDER_REMINDER,
+        params: emailParams,
+        subject: rendered.subject,
+        html: rendered.html,
+        renderError: rendered.renderError,
+        sampleTarget,
+        usedFallbackSample,
+      };
+    }
+
+    const text = this.notificationService.buildSmsPreviewText(
+      MessageTypes.PENDING_ORDER_REMINDER,
+      sharedParams,
+    );
+    return {
+      channel: 'SMS',
+      params: sharedParams,
+      text,
+      sampleTarget,
+      usedFallbackSample,
+    };
+  }
+
   private async dispatchPendingOrderReminders(filter: {
     cutoffStart?: Date;
     cutoffEnd?: Date;
@@ -617,28 +929,9 @@ export class NotificationTriggersJob {
       const user = order.user;
       if (!user?.email && !user?.phone) continue;
       try {
-        const name = user.firstname ?? 'there';
-        const dueDate = new Date(
-          order.createdAt.getTime() + 48 * 60 * 60 * 1000,
-        );
-        const fmt = (d: Date) =>
-          d.toLocaleDateString('en-NG', {
-            day: 'numeric',
-            month: 'short',
-            year: 'numeric',
-          });
-        const orderLink = `${
-          process.env.FRONTEND_URL ?? ''
-        }/account?tab=orders`;
-        const sharedParams = {
-          customer_name: name,
-          order_id: order.code,
-          order_status: order.status,
-          order_date: fmt(order.createdAt),
-          due_date: fmt(dueDate),
-          order_link: orderLink,
-          userId: user.id,
-        };
+        const { sharedParams, emailParams } =
+          this.buildPendingOrderReminderParams(order);
+        const orderLink = sharedParams.order_link;
 
         try {
           this.notificationGateway.emitToUser(user.id, 'notification', {
@@ -651,40 +944,11 @@ export class NotificationTriggersJob {
         }
 
         if (user.email) {
-          const addr = order.address;
-          const deliveryAddress = addr
-            ? [addr.street, addr.city, addr.state].filter(Boolean).join(', ')
-            : 'N/A';
-          const item1 = order.items?.[0];
-          const item2 = order.items?.[1];
           await this.notificationService.sendNotification(
             'EMAIL',
             { userId: user.id, email: user.email },
             MessageTypes.PENDING_ORDER_REMINDER,
-            {
-              ...sharedParams,
-              order_amount: `₦${Number(order.totalPrice).toLocaleString(
-                'en-NG',
-                { minimumFractionDigits: 2 },
-              )}`,
-              delivery_address: deliveryAddress,
-              item_1_name: item1?.name ?? '',
-              item_1_description: item1?.unit ?? '',
-              item_1_quantity: item1?.quantity ?? '',
-              item_1_price: item1
-                ? `₦${Number(item1.price).toLocaleString('en-NG', {
-                    minimumFractionDigits: 2,
-                  })}`
-                : '',
-              item_2_name: item2?.name ?? '',
-              item_2_description: item2?.unit ?? '',
-              item_2_quantity: item2?.quantity ?? '',
-              item_2_price: item2
-                ? `₦${Number(item2.price).toLocaleString('en-NG', {
-                    minimumFractionDigits: 2,
-                  })}`
-                : '',
-            },
+            emailParams,
           );
         } else {
           await this.notificationService.sendNotification(
@@ -775,6 +1039,32 @@ export class NotificationTriggersJob {
           : 'Vaccine due today',
       };
     });
+  }
+
+  private async getVaccinationDuePreview(): Promise<CronJobMessagePreview> {
+    const flocks =
+      await this.farmFlockService.listActiveFlocksWithDueVaccinesToday();
+    const real = flocks[0];
+    const usedFallbackSample = !real;
+
+    let birdType: string;
+    let vaccineNames: string;
+    if (real) {
+      const status = this.farmFlockService.computeVaccinationStatus(real);
+      vaccineNames = status.dueToday.map((item) => item.vaccineName).join(', ');
+      birdType = real.birdType;
+    } else {
+      birdType = 'Broiler';
+      vaccineNames = 'Newcastle Disease (Lasota)';
+    }
+
+    return {
+      channel: 'IN_APP',
+      subject: 'Vaccination due today',
+      text: `Your ${birdType} flock has a vaccination due today: ${vaccineNames}.`,
+      sampleTarget: { name: `${birdType} flock`, email: null, phone: null },
+      usedFallbackSample,
+    };
   }
 
   // One-shot 24h windows at fixed days-since-registration, mirroring the
@@ -947,6 +1237,63 @@ export class NotificationTriggersJob {
     return targets;
   }
 
+  private async getRegisteredNoOrderPreview(): Promise<CronJobMessagePreview> {
+    let real: UserEntity | undefined;
+    let touchpoint = NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS[0];
+
+    for (const tp of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
+      const users = await this.getRegisteredNoOrderCandidatesForTouchpoint(tp);
+      const match = users.find((user) => user.email);
+      if (match) {
+        real = match;
+        touchpoint = tp;
+        break;
+      }
+    }
+
+    const usedFallbackSample = !real;
+    const sample = real ?? PLACEHOLDER_USER;
+    let heading = touchpoint.heading;
+    let body = touchpoint.body;
+
+    if (real) {
+      const voucher = await this.dataSource
+        .getRepository(VoucherEntity)
+        .findOne({
+          where: { user: { id: real.id }, status: VoucherStatus.Active },
+        });
+      const lead = await this.dataSource
+        .getRepository(LeadEntity)
+        .findOne({ where: { convertedUserId: real.id } });
+      const personalized = this.personalizeRegisteredNudge(
+        touchpoint,
+        extractLeadInsights(lead?.customFields),
+      );
+      heading = personalized.heading;
+      body = voucher
+        ? `${personalized.body} Use code ${voucher.code} for ₦${voucher.amount} off.`
+        : personalized.body;
+    }
+
+    return {
+      channel: 'EMAIL',
+      subject: heading,
+      html: this.buildSimpleEmail(
+        heading,
+        body,
+        'Shop Now',
+        process.env.FRONTEND_URL ?? '',
+      ),
+      text: body,
+      sampleTarget: {
+        name: sample.firstname || 'Unnamed user',
+        email: sample.email,
+        phone: sample.phone,
+      },
+      usedFallbackSample,
+    };
+  }
+
   // "Purchase intent" candidates: farmers who searched a product or checked
   // credit eligibility via Ayo but still have zero orders. A separate,
   // independently-toggleable job from the generic no-order nudge above so the
@@ -1102,6 +1449,44 @@ export class NotificationTriggersJob {
     return targets;
   }
 
+  private async getAyoIntentPreview(): Promise<CronJobMessagePreview> {
+    const { userIds, since } = await this.getAyoIntentCandidateIds();
+    let resolved: { user: UserEntity; searchedQuery?: string } | null = null;
+    for (const userId of userIds) {
+      resolved = await this.resolveAyoIntentCandidate(userId, since);
+      if (resolved) break;
+    }
+
+    const usedFallbackSample = !resolved;
+    const user = resolved?.user ?? PLACEHOLDER_USER;
+    const searchedQuery = resolved?.searchedQuery ?? 'layer feed';
+
+    const heading = searchedQuery
+      ? `Still looking for ${searchedQuery}?`
+      : 'Still exploring Agrofount?';
+    const body = searchedQuery
+      ? `You asked Ayo about "${searchedQuery}" recently — it's still available. Want help placing an order?`
+      : "You checked something out with Ayo recently — we're here if you're ready to order or need help getting started.";
+
+    return {
+      channel: 'EMAIL',
+      subject: heading,
+      html: this.buildSimpleEmail(
+        heading,
+        body,
+        'Shop Now',
+        process.env.FRONTEND_URL ?? '',
+      ),
+      text: body,
+      sampleTarget: {
+        name: user.firstname || 'Unnamed user',
+        email: user.email,
+        phone: user.phone,
+      },
+      usedFallbackSample,
+    };
+  }
+
   private buildSimpleEmail(
     heading: string,
     body: string,
@@ -1147,6 +1532,32 @@ export class NotificationTriggersJob {
         return this.getAyoIntentTargets();
       default:
         return [];
+    }
+  }
+
+  // Single entry point for "what would this job's message look like right
+  // now" — reuses the exact same content-building code the real send
+  // methods use, so a preview can never drift out of sync with a live send.
+  async getPreviewForJob(jobName: CronJobName): Promise<CronJobMessagePreview> {
+    switch (jobName) {
+      case CronJobName.ORDER_FEEDBACK_REQUESTS:
+        return this.getOrderFeedbackPreview();
+      case CronJobName.LOGIN_INACTIVITY_REMINDERS:
+        return this.getLoginInactivityPreview();
+      case CronJobName.UNVERIFIED_ACCOUNT_REMINDERS:
+        return this.getUnverifiedAccountPreview();
+      case CronJobName.EDUCATIONAL_CONTENT:
+        return this.getEducationalContentPreview();
+      case CronJobName.PENDING_ORDER_REMINDERS:
+        return this.getPendingOrderReminderPreview();
+      case CronJobName.VACCINATION_DUE_REMINDERS:
+        return this.getVaccinationDuePreview();
+      case CronJobName.REGISTERED_NO_ORDER_NUDGE:
+        return this.getRegisteredNoOrderPreview();
+      case CronJobName.AYO_INTENT_FOLLOW_UP:
+        return this.getAyoIntentPreview();
+      default:
+        throw new Error(`Unknown cron job: ${jobName}`);
     }
   }
 }

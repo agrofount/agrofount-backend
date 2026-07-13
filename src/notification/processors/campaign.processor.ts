@@ -12,21 +12,12 @@ import {
 import { UserEntity } from '../../user/entities/user.entity';
 import { LeadEntity } from '../../leads/entities/lead.entity';
 import { extractLeadInsights } from '../../leads/lead-insights.util';
+import { renderTemplate } from '../utils/render-template.util';
 
 // Channels only meaningful for a lead: leads have no app account (no push
 // token, no websocket session), so IN_APP/PUSH are structurally
 // inapplicable, not just missing contact info.
 const LEAD_CAPABLE_CHANNELS = new Set(['EMAIL', 'SMS']);
-
-function renderTemplate(
-  template: string | undefined,
-  variables: Record<string, string>,
-): string {
-  if (!template) return '';
-  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_match, key: string) =>
-    Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : '',
-  );
-}
 
 function leadTemplateVariables(lead: LeadEntity): Record<string, string> {
   const insights = extractLeadInsights(lead.customFields);
