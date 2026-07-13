@@ -34,6 +34,11 @@ describe('NotificationTriggersJob', () => {
       sendCustomEmail: jest.fn().mockResolvedValue(undefined),
       sendNotification: jest.fn().mockResolvedValue(undefined),
       recordDelivery: jest.fn().mockResolvedValue(undefined),
+      renderEmailTemplatePreview: jest.fn().mockResolvedValue({
+        subject: 'stub subject',
+        html: '<p>stub html</p>',
+      }),
+      buildSmsPreviewText: jest.fn().mockReturnValue('stub sms text'),
       ...overrides.notificationService,
     };
     const notificationGateway = {
@@ -175,6 +180,81 @@ describe('NotificationTriggersJob', () => {
     });
   });
 
+  describe('sendLoginInactivityReminders', () => {
+    it('emails an inactive user who has an email', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: 'a@example.com',
+          phone: null,
+          firstname: 'Amina',
+        },
+      ]);
+      const { job, notificationService, cronMonitor } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      await job.sendLoginInactivityReminders();
+
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'EMAIL',
+        { userId: 'user-1', email: 'a@example.com' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.objectContaining({ customer_name: 'Amina' }),
+        expect.objectContaining({
+          jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        }),
+      );
+      expect(cronMonitor.finishRun).toHaveBeenCalledWith(
+        { id: 'run-1' },
+        expect.objectContaining({ sent: 1, total: 1 }),
+      );
+    });
+
+    it('falls back to SMS for an inactive user with only a phone number', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: null,
+          phone: '+2348012345678',
+          firstname: 'Amina',
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      await job.sendLoginInactivityReminders();
+
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'SMS',
+        { userId: 'user-1', phoneNumber: '+2348012345678' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.objectContaining({ customer_name: 'Amina' }),
+        expect.objectContaining({
+          jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        }),
+      );
+    });
+
+    it('skips a user with neither an email nor a phone number', async () => {
+      const qb = chainableQueryBuilder([
+        { id: 'user-1', email: null, phone: null, firstname: 'Amina' },
+      ]);
+      const { job, notificationService, cronMonitor } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      await job.sendLoginInactivityReminders();
+
+      expect(notificationService.sendNotification).not.toHaveBeenCalled();
+      expect(cronMonitor.finishRun).toHaveBeenCalledWith(
+        { id: 'run-1' },
+        expect.objectContaining({ sent: 0, total: 1 }),
+      );
+    });
+  });
+
   describe('sendAyoIntentFollowUps', () => {
     it('does nothing when the job is disabled', async () => {
       const { job, cronMonitor } = setup({
@@ -278,9 +358,14 @@ describe('NotificationTriggersJob', () => {
       );
     });
 
-    it('LOGIN_INACTIVITY_REMINDERS: maps every inactive user returned by the query', async () => {
+    it('LOGIN_INACTIVITY_REMINDERS: maps every inactive user returned by the query, including phone', async () => {
       const qb = chainableQueryBuilder([
-        { id: 'user-1', email: 'a@example.com', firstname: 'Amina' },
+        {
+          id: 'user-1',
+          email: 'a@example.com',
+          phone: '+2348012345678',
+          firstname: 'Amina',
+        },
       ]);
       const { job } = setup({
         dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
@@ -293,6 +378,7 @@ describe('NotificationTriggersJob', () => {
       expect(targets).toEqual([
         expect.objectContaining({
           id: 'user-1',
+          phone: '+2348012345678',
           reason: 'Inactive for 14+ days',
         }),
       ]);
@@ -498,6 +584,303 @@ describe('NotificationTriggersJob', () => {
       const { job } = setup();
       const targets = await job.getTargetsForJob('not-a-real-job' as any);
       expect(targets).toEqual([]);
+    });
+  });
+
+  describe('getPreviewForJob', () => {
+    it('ORDER_FEEDBACK_REQUESTS: builds the inline email from a real candidate', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'order-1',
+          code: 'ORD-1',
+          user: { id: 'user-1', email: 'a@example.com', firstname: 'Amina' },
+        },
+      ]);
+      const { job } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.ORDER_FEEDBACK_REQUESTS,
+      );
+
+      expect(preview.channel).toBe('EMAIL');
+      expect(preview.usedFallbackSample).toBe(false);
+      expect(preview.subject).toContain('ORD-1');
+      expect(preview.html).toContain('Amina');
+      expect(preview.sampleTarget).toEqual(
+        expect.objectContaining({ name: 'Amina', email: 'a@example.com' }),
+      );
+    });
+
+    it('ORDER_FEEDBACK_REQUESTS: falls back to a placeholder sample when there are no candidates', async () => {
+      const qb = chainableQueryBuilder([]);
+      const { job } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.ORDER_FEEDBACK_REQUESTS,
+      );
+
+      expect(preview.usedFallbackSample).toBe(true);
+      expect(preview.subject).toContain('AGF-00001');
+      expect(preview.sampleTarget.email).toBe('jane.doe@example.com');
+    });
+
+    it('LOGIN_INACTIVITY_REMINDERS: renders the Brevo template with the real candidate name', async () => {
+      const qb = chainableQueryBuilder([
+        { id: 'user-1', email: 'a@example.com', firstname: 'Amina' },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+
+      expect(
+        notificationService.renderEmailTemplatePreview,
+      ).toHaveBeenCalledWith(
+        27,
+        expect.objectContaining({ customer_name: 'Amina' }),
+      );
+      expect(preview.channel).toBe('EMAIL');
+      expect(preview.templateId).toBe(27);
+      expect(preview.html).toBe('<p>stub html</p>');
+      expect(preview.usedFallbackSample).toBe(false);
+    });
+
+    it('LOGIN_INACTIVITY_REMINDERS: falls back to the SMS leg when the candidate has no email', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: null,
+          phone: '+2348012345678',
+          firstname: 'Amina',
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+
+      expect(preview.channel).toBe('SMS');
+      expect(preview.text).toBe('stub sms text');
+      expect(notificationService.buildSmsPreviewText).toHaveBeenCalledWith(
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.objectContaining({ customer_name: 'Amina' }),
+      );
+      expect(preview.usedFallbackSample).toBe(false);
+    });
+
+    it('LOGIN_INACTIVITY_REMINDERS: surfaces a renderError instead of throwing when Brevo fails', async () => {
+      const qb = chainableQueryBuilder([
+        { id: 'user-1', email: 'a@example.com', firstname: 'Amina' },
+      ]);
+      const { job } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+        notificationService: {
+          renderEmailTemplatePreview: jest
+            .fn()
+            .mockResolvedValue({ renderError: 'Brevo returned HTTP 404' }),
+        },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+
+      expect(preview.renderError).toBe('Brevo returned HTTP 404');
+      expect(preview.html).toBeUndefined();
+    });
+
+    it('UNVERIFIED_ACCOUNT_REMINDERS: never mutates the user (no update query, fake token in the link)', async () => {
+      const qb = chainableQueryBuilder([
+        { id: 'user-1', email: 'a@example.com', firstname: 'Amina' },
+      ]);
+      const createQueryBuilder = jest.fn().mockReturnValue(qb);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+      );
+
+      // Only the read (candidates) query builder call — the real send path's
+      // `.update(UserEntity)...` call must never happen for a preview.
+      expect(createQueryBuilder).toHaveBeenCalledTimes(1);
+      const params = (
+        notificationService.renderEmailTemplatePreview as jest.Mock
+      ).mock.calls[0][1];
+      expect(params.verification_link).toContain('sample-preview-token');
+      expect(preview.templateId).toBe(25);
+    });
+
+    it('EDUCATIONAL_CONTENT: falls back to a placeholder sample when there are no subscribers', async () => {
+      const qb = chainableQueryBuilder([]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.EDUCATIONAL_CONTENT,
+      );
+
+      expect(preview.usedFallbackSample).toBe(true);
+      expect(preview.templateId).toBe(28);
+      expect(
+        notificationService.renderEmailTemplatePreview,
+      ).toHaveBeenCalledWith(
+        28,
+        expect.objectContaining({ customer_name: 'Jane' }),
+      );
+    });
+
+    it('PENDING_ORDER_REMINDERS: prefers the EMAIL leg when the candidate has an email', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'order-1',
+          code: 'ORD-1',
+          status: 'pending',
+          totalPrice: 5000,
+          items: [],
+          address: null,
+          createdAt: new Date('2026-01-01'),
+          user: {
+            id: 'user-1',
+            email: 'a@example.com',
+            phone: null,
+            firstname: 'Amina',
+          },
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.PENDING_ORDER_REMINDERS,
+      );
+
+      expect(preview.channel).toBe('EMAIL');
+      expect(preview.templateId).toBe(24);
+      expect(
+        notificationService.renderEmailTemplatePreview,
+      ).toHaveBeenCalledWith(
+        24,
+        expect.objectContaining({ order_id: 'ORD-1' }),
+      );
+    });
+
+    it('PENDING_ORDER_REMINDERS: falls back to the SMS leg when the candidate has no email', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'order-1',
+          code: 'ORD-1',
+          status: 'pending',
+          totalPrice: 5000,
+          items: [],
+          address: null,
+          createdAt: new Date('2026-01-01'),
+          user: {
+            id: 'user-1',
+            email: null,
+            phone: '+2348012345678',
+            firstname: 'Amina',
+          },
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.PENDING_ORDER_REMINDERS,
+      );
+
+      expect(preview.channel).toBe('SMS');
+      expect(preview.text).toBe('stub sms text');
+      expect(notificationService.buildSmsPreviewText).toHaveBeenCalledWith(
+        MessageTypes.PENDING_ORDER_REMINDER,
+        expect.objectContaining({ order_id: 'ORD-1' }),
+      );
+    });
+
+    it('VACCINATION_DUE_REMINDERS: builds the in-app content from a real due flock', async () => {
+      const flock = { id: 'flock-1', userId: 'user-1', birdType: 'Layer' };
+      const { job } = setup({
+        farmFlockService: {
+          listActiveFlocksWithDueVaccinesToday: jest
+            .fn()
+            .mockResolvedValue([flock]),
+          computeVaccinationStatus: jest
+            .fn()
+            .mockReturnValue({ dueToday: [{ vaccineName: 'Gumboro' }] }),
+        },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.VACCINATION_DUE_REMINDERS,
+      );
+
+      expect(preview.channel).toBe('IN_APP');
+      expect(preview.text).toContain('Layer');
+      expect(preview.text).toContain('Gumboro');
+      expect(preview.usedFallbackSample).toBe(false);
+    });
+
+    it('VACCINATION_DUE_REMINDERS: falls back to a placeholder flock when nothing is due', async () => {
+      const { job } = setup();
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.VACCINATION_DUE_REMINDERS,
+      );
+
+      expect(preview.usedFallbackSample).toBe(true);
+      expect(preview.text).toContain('Broiler');
+    });
+
+    it('REGISTERED_NO_ORDER_NUDGE: falls back to a placeholder sample when no touchpoint has candidates', async () => {
+      const emptyQb = chainableQueryBuilder([]);
+      const { job } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(emptyQb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.REGISTERED_NO_ORDER_NUDGE,
+      );
+
+      expect(preview.usedFallbackSample).toBe(true);
+      expect(preview.sampleTarget.email).toBe('jane.doe@example.com');
+    });
+
+    it('AYO_INTENT_FOLLOW_UP: falls back to a placeholder searched query when no candidate resolves', async () => {
+      const candidatesQb = chainableQueryBuilder([]);
+      const { job } = setup({
+        dataSource: {
+          createQueryBuilder: jest.fn().mockReturnValue(candidatesQb),
+        },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.AYO_INTENT_FOLLOW_UP,
+      );
+
+      expect(preview.usedFallbackSample).toBe(true);
+      expect(preview.subject).toContain('layer feed');
+    });
+
+    it('throws for an unrecognized job name', async () => {
+      const { job } = setup();
+      await expect(
+        job.getPreviewForJob('not-a-real-job' as any),
+      ).rejects.toThrow('Unknown cron job');
     });
   });
 });

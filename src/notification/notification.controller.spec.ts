@@ -11,6 +11,11 @@ describe('NotificationController', () => {
     const cronMonitorService = {};
     const triggersJob = {
       getTargetsForJob: jest.fn().mockResolvedValue([]),
+      getPreviewForJob: jest.fn().mockResolvedValue({
+        channel: 'EMAIL',
+        sampleTarget: { name: 'Amina', email: 'a@example.com' },
+        usedFallbackSample: false,
+      }),
     };
     const controller = new NotificationController(
       notificationService as any,
@@ -56,6 +61,30 @@ describe('NotificationController', () => {
       const { controller } = setup();
       await expect(
         controller.getCronJobRecipients('not-a-real-job', {} as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('getCronJobPreview', () => {
+    it('returns a sample of the message this job would send', async () => {
+      const { controller, triggersJob } = setup();
+
+      const result = await controller.getCronJobPreview(
+        CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+      );
+
+      expect(triggersJob.getPreviewForJob).toHaveBeenCalledWith(
+        CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+      );
+      expect(result).toEqual(
+        expect.objectContaining({ channel: 'EMAIL', usedFallbackSample: false }),
+      );
+    });
+
+    it('rejects an unknown job name', async () => {
+      const { controller } = setup();
+      await expect(
+        controller.getCronJobPreview('not-a-real-job'),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });

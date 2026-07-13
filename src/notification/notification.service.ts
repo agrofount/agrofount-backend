@@ -31,6 +31,7 @@ import { OrderEntity } from '../order/entities/order.entity';
 import { TeamsService } from './services/teams.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { renderTemplate } from './utils/render-template.util';
 
 @Injectable()
 export class NotificationService {
@@ -518,7 +519,7 @@ export class NotificationService {
         return orderUpdateSmsRes;
 
       case MessageTypes.PENDING_ORDER_REMINDER:
-        const pendingOrderMessage = `Hi ${params.customer_name}, your Agrofount order ${params.order_id} is still pending. Complete payment by ${params.due_date} to secure your items: ${params.order_link}`;
+        const pendingOrderMessage = this.buildSmsText(messageType, params);
         const pendingOrderSmsRes = await this.sendSmsMessage(
           pendingOrderMessage,
           recipient,
@@ -526,6 +527,16 @@ export class NotificationService {
         await recordSms(pendingOrderMessage);
 
         return pendingOrderSmsRes;
+
+      case MessageTypes.LOGIN_INACTIVITY_REMINDER:
+        const loginInactivityMessage = this.buildSmsText(messageType, params);
+        const loginInactivitySmsRes = await this.sendSmsMessage(
+          loginInactivityMessage,
+          recipient,
+        );
+        await recordSms(loginInactivityMessage);
+
+        return loginInactivitySmsRes;
 
       case MessageTypes.CRON_JOB_SUMMARY:
         const cronSummaryMessage = `Ayo Cron: ${params.jobName} ${
@@ -543,6 +554,49 @@ export class NotificationService {
 
       default:
         throw new Error(`Unsupported SMS message type: ${messageType}`);
+    }
+  }
+
+  private buildSmsText(
+    messageType: MessageTypes,
+    params: Record<string, any>,
+  ): string {
+    switch (messageType) {
+      case MessageTypes.PENDING_ORDER_REMINDER:
+        return `Hi ${params.customer_name}, your Agrofount order ${params.order_id} is still pending. Complete payment by ${params.due_date} to secure your items: ${params.order_link}`;
+      case MessageTypes.LOGIN_INACTIVITY_REMINDER:
+        return `Hi ${params.customer_name}, it's been a while since you visited Agrofount. Check out what's new: ${params.login_link}`;
+      default:
+        throw new Error(`No SMS preview text builder for: ${messageType}`);
+    }
+  }
+
+  buildSmsPreviewText(
+    messageType: MessageTypes,
+    params: Record<string, any>,
+  ): string {
+    return this.buildSmsText(messageType, params);
+  }
+
+  async renderEmailTemplatePreview(
+    templateId: number,
+    params: Record<string, any>,
+  ): Promise<{ subject?: string; html?: string; renderError?: string }> {
+    try {
+      const template = await this.sendInBlue.getTemplate(templateId);
+      const stringParams: Record<string, string> = Object.fromEntries(
+        Object.entries(params).map(([key, value]) => [key, String(value)]),
+      );
+      return {
+        subject: template.subject
+          ? renderTemplate(template.subject, stringParams)
+          : undefined,
+        html: template.htmlContent
+          ? renderTemplate(template.htmlContent, stringParams)
+          : undefined,
+      };
+    } catch (error) {
+      return { renderError: (error as Error).message };
     }
   }
 

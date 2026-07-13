@@ -38,6 +38,25 @@ export const configureSendInBlue = (configService: ConfigService) => {
         throw new Error(`Failed to send email: ${(err as Error).message}`);
       }
     },
+    getTemplate: async (
+      templateId: number,
+    ): Promise<{ subject?: string; htmlContent?: string }> => {
+      const response = await fetch(
+        `https://api.brevo.com/v3/smtp/templates/${templateId}`,
+        {
+          headers: {
+            accept: 'application/json',
+            'api-key': apiKey,
+          },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`Brevo returned HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      return { subject: data.subject, htmlContent: data.htmlContent };
+    },
     sendCustomEmail: async (
       to: string,
       subject: string,

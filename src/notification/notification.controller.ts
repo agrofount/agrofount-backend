@@ -176,6 +176,19 @@ export class NotificationController {
     ]);
   }
 
+  @Get('cron-jobs/:name/preview')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      'Preview a sample of the email/SMS/in-app message this cron job would send',
+  })
+  async getCronJobPreview(@Param('name') name: string) {
+    if (!Object.values(CronJobName).includes(name as CronJobName)) {
+      throw new BadRequestException(`Unknown cron job: ${name}`);
+    }
+    return this.triggersJob.getPreviewForJob(name as CronJobName);
+  }
+
   @Get('cron-jobs/:name/deliveries')
   @UseGuards(JwtAuthGuard, AdminAuthGuard)
   @ApiOperation({
