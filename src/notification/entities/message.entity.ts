@@ -49,6 +49,9 @@ export class MessageEntity {
   errorMessage: string;
 
   @Column({ nullable: true })
+  failureCategory: string;
+
+  @Column({ nullable: true })
   recipientEmail: string;
 
   @Column({ nullable: true })

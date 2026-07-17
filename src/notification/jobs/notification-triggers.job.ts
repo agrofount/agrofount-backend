@@ -157,49 +157,64 @@ export class NotificationTriggersJob {
       CronJobName.ORDER_FEEDBACK_REQUESTS,
     );
 
-    let sent = 0;
-    let total = 0;
-
     try {
       const orders = await this.getOrderFeedbackCandidates();
-
-      total = orders.length;
-      for (const order of orders) {
-        if (!order.user?.email) continue;
-        try {
-          const name = order.user.firstname ?? 'there';
-          await this.notificationService.sendCustomEmail(
-            { userId: order.user.id, email: order.user.email },
-            `How was your order ${order.code}?`,
-            this.buildSimpleEmail(
-              "We'd love your feedback!",
-              `Hi ${name}, how was your recent order (${order.code})? A quick rating helps us serve you better.`,
-              'Leave a Review',
-              `${process.env.FRONTEND_URL ?? ''}/orders/${order.id}`,
-            ),
-            `Please leave feedback for order ${order.code}.`,
-            MessageTypes.ORDER_FEEDBACK_REQUEST,
-            { jobName: CronJobName.ORDER_FEEDBACK_REQUESTS, channel: 'EMAIL' },
-          );
-          sent++;
-        } catch (err) {
-          this.logger.warn(
-            `Order feedback failed for order ${order.id}: ${
-              (err as Error).message
-            }`,
-          );
-        }
-      }
-
-      await this.cronMonitor.finishRun(run, { sent, total });
+      const result = await this.dispatchOrderFeedbackRequests(orders);
+      await this.cronMonitor.finishRun(run, result);
     } catch (err) {
       await this.cronMonitor.finishRun(run, {
-        sent,
-        total,
+        sent: 0,
+        total: 0,
         error: (err as Error).message,
       });
       throw err;
     }
+  }
+
+  async sendOrderFeedbackForTargets(
+    orderIds: string[],
+  ): Promise<{ sent: number; total: number }> {
+    const orders = await this.getOrderFeedbackCandidates();
+    const idSet = new Set(orderIds);
+    return this.dispatchOrderFeedbackRequests(
+      orders.filter((order) => idSet.has(order.id)),
+    );
+  }
+
+  private async dispatchOrderFeedbackRequests(
+    orders: OrderEntity[],
+  ): Promise<{ sent: number; total: number }> {
+    let sent = 0;
+    const total = orders.length;
+
+    for (const order of orders) {
+      if (!order.user?.email) continue;
+      try {
+        const name = order.user.firstname ?? 'there';
+        await this.notificationService.sendCustomEmail(
+          { userId: order.user.id, email: order.user.email },
+          `How was your order ${order.code}?`,
+          this.buildSimpleEmail(
+            "We'd love your feedback!",
+            `Hi ${name}, how was your recent order (${order.code})? A quick rating helps us serve you better.`,
+            'Leave a Review',
+            `${process.env.FRONTEND_URL ?? ''}/orders/${order.id}`,
+          ),
+          `Please leave feedback for order ${order.code}.`,
+          MessageTypes.ORDER_FEEDBACK_REQUEST,
+          { jobName: CronJobName.ORDER_FEEDBACK_REQUESTS, channel: 'EMAIL' },
+        );
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Order feedback failed for order ${order.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+
+    return { sent, total };
   }
 
   private async getOrderFeedbackCandidates(): Promise<OrderEntity[]> {
@@ -281,69 +296,84 @@ export class NotificationTriggersJob {
       CronJobName.LOGIN_INACTIVITY_REMINDERS,
     );
 
-    let sent = 0;
-    let total = 0;
-
     try {
       const users = await this.getLoginInactivityCandidates();
-
-      total = users.length;
-      for (const user of users) {
-        try {
-          const name = user.firstname ?? 'there';
-          this.notificationGateway.emitToUser(user.id, 'notification', {
-            title: 'We miss you!',
-            message: "It's been a while. Check out what's new on Agrofount.",
-            ctaLink: process.env.FRONTEND_URL,
-          });
-          await this.notificationService.recordDelivery({
-            messageType: MessageTypes.LOGIN_INACTIVITY_REMINDER,
-            userId: user.id,
-            sender: 'Agrofount',
-            message: 'We miss you!',
-            channel: 'IN_APP',
-            jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
-            status: 'SENT',
-          });
-
-          const params = this.buildLoginInactivityParams(name);
-          if (user.email) {
-            await this.notificationService.sendNotification(
-              'EMAIL',
-              { userId: user.id, email: user.email },
-              MessageTypes.LOGIN_INACTIVITY_REMINDER,
-              params,
-              { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
-            );
-            sent++;
-          } else if (user.phone) {
-            await this.notificationService.sendNotification(
-              'SMS',
-              { userId: user.id, phoneNumber: user.phone },
-              MessageTypes.LOGIN_INACTIVITY_REMINDER,
-              params,
-              { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
-            );
-            sent++;
-          }
-        } catch (err) {
-          this.logger.warn(
-            `Inactivity reminder failed for user ${user.id}: ${
-              (err as Error).message
-            }`,
-          );
-        }
-      }
-
-      await this.cronMonitor.finishRun(run, { sent, total });
+      const result = await this.dispatchLoginInactivityReminders(users);
+      await this.cronMonitor.finishRun(run, result);
     } catch (err) {
       await this.cronMonitor.finishRun(run, {
-        sent,
-        total,
+        sent: 0,
+        total: 0,
         error: (err as Error).message,
       });
       throw err;
     }
+  }
+
+  async sendLoginInactivityRemindersForTargets(
+    userIds: string[],
+  ): Promise<{ sent: number; total: number }> {
+    const users = await this.getLoginInactivityCandidates();
+    const idSet = new Set(userIds);
+    return this.dispatchLoginInactivityReminders(
+      users.filter((user) => idSet.has(user.id)),
+    );
+  }
+
+  private async dispatchLoginInactivityReminders(
+    users: UserEntity[],
+  ): Promise<{ sent: number; total: number }> {
+    let sent = 0;
+    const total = users.length;
+
+    for (const user of users) {
+      try {
+        const name = user.firstname ?? 'there';
+        this.notificationGateway.emitToUser(user.id, 'notification', {
+          title: 'We miss you!',
+          message: "It's been a while. Check out what's new on Agrofount.",
+          ctaLink: process.env.FRONTEND_URL,
+        });
+        await this.notificationService.recordDelivery({
+          messageType: MessageTypes.LOGIN_INACTIVITY_REMINDER,
+          userId: user.id,
+          sender: 'Agrofount',
+          message: 'We miss you!',
+          channel: 'IN_APP',
+          jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
+          status: 'SENT',
+        });
+
+        const params = this.buildLoginInactivityParams(name);
+        if (user.email) {
+          await this.notificationService.sendNotification(
+            'EMAIL',
+            { userId: user.id, email: user.email },
+            MessageTypes.LOGIN_INACTIVITY_REMINDER,
+            params,
+            { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
+          );
+          sent++;
+        } else if (user.phone) {
+          await this.notificationService.sendNotification(
+            'SMS',
+            { userId: user.id, phoneNumber: user.phone },
+            MessageTypes.LOGIN_INACTIVITY_REMINDER,
+            params,
+            { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
+          );
+          sent++;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Inactivity reminder failed for user ${user.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+
+    return { sent, total };
   }
 
   private async getLoginInactivityCandidates(): Promise<UserEntity[]> {
@@ -592,44 +622,61 @@ export class NotificationTriggersJob {
       CronJobName.EDUCATIONAL_CONTENT,
     );
 
-    let sent = 0;
-    let total = 0;
-
     try {
       const users = await this.getEducationalContentCandidates();
-
-      total = users.length;
       const tip = this.getWeeklyFarmingTip();
-
-      for (const user of users) {
-        try {
-          const name = user.firstname ?? 'there';
-          await this.notificationService.sendNotification(
-            'EMAIL',
-            { userId: user.id, email: user.email },
-            MessageTypes.EDUCATIONAL_CONTENT,
-            this.buildEducationalContentParams(name, tip),
-            { jobName: CronJobName.EDUCATIONAL_CONTENT },
-          );
-          sent++;
-        } catch (err) {
-          this.logger.warn(
-            `Educational content failed for user ${user.id}: ${
-              (err as Error).message
-            }`,
-          );
-        }
-      }
-
-      await this.cronMonitor.finishRun(run, { sent, total });
+      const result = await this.dispatchEducationalContent(users, tip);
+      await this.cronMonitor.finishRun(run, result);
     } catch (err) {
       await this.cronMonitor.finishRun(run, {
-        sent,
-        total,
+        sent: 0,
+        total: 0,
         error: (err as Error).message,
       });
       throw err;
     }
+  }
+
+  async sendEducationalContentForTargets(
+    userIds: string[],
+  ): Promise<{ sent: number; total: number }> {
+    const users = await this.getEducationalContentCandidates();
+    const idSet = new Set(userIds);
+    const tip = this.getWeeklyFarmingTip();
+    return this.dispatchEducationalContent(
+      users.filter((user) => idSet.has(user.id)),
+      tip,
+    );
+  }
+
+  private async dispatchEducationalContent(
+    users: UserEntity[],
+    tip: FarmingTipContent,
+  ): Promise<{ sent: number; total: number }> {
+    let sent = 0;
+    const total = users.length;
+
+    for (const user of users) {
+      try {
+        const name = user.firstname ?? 'there';
+        await this.notificationService.sendNotification(
+          'EMAIL',
+          { userId: user.id, email: user.email },
+          MessageTypes.EDUCATIONAL_CONTENT,
+          this.buildEducationalContentParams(name, tip),
+          { jobName: CronJobName.EDUCATIONAL_CONTENT },
+        );
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Educational content failed for user ${user.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+
+    return { sent, total };
   }
 
   private async getEducationalContentCandidates(): Promise<UserEntity[]> {
@@ -949,6 +996,7 @@ export class NotificationTriggersJob {
             { userId: user.id, email: user.email },
             MessageTypes.PENDING_ORDER_REMINDER,
             emailParams,
+            { jobName: CronJobName.PENDING_ORDER_REMINDERS },
           );
         } else {
           await this.notificationService.sendNotification(
@@ -956,6 +1004,7 @@ export class NotificationTriggersJob {
             { userId: user.id, phoneNumber: user.phone },
             MessageTypes.PENDING_ORDER_REMINDER,
             sharedParams,
+            { jobName: CronJobName.PENDING_ORDER_REMINDERS },
           );
         }
         sent++;
@@ -1123,75 +1172,107 @@ export class NotificationTriggersJob {
       CronJobName.REGISTERED_NO_ORDER_NUDGE,
     );
 
-    let sent = 0;
-    let total = 0;
-
     try {
+      const touchpointUsers = [];
       for (const touchpoint of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
         const users = await this.getRegisteredNoOrderCandidatesForTouchpoint(
           touchpoint,
         );
-
-        total += users.length;
-
-        for (const user of users) {
-          if (!user.email) continue;
-          try {
-            const voucher = await this.dataSource
-              .getRepository(VoucherEntity)
-              .findOne({
-                where: { user: { id: user.id }, status: VoucherStatus.Active },
-              });
-
-            const lead = await this.dataSource
-              .getRepository(LeadEntity)
-              .findOne({ where: { convertedUserId: user.id } });
-            const { heading, body: personalizedBody } =
-              this.personalizeRegisteredNudge(
-                touchpoint,
-                extractLeadInsights(lead?.customFields),
-              );
-
-            const body = voucher
-              ? `${personalizedBody} Use code ${voucher.code} for ₦${voucher.amount} off.`
-              : personalizedBody;
-
-            await this.notificationService.sendCustomEmail(
-              { userId: user.id, email: user.email },
-              heading,
-              this.buildSimpleEmail(
-                heading,
-                body,
-                'Shop Now',
-                process.env.FRONTEND_URL ?? '',
-              ),
-              body,
-              MessageTypes.REGISTERED_NO_ORDER_NUDGE,
-              {
-                jobName: CronJobName.REGISTERED_NO_ORDER_NUDGE,
-                channel: 'EMAIL',
-              },
-            );
-            sent++;
-          } catch (err) {
-            this.logger.warn(
-              `Registered-no-order nudge failed for user ${user.id}: ${
-                (err as Error).message
-              }`,
-            );
-          }
-        }
+        touchpointUsers.push({ touchpoint, users });
       }
-
-      await this.cronMonitor.finishRun(run, { sent, total });
+      const result = await this.dispatchRegisteredNoOrderNudges(
+        touchpointUsers,
+      );
+      await this.cronMonitor.finishRun(run, result);
     } catch (err) {
       await this.cronMonitor.finishRun(run, {
-        sent,
-        total,
+        sent: 0,
+        total: 0,
         error: (err as Error).message,
       });
       throw err;
     }
+  }
+
+  async sendRegisteredNoOrderNudgesForTargets(
+    userIds: string[],
+  ): Promise<{ sent: number; total: number }> {
+    const idSet = new Set(userIds);
+    const touchpointUsers = [];
+    for (const touchpoint of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
+      const users = await this.getRegisteredNoOrderCandidatesForTouchpoint(
+        touchpoint,
+      );
+      touchpointUsers.push({
+        touchpoint,
+        users: users.filter((user) => idSet.has(user.id)),
+      });
+    }
+    return this.dispatchRegisteredNoOrderNudges(touchpointUsers);
+  }
+
+  private async dispatchRegisteredNoOrderNudges(
+    touchpointUsers: {
+      touchpoint: { dayOffset: number; heading: string; body: string };
+      users: UserEntity[];
+    }[],
+  ): Promise<{ sent: number; total: number }> {
+    let sent = 0;
+    let total = 0;
+
+    for (const { touchpoint, users } of touchpointUsers) {
+      total += users.length;
+
+      for (const user of users) {
+        if (!user.email) continue;
+        try {
+          const voucher = await this.dataSource
+            .getRepository(VoucherEntity)
+            .findOne({
+              where: { user: { id: user.id }, status: VoucherStatus.Active },
+            });
+
+          const lead = await this.dataSource
+            .getRepository(LeadEntity)
+            .findOne({ where: { convertedUserId: user.id } });
+          const { heading, body: personalizedBody } =
+            this.personalizeRegisteredNudge(
+              touchpoint,
+              extractLeadInsights(lead?.customFields),
+            );
+
+          const body = voucher
+            ? `${personalizedBody} Use code ${voucher.code} for ₦${voucher.amount} off.`
+            : personalizedBody;
+
+          await this.notificationService.sendCustomEmail(
+            { userId: user.id, email: user.email },
+            heading,
+            this.buildSimpleEmail(
+              heading,
+              body,
+              'Shop Now',
+              process.env.FRONTEND_URL ?? '',
+            ),
+            body,
+            MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+            {
+              jobName: CronJobName.REGISTERED_NO_ORDER_NUDGE,
+              channel: 'EMAIL',
+            },
+          );
+          sent++;
+        } catch (err) {
+          this.logger.warn(
+            `Registered-no-order nudge failed for user ${user.id}: ${
+              (err as Error).message
+            }`,
+          );
+        }
+      }
+    }
+
+    return { sent, total };
   }
 
   private async getRegisteredNoOrderCandidatesForTouchpoint(touchpoint: {
@@ -1311,62 +1392,78 @@ export class NotificationTriggersJob {
       CronJobName.AYO_INTENT_FOLLOW_UP,
     );
 
-    let sent = 0;
-    let total = 0;
-
     try {
       const { userIds, since } = await this.getAyoIntentCandidateIds();
-
-      total = userIds.length;
-
-      for (const userId of userIds) {
-        try {
-          const resolved = await this.resolveAyoIntentCandidate(userId, since);
-          if (!resolved) continue;
-          const { user, searchedQuery } = resolved;
-
-          const heading = searchedQuery
-            ? `Still looking for ${searchedQuery}?`
-            : 'Still exploring Agrofount?';
-          const body = searchedQuery
-            ? `You asked Ayo about "${searchedQuery}" recently — it's still available. Want help placing an order?`
-            : "You checked something out with Ayo recently — we're here if you're ready to order or need help getting started.";
-
-          await this.notificationService.sendCustomEmail(
-            { userId, email: user.email },
-            heading,
-            this.buildSimpleEmail(
-              heading,
-              body,
-              'Shop Now',
-              process.env.FRONTEND_URL ?? '',
-            ),
-            body,
-            MessageTypes.AYO_INTENT_FOLLOW_UP,
-            {
-              jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
-              channel: 'EMAIL',
-            },
-          );
-          sent++;
-        } catch (err) {
-          this.logger.warn(
-            `Ayo intent follow-up failed for user ${userId}: ${
-              (err as Error).message
-            }`,
-          );
-        }
-      }
-
-      await this.cronMonitor.finishRun(run, { sent, total });
+      const result = await this.dispatchAyoIntentFollowUps(userIds, since);
+      await this.cronMonitor.finishRun(run, result);
     } catch (err) {
       await this.cronMonitor.finishRun(run, {
-        sent,
-        total,
+        sent: 0,
+        total: 0,
         error: (err as Error).message,
       });
       throw err;
     }
+  }
+
+  async sendAyoIntentFollowUpsForTargets(
+    userIds: string[],
+  ): Promise<{ sent: number; total: number }> {
+    const { userIds: allIds, since } = await this.getAyoIntentCandidateIds();
+    const idSet = new Set(userIds);
+    return this.dispatchAyoIntentFollowUps(
+      allIds.filter((id) => idSet.has(id)),
+      since,
+    );
+  }
+
+  private async dispatchAyoIntentFollowUps(
+    userIds: string[],
+    since: Date,
+  ): Promise<{ sent: number; total: number }> {
+    let sent = 0;
+    const total = userIds.length;
+
+    for (const userId of userIds) {
+      try {
+        const resolved = await this.resolveAyoIntentCandidate(userId, since);
+        if (!resolved) continue;
+        const { user, searchedQuery } = resolved;
+
+        const heading = searchedQuery
+          ? `Still looking for ${searchedQuery}?`
+          : 'Still exploring Agrofount?';
+        const body = searchedQuery
+          ? `You asked Ayo about "${searchedQuery}" recently — it's still available. Want help placing an order?`
+          : "You checked something out with Ayo recently — we're here if you're ready to order or need help getting started.";
+
+        await this.notificationService.sendCustomEmail(
+          { userId, email: user.email },
+          heading,
+          this.buildSimpleEmail(
+            heading,
+            body,
+            'Shop Now',
+            process.env.FRONTEND_URL ?? '',
+          ),
+          body,
+          MessageTypes.AYO_INTENT_FOLLOW_UP,
+          {
+            jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
+            channel: 'EMAIL',
+          },
+        );
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Ayo intent follow-up failed for user ${userId}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+
+    return { sent, total };
   }
 
   private async getAyoIntentCandidateIds(): Promise<{
@@ -1396,12 +1493,16 @@ export class NotificationTriggersJob {
     userId: string,
     since: Date,
   ): Promise<{ user: UserEntity; searchedQuery?: string } | null> {
+    // Only a successful send counts as "already nudged" — a FAILED attempt
+    // shouldn't permanently block this user from being retried within the
+    // window.
     const alreadyNudged = await this.dataSource
       .getRepository(MessageEntity)
       .findOne({
         where: {
           userId,
           jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
+          status: 'SENT',
           createdAt: MoreThan(since),
         },
       });
@@ -1556,6 +1657,145 @@ export class NotificationTriggersJob {
         return this.getRegisteredNoOrderPreview();
       case CronJobName.AYO_INTENT_FOLLOW_UP:
         return this.getAyoIntentPreview();
+      default:
+        throw new Error(`Unknown cron job: ${jobName}`);
+    }
+  }
+
+  // Resends only to users whose most recent message for this job currently
+  // shows FAILED — a successful retry naturally drops them out of that set,
+  // so there's no separate "already retried" bookkeeping to maintain.
+  async retryFailedForJob(
+    jobName: CronJobName,
+  ): Promise<{ sent: number; total: number }> {
+    const failedUserIds = await this.notificationService.getFailedRecipientIds(
+      jobName,
+    );
+    if (!failedUserIds.length) return { sent: 0, total: 0 };
+
+    switch (jobName) {
+      case CronJobName.ORDER_FEEDBACK_REQUESTS: {
+        const orderIds = await this.mapFailedUsersToOrderIds(
+          await this.getOrderFeedbackCandidates(),
+          failedUserIds,
+        );
+        if (!orderIds.length) return { sent: 0, total: 0 };
+        return this.sendOrderFeedbackForTargets(orderIds);
+      }
+      case CronJobName.LOGIN_INACTIVITY_REMINDERS:
+        return this.sendLoginInactivityRemindersForTargets(failedUserIds);
+      case CronJobName.UNVERIFIED_ACCOUNT_REMINDERS:
+        return this.sendUnverifiedReminderForUsers(failedUserIds);
+      case CronJobName.EDUCATIONAL_CONTENT:
+        return this.sendEducationalContentForTargets(failedUserIds);
+      case CronJobName.PENDING_ORDER_REMINDERS: {
+        const orderIds = await this.mapFailedUsersToOrderIds(
+          await this.getPendingOrderReminderCandidates(),
+          failedUserIds,
+        );
+        if (!orderIds.length) return { sent: 0, total: 0 };
+        return this.sendReminderForOrders(orderIds);
+      }
+      case CronJobName.REGISTERED_NO_ORDER_NUDGE:
+        return this.sendRegisteredNoOrderNudgesForTargets(failedUserIds);
+      case CronJobName.AYO_INTENT_FOLLOW_UP:
+        return this.sendAyoIntentFollowUpsForTargets(failedUserIds);
+      case CronJobName.VACCINATION_DUE_REMINDERS:
+        throw new Error(
+          'Retry is not supported for this job (it uses no email/SMS provider)',
+        );
+      default:
+        throw new Error(`Unknown cron job: ${jobName}`);
+    }
+  }
+
+  private mapFailedUsersToOrderIds(
+    orders: OrderEntity[],
+    failedUserIds: string[],
+  ): string[] {
+    const idSet = new Set(failedUserIds);
+    return orders
+      .filter((order) => order.user?.id && idSet.has(order.user.id))
+      .map((order) => order.id);
+  }
+
+  // Manually runs a job right now against a filtered slice of its normal
+  // audience — reuses the exact same candidate queries and "send to
+  // targets" methods retry uses, so both share one mechanism.
+  async runJobNowForContactFilter(
+    jobName: CronJobName,
+    contactFilter?: 'EMAIL_ONLY' | 'PHONE_ONLY',
+  ): Promise<{ sent: number; total: number }> {
+    const matches = (email?: string | null, phone?: string | null) => {
+      if (contactFilter === 'EMAIL_ONLY') return !!email && !phone;
+      if (contactFilter === 'PHONE_ONLY') return !!phone && !email;
+      return true;
+    };
+
+    switch (jobName) {
+      case CronJobName.ORDER_FEEDBACK_REQUESTS: {
+        const orders = await this.getOrderFeedbackCandidates();
+        const ids = orders
+          .filter((o) => matches(o.user?.email, o.user?.phone))
+          .map((o) => o.id);
+        return this.sendOrderFeedbackForTargets(ids);
+      }
+      case CronJobName.LOGIN_INACTIVITY_REMINDERS: {
+        const users = await this.getLoginInactivityCandidates();
+        const ids = users
+          .filter((u) => matches(u.email, u.phone))
+          .map((u) => u.id);
+        return this.sendLoginInactivityRemindersForTargets(ids);
+      }
+      case CronJobName.UNVERIFIED_ACCOUNT_REMINDERS: {
+        const users = await this.getUnverifiedAccountCandidates();
+        const ids = users
+          .filter((u) => matches(u.email, null))
+          .map((u) => u.id);
+        return this.sendUnverifiedReminderForUsers(ids);
+      }
+      case CronJobName.EDUCATIONAL_CONTENT: {
+        const users = await this.getEducationalContentCandidates();
+        const ids = users
+          .filter((u) => matches(u.email, null))
+          .map((u) => u.id);
+        return this.sendEducationalContentForTargets(ids);
+      }
+      case CronJobName.PENDING_ORDER_REMINDERS: {
+        const orders = await this.getPendingOrderReminderCandidates();
+        const ids = orders
+          .filter((o) => matches(o.user?.email, o.user?.phone))
+          .map((o) => o.id);
+        if (!ids.length) return { sent: 0, total: 0 };
+        return this.sendReminderForOrders(ids);
+      }
+      case CronJobName.REGISTERED_NO_ORDER_NUDGE: {
+        const ids: string[] = [];
+        for (const touchpoint of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
+          const users = await this.getRegisteredNoOrderCandidatesForTouchpoint(
+            touchpoint,
+          );
+          ids.push(
+            ...users.filter((u) => matches(u.email, u.phone)).map((u) => u.id),
+          );
+        }
+        return this.sendRegisteredNoOrderNudgesForTargets(ids);
+      }
+      case CronJobName.AYO_INTENT_FOLLOW_UP: {
+        const { userIds, since } = await this.getAyoIntentCandidateIds();
+        const matched: string[] = [];
+        for (const userId of userIds) {
+          const resolved = await this.resolveAyoIntentCandidate(userId, since);
+          if (resolved && matches(resolved.user.email, resolved.user.phone)) {
+            matched.push(userId);
+          }
+        }
+        return this.sendAyoIntentFollowUpsForTargets(matched);
+      }
+      case CronJobName.VACCINATION_DUE_REMINDERS:
+        throw new Error(
+          'Manual run is not supported for this job (it uses no email/SMS provider)',
+        );
       default:
         throw new Error(`Unknown cron job: ${jobName}`);
     }

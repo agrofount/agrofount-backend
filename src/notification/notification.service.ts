@@ -17,6 +17,7 @@ import { MessageEntity } from './entities/message.entity';
 import { Repository } from 'typeorm';
 import {
   EmailTemplateIds,
+  FailureCategory,
   MessageRecipient,
   MessageTypes,
   NotificationChannels,
@@ -32,6 +33,7 @@ import { TeamsService } from './services/teams.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { renderTemplate } from './utils/render-template.util';
+import { classifyProviderError } from './utils/classify-provider-error.util';
 
 @Injectable()
 export class NotificationService {
@@ -76,11 +78,38 @@ export class NotificationService {
       filterableColumns: {
         channel: [FilterOperator.EQ],
         status: [FilterOperator.EQ],
+        failureCategory: [FilterOperator.EQ],
       },
       where: filters,
       defaultLimit: 25,
       maxLimit: 100,
     });
+  }
+
+  // "Currently failing" users for a job — the *latest* message for that
+  // user+job must itself be FAILED, not just "has ever failed once". That
+  // way a successful retry naturally drops the user out of this set next
+  // time, with no extra bookkeeping needed.
+  async getFailedRecipientIds(
+    jobName: string,
+    failureCategory?: FailureCategory,
+  ): Promise<string[]> {
+    const latest = await this.messageRepo
+      .createQueryBuilder('message')
+      .distinctOn(['message.userId'])
+      .where('message.jobName = :jobName', { jobName })
+      .andWhere('message.userId IS NOT NULL')
+      .orderBy('message.userId', 'ASC')
+      .addOrderBy('message.createdAt', 'DESC')
+      .getMany();
+
+    return latest
+      .filter(
+        (m) =>
+          m.status === 'FAILED' &&
+          (!failureCategory || m.failureCategory === failureCategory),
+      )
+      .map((m) => m.userId);
   }
 
   async enqueueNotifications() {
@@ -378,6 +407,7 @@ export class NotificationService {
         options?.replyTo,
       );
     } catch (error) {
+      const errorMessage = error?.message || String(error);
       await this.recordDelivery({
         messageType,
         userId: recipient.userId,
@@ -387,7 +417,8 @@ export class NotificationService {
         campaignId: options?.campaignId,
         jobName: options?.jobName,
         status: 'FAILED',
-        errorMessage: error?.message || String(error),
+        errorMessage,
+        failureCategory: classifyProviderError(errorMessage),
       });
       throw error;
     }
@@ -421,6 +452,7 @@ export class NotificationService {
     try {
       await this.sendInBlue.sendEmail(recipient.email, templateId, params);
     } catch (error) {
+      const errorMessage = error?.message || String(error);
       await this.recordDelivery({
         messageType,
         templateId,
@@ -431,7 +463,8 @@ export class NotificationService {
         campaignId: options?.campaignId,
         jobName: options?.jobName,
         status: 'FAILED',
-        errorMessage: error?.message || String(error),
+        errorMessage,
+        failureCategory: classifyProviderError(errorMessage),
       });
       throw error;
     }
@@ -463,8 +496,12 @@ export class NotificationService {
       );
     }
 
-    const recordSms = (message?: string) =>
-      this.recordDelivery({
+    const recordSms = (
+      message?: string,
+      result?: { success?: boolean; error?: string },
+    ) => {
+      const failed = result?.success === false;
+      return this.recordDelivery({
         messageType,
         userId: params.userId,
         sender: sender_id,
@@ -473,19 +510,25 @@ export class NotificationService {
         recipientPhone: recipient,
         campaignId: options?.campaignId,
         jobName: options?.jobName,
+        status: failed ? 'FAILED' : 'SENT',
+        errorMessage: failed ? result.error : undefined,
+        failureCategory: failed
+          ? classifyProviderError(result.error ?? '')
+          : undefined,
       });
+    };
 
     // Determine the message content based on the message type
     switch (messageType) {
       case MessageTypes.SEND_OTP:
         const otpRes = await this.sendOTP(recipient);
-        await recordSms();
+        await recordSms(undefined, otpRes);
 
         return otpRes;
 
       case MessageTypes.VERIFY_PHONE_OTP:
         const res = await this.verifyOTP(params.pinId, params.otp);
-        await recordSms();
+        await recordSms(undefined, res);
 
         return res;
 
@@ -493,7 +536,7 @@ export class NotificationService {
         const voucherMessage = `Your voucher code is ${params.voucher_code}. Amount: ${params.amount}. Valid for 30 days.`;
 
         const smsRes = await this.sendSmsMessage(voucherMessage, recipient);
-        await recordSms(voucherMessage);
+        await recordSms(voucherMessage, smsRes);
 
         return smsRes;
 
@@ -504,7 +547,7 @@ export class NotificationService {
           paymentMessage,
           recipient,
         );
-        await recordSms(paymentMessage);
+        await recordSms(paymentMessage, paymentSmsRes);
 
         return paymentSmsRes;
 
@@ -514,7 +557,7 @@ export class NotificationService {
           orderUpdateMessage,
           recipient,
         );
-        await recordSms(orderUpdateMessage);
+        await recordSms(orderUpdateMessage, orderUpdateSmsRes);
 
         return orderUpdateSmsRes;
 
@@ -524,7 +567,7 @@ export class NotificationService {
           pendingOrderMessage,
           recipient,
         );
-        await recordSms(pendingOrderMessage);
+        await recordSms(pendingOrderMessage, pendingOrderSmsRes);
 
         return pendingOrderSmsRes;
 
@@ -534,7 +577,7 @@ export class NotificationService {
           loginInactivityMessage,
           recipient,
         );
-        await recordSms(loginInactivityMessage);
+        await recordSms(loginInactivityMessage, loginInactivitySmsRes);
 
         return loginInactivitySmsRes;
 
@@ -548,7 +591,7 @@ export class NotificationService {
           cronSummaryMessage,
           recipient,
         );
-        await recordSms(cronSummaryMessage);
+        await recordSms(cronSummaryMessage, cronSummarySmsRes);
 
         return cronSummarySmsRes;
 
@@ -632,10 +675,20 @@ export class NotificationService {
         console.error('Error sending SMS via Termii:', error.message);
       }
 
-      // Return a failure response instead of throwing an exception
+      // Return a failure response instead of throwing an exception. Include
+      // the response body detail (previously only console.logged) so
+      // callers can classify the failure instead of seeing a generic
+      // "Unknown error" — Termii's exact field names for e.g. an
+      // insufficient-balance condition aren't verified against their live
+      // API, so this is passed through as-is rather than parsed further.
+      const responseDetail = error.response?.data
+        ? JSON.stringify(error.response.data)
+        : undefined;
       return {
         success: false,
-        error: error.message || 'Unknown error occurred',
+        error:
+          [error.message, responseDetail].filter(Boolean).join(' — ') ||
+          'Unknown error occurred',
       };
     }
   }
@@ -736,6 +789,9 @@ export class NotificationService {
       jobName: options?.jobName,
       status: failed ? 'FAILED' : 'SENT',
       errorMessage: failed ? result.error : undefined,
+      failureCategory: failed
+        ? classifyProviderError(result.error ?? '')
+        : undefined,
     });
     return result;
   }

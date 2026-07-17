@@ -33,6 +33,8 @@ export class CreateNotificationDto {
 
   errorMessage?: string;
 
+  failureCategory?: string;
+
   recipientEmail?: string;
 
   recipientPhone?: string;

@@ -1,5 +1,20 @@
 import { ConfigService } from '@nestjs/config';
 
+// Brevo returns a JSON error body (typically `{ code, message }`) alongside
+// a non-ok HTTP status. Best-effort parse it so callers get real provider
+// detail instead of just an HTTP status number — tolerate a non-JSON body.
+async function describeErrorResponse(response: Response): Promise<string> {
+  try {
+    const body = await response.json();
+    const detail = body?.message || body?.code;
+    return detail
+      ? `Brevo returned HTTP ${response.status}: ${detail}`
+      : `Brevo returned HTTP ${response.status}`;
+  } catch {
+    return `Brevo returned HTTP ${response.status}`;
+  }
+}
+
 export const configureSendInBlue = (configService: ConfigService) => {
   const apiKey = configService.get<string>('SEND_IN_BLUE_API_KEY');
   const fromEmail =
@@ -32,7 +47,7 @@ export const configureSendInBlue = (configService: ConfigService) => {
           signal: AbortSignal.timeout(10_000),
         });
         if (!response.ok) {
-          throw new Error(`Brevo returned HTTP ${response.status}`);
+          throw new Error(await describeErrorResponse(response));
         }
       } catch (err) {
         throw new Error(`Failed to send email: ${(err as Error).message}`);
@@ -86,7 +101,7 @@ export const configureSendInBlue = (configService: ConfigService) => {
           signal: AbortSignal.timeout(10_000),
         });
         if (!response.ok) {
-          throw new Error(`Brevo returned HTTP ${response.status}`);
+          throw new Error(await describeErrorResponse(response));
         }
       } catch (err) {
         throw new Error(`Failed to send email: ${(err as Error).message}`);

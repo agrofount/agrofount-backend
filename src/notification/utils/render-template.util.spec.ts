@@ -2,10 +2,12 @@ import { renderTemplate } from './render-template.util';
 
 describe('renderTemplate', () => {
   it('substitutes known {{key}} placeholders with the matching variable', () => {
-    expect(renderTemplate('Hi {{name}}, welcome to {{place}}!', {
-      name: 'Amina',
-      place: 'Agrofount',
-    })).toBe('Hi Amina, welcome to Agrofount!');
+    expect(
+      renderTemplate('Hi {{name}}, welcome to {{place}}!', {
+        name: 'Amina',
+        place: 'Agrofount',
+      }),
+    ).toBe('Hi Amina, welcome to Agrofount!');
   });
 
   it('tolerates whitespace inside the braces', () => {

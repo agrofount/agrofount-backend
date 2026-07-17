@@ -205,6 +205,54 @@ export class NotificationController {
     return this.notificationService.listRecipients({ jobName: name }, query);
   }
 
+  @Post('cron-jobs/:name/retry-failed')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      "Resend only the messages that are currently failed for this cron job (a user's latest attempt)",
+  })
+  async retryFailedForJob(@Param('name') name: string) {
+    this.assertSupportedCronJob(name);
+    return this.triggersJob.retryFailedForJob(name as CronJobName);
+  }
+
+  @Post('cron-jobs/:name/run-now')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      'Manually run a cron job now, optionally restricted to targets who only have an email or only a phone number',
+  })
+  async runCronJobNow(
+    @Param('name') name: string,
+    @Body() body?: { contactFilter?: 'EMAIL_ONLY' | 'PHONE_ONLY' },
+  ) {
+    this.assertSupportedCronJob(name);
+    const contactFilter = body?.contactFilter;
+    if (
+      contactFilter &&
+      !['EMAIL_ONLY', 'PHONE_ONLY'].includes(contactFilter)
+    ) {
+      throw new BadRequestException(
+        'contactFilter must be EMAIL_ONLY or PHONE_ONLY',
+      );
+    }
+    return this.triggersJob.runJobNowForContactFilter(
+      name as CronJobName,
+      contactFilter,
+    );
+  }
+
+  private assertSupportedCronJob(name: string): void {
+    if (!Object.values(CronJobName).includes(name as CronJobName)) {
+      throw new BadRequestException(`Unknown cron job: ${name}`);
+    }
+    if (name === CronJobName.VACCINATION_DUE_REMINDERS) {
+      throw new BadRequestException(
+        'Not supported for this job — it uses no email/SMS provider',
+      );
+    }
+  }
+
   // ── Notification message endpoints ───────────────────────────────────────
 
   @Post('price-updates/send')

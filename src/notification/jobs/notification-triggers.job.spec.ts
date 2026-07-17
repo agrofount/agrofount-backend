@@ -39,6 +39,7 @@ describe('NotificationTriggersJob', () => {
         html: '<p>stub html</p>',
       }),
       buildSmsPreviewText: jest.fn().mockReturnValue('stub sms text'),
+      getFailedRecipientIds: jest.fn().mockResolvedValue([]),
       ...overrides.notificationService,
     };
     const notificationGateway = {
@@ -881,6 +882,418 @@ describe('NotificationTriggersJob', () => {
       await expect(
         job.getPreviewForJob('not-a-real-job' as any),
       ).rejects.toThrow('Unknown cron job');
+    });
+  });
+
+  describe('sendXxxForTargets (per-job "send to specific IDs")', () => {
+    it('sendOrderFeedbackForTargets: only sends to the requested order', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'order-1',
+          code: 'ORD-1',
+          user: { id: 'user-1', email: 'a@example.com', firstname: 'Amina' },
+        },
+        {
+          id: 'order-2',
+          code: 'ORD-2',
+          user: { id: 'user-2', email: 'b@example.com', firstname: 'Bola' },
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const result = await job.sendOrderFeedbackForTargets(['order-2']);
+
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+        { userId: 'user-2', email: 'b@example.com' },
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        MessageTypes.ORDER_FEEDBACK_REQUEST,
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('sendLoginInactivityRemindersForTargets: only sends to the requested user', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: 'a@example.com',
+          phone: null,
+          firstname: 'Amina',
+        },
+        {
+          id: 'user-2',
+          email: 'b@example.com',
+          phone: null,
+          firstname: 'Bola',
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const result = await job.sendLoginInactivityRemindersForTargets([
+        'user-2',
+      ]);
+
+      expect(notificationService.sendNotification).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'EMAIL',
+        { userId: 'user-2', email: 'b@example.com' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.any(Object),
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('sendEducationalContentForTargets: only sends to the requested user', async () => {
+      const qb = chainableQueryBuilder([
+        { id: 'user-1', email: 'a@example.com', firstname: 'Amina' },
+        { id: 'user-2', email: 'b@example.com', firstname: 'Bola' },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const result = await job.sendEducationalContentForTargets(['user-1']);
+
+      expect(notificationService.sendNotification).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'EMAIL',
+        { userId: 'user-1', email: 'a@example.com' },
+        MessageTypes.EDUCATIONAL_CONTENT,
+        expect.any(Object),
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('sendRegisteredNoOrderNudgesForTargets: only sends to the requested user across touchpoints', async () => {
+      const day3Qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: 'a@example.com',
+          phone: null,
+          firstname: 'Amina',
+        },
+        {
+          id: 'user-2',
+          email: 'b@example.com',
+          phone: null,
+          firstname: 'Bola',
+        },
+      ]);
+      const emptyQb = chainableQueryBuilder([]);
+      let call = 0;
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest.fn(() => {
+            call++;
+            return call === 1 ? day3Qb : emptyQb;
+          }),
+          getRepository: jest.fn().mockReturnValue({
+            findOne: jest.fn().mockResolvedValue(null),
+          }),
+        },
+      });
+
+      const result = await job.sendRegisteredNoOrderNudgesForTargets([
+        'user-2',
+      ]);
+
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+        { userId: 'user-2', email: 'b@example.com' },
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('sendAyoIntentFollowUpsForTargets: only sends to the requested user', async () => {
+      const candidatesQb = chainableQueryBuilder([
+        { userId: 'user-1' },
+        { userId: 'user-2' },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest.fn().mockReturnValue(candidatesQb),
+          getRepository: jest.fn((entity: any) => {
+            if (entity?.name === 'MessageEntity') {
+              return { findOne: jest.fn().mockResolvedValue(null) };
+            }
+            if (entity?.name === 'UserEntity') {
+              return {
+                findOne: jest.fn().mockResolvedValue({
+                  id: 'user-2',
+                  email: 'b@example.com',
+                  firstname: 'Bola',
+                  isVerified: true,
+                  deletedAt: null,
+                }),
+              };
+            }
+            return { findOne: jest.fn().mockResolvedValue(null) };
+          }),
+        },
+      });
+
+      const result = await job.sendAyoIntentFollowUpsForTargets(['user-2']);
+
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+        { userId: 'user-2', email: 'b@example.com' },
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        MessageTypes.AYO_INTENT_FOLLOW_UP,
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+  });
+
+  describe('retryFailedForJob', () => {
+    it('returns zero immediately when nobody is currently failed', async () => {
+      const { job, dataSource } = setup({
+        notificationService: {
+          getFailedRecipientIds: jest.fn().mockResolvedValue([]),
+        },
+      });
+
+      const result = await job.retryFailedForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+
+      expect(result).toEqual({ sent: 0, total: 0 });
+      expect(dataSource.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('resends only to the failed user for a user-keyed job', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: 'a@example.com',
+          phone: null,
+          firstname: 'Amina',
+        },
+        {
+          id: 'user-2',
+          email: 'b@example.com',
+          phone: null,
+          firstname: 'Bola',
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+        notificationService: {
+          getFailedRecipientIds: jest.fn().mockResolvedValue(['user-1']),
+        },
+      });
+
+      const result = await job.retryFailedForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+
+      expect(notificationService.getFailedRecipientIds).toHaveBeenCalledWith(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+      expect(notificationService.sendNotification).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'EMAIL',
+        { userId: 'user-1', email: 'a@example.com' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.any(Object),
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('maps the failed user back to their order for an order-keyed job', async () => {
+      const order1 = {
+        id: 'order-1',
+        code: 'ORD-1',
+        status: 'pending',
+        totalPrice: 1000,
+        items: [],
+        address: null,
+        createdAt: new Date('2026-01-01'),
+        user: {
+          id: 'user-1',
+          email: 'a@example.com',
+          phone: null,
+          firstname: 'Amina',
+        },
+      };
+      const order2 = {
+        id: 'order-2',
+        code: 'ORD-2',
+        status: 'pending',
+        totalPrice: 2000,
+        items: [],
+        address: null,
+        createdAt: new Date('2026-01-01'),
+        user: {
+          id: 'user-2',
+          email: 'b@example.com',
+          phone: null,
+          firstname: 'Bola',
+        },
+      };
+      // Call 1: retryFailedForJob's own getPendingOrderReminderCandidates()
+      // lookup, used to map the failed userId back to an order id — sees
+      // both orders. Call 2: the actual send, via
+      // buildPendingOrderRemindersQuery({ orderIds: ['order-2'] }) inside
+      // dispatchPendingOrderReminders — the mock query builder doesn't
+      // really apply the SQL filter, so simulate its effect directly here.
+      const allOrdersQb = chainableQueryBuilder([order1, order2]);
+      const filteredQb = chainableQueryBuilder([order2]);
+      let call = 0;
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest.fn(() => {
+            call++;
+            return call === 1 ? allOrdersQb : filteredQb;
+          }),
+        },
+        notificationService: {
+          getFailedRecipientIds: jest.fn().mockResolvedValue(['user-2']),
+        },
+      });
+
+      const result = await job.retryFailedForJob(
+        CronJobName.PENDING_ORDER_REMINDERS,
+      );
+
+      expect(notificationService.sendNotification).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'EMAIL',
+        { userId: 'user-2', email: 'b@example.com' },
+        MessageTypes.PENDING_ORDER_REMINDER,
+        expect.objectContaining({ order_id: 'ORD-2' }),
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('throws for VACCINATION_DUE_REMINDERS (no provider is used)', async () => {
+      const { job } = setup({
+        notificationService: {
+          getFailedRecipientIds: jest.fn().mockResolvedValue(['user-1']),
+        },
+      });
+
+      await expect(
+        job.retryFailedForJob(CronJobName.VACCINATION_DUE_REMINDERS),
+      ).rejects.toThrow('not supported');
+    });
+
+    it('throws for an unrecognized job name', async () => {
+      const { job } = setup({
+        notificationService: {
+          getFailedRecipientIds: jest.fn().mockResolvedValue(['user-1']),
+        },
+      });
+
+      await expect(
+        job.retryFailedForJob('not-a-real-job' as any),
+      ).rejects.toThrow('Unknown cron job');
+    });
+  });
+
+  describe('runJobNowForContactFilter', () => {
+    function twoUserQb() {
+      return chainableQueryBuilder([
+        {
+          id: 'email-only-user',
+          email: 'a@example.com',
+          phone: null,
+          firstname: 'Amina',
+        },
+        {
+          id: 'phone-only-user',
+          email: null,
+          phone: '+2348012345678',
+          firstname: 'Bola',
+        },
+      ]);
+    }
+
+    it('EMAIL_ONLY: targets only the user with an email and no phone', async () => {
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest.fn().mockReturnValue(twoUserQb()),
+        },
+      });
+
+      const result = await job.runJobNowForContactFilter(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        'EMAIL_ONLY',
+      );
+
+      expect(notificationService.sendNotification).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'EMAIL',
+        { userId: 'email-only-user', email: 'a@example.com' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.any(Object),
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('PHONE_ONLY: targets only the user with a phone and no email', async () => {
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest.fn().mockReturnValue(twoUserQb()),
+        },
+      });
+
+      const result = await job.runJobNowForContactFilter(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        'PHONE_ONLY',
+      );
+
+      expect(notificationService.sendNotification).toHaveBeenCalledTimes(1);
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'SMS',
+        { userId: 'phone-only-user', phoneNumber: '+2348012345678' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.any(Object),
+        expect.any(Object),
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('with no filter, targets the full audience', async () => {
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest.fn().mockReturnValue(twoUserQb()),
+        },
+      });
+
+      const result = await job.runJobNowForContactFilter(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+
+      expect(notificationService.sendNotification).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({ sent: 2, total: 2 });
+    });
+
+    it('throws for VACCINATION_DUE_REMINDERS (no provider is used)', async () => {
+      const { job } = setup();
+
+      await expect(
+        job.runJobNowForContactFilter(CronJobName.VACCINATION_DUE_REMINDERS),
+      ).rejects.toThrow('not supported');
     });
   });
 });
