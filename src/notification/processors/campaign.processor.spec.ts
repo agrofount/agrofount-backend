@@ -13,11 +13,13 @@ describe('CampaignProcessor', () => {
     audienceType: CampaignAudienceType.Leads,
   };
 
-  function setup() {
+  function setup(overrides: Record<string, any> = {}) {
     const notificationService = {
       sendCustomEmail: jest.fn().mockResolvedValue(undefined),
       sendSmsForCampaign: jest.fn().mockResolvedValue(undefined),
       recordDelivery: jest.fn().mockResolvedValue(undefined),
+      hasCampaignDeliverySucceeded: jest.fn().mockResolvedValue(false),
+      ...overrides.notificationService,
     };
     const notificationGateway = { emitToUser: jest.fn() };
     const campaignService = {
@@ -116,6 +118,138 @@ describe('CampaignProcessor', () => {
         errorMessage: 'Lead has no email address on file',
       }),
     );
+  });
+
+  it('appends the CTA link to the SMS body for a lead recipient', async () => {
+    const { processor, notificationService, campaignService } = setup();
+    campaignService.findOne.mockResolvedValue({
+      ...baseCampaign,
+      channels: ['SMS'],
+      ctaText: 'Get Started',
+      ctaLink: 'https://agrofount.com/register',
+    });
+    campaignService.resolveLeadAudience.mockResolvedValue([
+      {
+        id: 'lead-1',
+        name: 'Amina',
+        email: null,
+        phone: '+2348012345678',
+        state: 'Lagos',
+        customFields: { 'What do you want?': 'layer feed' },
+      },
+    ]);
+
+    await processor.process({ data: { campaignId: 'campaign-1' } } as any);
+
+    expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
+      '+2348012345678',
+      'lead-1',
+      'You told us you want layer feed in Lagos. Get Started: https://agrofount.com/register',
+      { campaignId: 'campaign-1' },
+    );
+  });
+
+  it('appends the CTA link to the SMS body for a plain user recipient', async () => {
+    const { processor, notificationService, campaignService } = setup();
+    campaignService.findOne.mockResolvedValue({
+      ...baseCampaign,
+      audienceType: CampaignAudienceType.Users,
+      channels: ['SMS'],
+      ctaText: 'Get Started',
+      ctaLink: 'https://agrofount.com/register',
+    });
+    campaignService.resolveAudience.mockResolvedValue([
+      { id: 'user-1', email: null, phone: '+2348012345678' },
+    ]);
+
+    await processor.process({ data: { campaignId: 'campaign-1' } } as any);
+
+    expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
+      '+2348012345678',
+      'user-1',
+      'You told us you want {{statedInterest}} in {{state}}. Get Started: https://agrofount.com/register',
+      { campaignId: 'campaign-1' },
+    );
+  });
+
+  it('sends the plain message with no trailing CTA when the campaign has no ctaLink', async () => {
+    const { processor, notificationService, campaignService } = setup();
+    campaignService.findOne.mockResolvedValue({
+      ...baseCampaign,
+      channels: ['SMS'],
+      ctaText: undefined,
+      ctaLink: undefined,
+    });
+    campaignService.resolveLeadAudience.mockResolvedValue([
+      {
+        id: 'lead-1',
+        name: 'Amina',
+        email: null,
+        phone: '+2348012345678',
+        state: 'Lagos',
+        customFields: null,
+      },
+    ]);
+
+    await processor.process({ data: { campaignId: 'campaign-1' } } as any);
+
+    expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
+      '+2348012345678',
+      'lead-1',
+      'You told us you want  in Lagos.',
+      { campaignId: 'campaign-1' },
+    );
+  });
+
+  describe('duplicate-delivery guard', () => {
+    it('skips a recipient who already has a SENT record for this campaign+channel', async () => {
+      const { processor, notificationService, campaignService } = setup({
+        notificationService: {
+          hasCampaignDeliverySucceeded: jest.fn().mockResolvedValue(true),
+        },
+      });
+      campaignService.findOne.mockResolvedValue({
+        ...baseCampaign,
+        audienceType: CampaignAudienceType.Users,
+        channels: ['EMAIL'],
+      });
+      campaignService.resolveAudience.mockResolvedValue([
+        { id: 'user-1', email: 'farmer@example.com', phone: null },
+      ]);
+
+      await processor.process({ data: { campaignId: 'campaign-1' } } as any);
+
+      expect(
+        notificationService.hasCampaignDeliverySucceeded,
+      ).toHaveBeenCalledWith('campaign-1', 'user-1', 'EMAIL');
+      expect(notificationService.sendCustomEmail).not.toHaveBeenCalled();
+      expect(notificationService.recordDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'SKIPPED',
+          errorMessage: 'Already sent to this recipient for this campaign',
+        }),
+      );
+    });
+
+    it('still sends when no prior SENT record exists', async () => {
+      const { processor, notificationService, campaignService } = setup({
+        notificationService: {
+          hasCampaignDeliverySucceeded: jest.fn().mockResolvedValue(false),
+        },
+      });
+      campaignService.findOne.mockResolvedValue({
+        ...baseCampaign,
+        audienceType: CampaignAudienceType.Users,
+        channels: ['EMAIL'],
+      });
+      campaignService.resolveAudience.mockResolvedValue([
+        { id: 'user-1', email: 'farmer@example.com', phone: null },
+      ]);
+
+      await processor.process({ data: { campaignId: 'campaign-1' } } as any);
+
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('still uses the plain, unpersonalized user path when audienceType is Users', async () => {

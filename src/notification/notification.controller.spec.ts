@@ -16,6 +16,10 @@ describe('NotificationController', () => {
         sampleTarget: { name: 'Amina', email: 'a@example.com' },
         usedFallbackSample: false,
       }),
+      retryFailedForJob: jest.fn().mockResolvedValue({ sent: 0, total: 0 }),
+      runJobNowForContactFilter: jest
+        .fn()
+        .mockResolvedValue({ sent: 0, total: 0 }),
     };
     const controller = new NotificationController(
       notificationService as any,
@@ -77,7 +81,10 @@ describe('NotificationController', () => {
         CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
       );
       expect(result).toEqual(
-        expect.objectContaining({ channel: 'EMAIL', usedFallbackSample: false }),
+        expect.objectContaining({
+          channel: 'EMAIL',
+          usedFallbackSample: false,
+        }),
       );
     });
 
@@ -110,6 +117,80 @@ describe('NotificationController', () => {
       expect(() =>
         controller.getCronJobDeliveries('not-a-real-job', {} as any),
       ).toThrow(BadRequestException);
+    });
+  });
+
+  describe('retryFailedForJob', () => {
+    it('delegates to the job for a supported cron job', async () => {
+      const { controller, triggersJob } = setup();
+      triggersJob.retryFailedForJob.mockResolvedValue({ sent: 2, total: 2 });
+
+      const result = await controller.retryFailedForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+
+      expect(triggersJob.retryFailedForJob).toHaveBeenCalledWith(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+      expect(result).toEqual({ sent: 2, total: 2 });
+    });
+
+    it('rejects an unknown job name', async () => {
+      const { controller } = setup();
+      await expect(
+        controller.retryFailedForJob('not-a-real-job'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects VACCINATION_DUE_REMINDERS (no provider is used)', async () => {
+      const { controller } = setup();
+      await expect(
+        controller.retryFailedForJob(CronJobName.VACCINATION_DUE_REMINDERS),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('runCronJobNow', () => {
+    it('delegates to the job with the given contact filter', async () => {
+      const { controller, triggersJob } = setup();
+      triggersJob.runJobNowForContactFilter.mockResolvedValue({
+        sent: 1,
+        total: 1,
+      });
+
+      const result = await controller.runCronJobNow(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        { contactFilter: 'PHONE_ONLY' },
+      );
+
+      expect(triggersJob.runJobNowForContactFilter).toHaveBeenCalledWith(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        'PHONE_ONLY',
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('rejects an invalid contactFilter value', async () => {
+      const { controller } = setup();
+      await expect(
+        controller.runCronJobNow(CronJobName.LOGIN_INACTIVITY_REMINDERS, {
+          contactFilter: 'SOMETHING_ELSE' as any,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects an unknown job name', async () => {
+      const { controller } = setup();
+      await expect(
+        controller.runCronJobNow('not-a-real-job', {}),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects VACCINATION_DUE_REMINDERS (no provider is used)', async () => {
+      const { controller } = setup();
+      await expect(
+        controller.runCronJobNow(CronJobName.VACCINATION_DUE_REMINDERS, {}),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 });

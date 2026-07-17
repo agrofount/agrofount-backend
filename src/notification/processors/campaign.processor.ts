@@ -136,6 +136,11 @@ export class CampaignProcessor extends WorkerHost {
           });
           return;
         }
+        if (
+          await this.isDuplicateDelivery(campaign, lead.id, upperChannel, title)
+        ) {
+          return;
+        }
         await this.notificationService.sendCustomEmail(
           { userId: lead.id, email: lead.email },
           title,
@@ -167,10 +172,15 @@ export class CampaignProcessor extends WorkerHost {
           });
           return;
         }
+        if (
+          await this.isDuplicateDelivery(campaign, lead.id, upperChannel, title)
+        ) {
+          return;
+        }
         await this.notificationService.sendSmsForCampaign(
           lead.phone,
           lead.id,
-          message,
+          this.appendCtaToSmsMessage(message, campaign),
           { campaignId: campaign.id },
         );
         break;
@@ -208,6 +218,16 @@ export class CampaignProcessor extends WorkerHost {
           });
           return;
         }
+        if (
+          await this.isDuplicateDelivery(
+            campaign,
+            user.id,
+            upperChannel,
+            campaign.title,
+          )
+        ) {
+          return;
+        }
         await this.notificationService.sendCustomEmail(
           recipient,
           campaign.title,
@@ -232,15 +252,35 @@ export class CampaignProcessor extends WorkerHost {
           });
           return;
         }
+        if (
+          await this.isDuplicateDelivery(
+            campaign,
+            user.id,
+            upperChannel,
+            campaign.title,
+          )
+        ) {
+          return;
+        }
         await this.notificationService.sendSmsForCampaign(
           user.phone,
           user.id,
-          campaign.message,
+          this.appendCtaToSmsMessage(campaign.message, campaign),
           { campaignId: campaign.id },
         );
         break;
 
       case 'IN_APP':
+        if (
+          await this.isDuplicateDelivery(
+            campaign,
+            user.id,
+            upperChannel,
+            campaign.title,
+          )
+        ) {
+          return;
+        }
         try {
           this.notificationGateway.emitToUser(user.id, 'notification', {
             title: campaign.title,
@@ -275,6 +315,16 @@ export class CampaignProcessor extends WorkerHost {
         break;
 
       case 'PUSH':
+        if (
+          await this.isDuplicateDelivery(
+            campaign,
+            user.id,
+            upperChannel,
+            campaign.title,
+          )
+        ) {
+          return;
+        }
         try {
           this.notificationGateway.emitToUser(user.id, 'push', {
             title: campaign.title,
@@ -321,6 +371,52 @@ export class CampaignProcessor extends WorkerHost {
       default:
         this.logger.warn(`Unknown channel: ${channel}`);
     }
+  }
+
+  // Guards against a BullMQ job retry re-sending to recipients who already
+  // got this campaign on a prior (partially or fully successful) run — the
+  // per-recipient send failures inside `process()` are caught via
+  // `Promise.allSettled` and never trigger a job-level retry themselves, but
+  // an error outside that loop (e.g. `markSent` failing) does, and that
+  // retry re-runs the entire send from scratch with no other protection.
+  private async isDuplicateDelivery(
+    campaign: NotificationCampaignEntity,
+    recipientId: string,
+    channel: string,
+    logMessage: string,
+  ): Promise<boolean> {
+    const alreadySent =
+      await this.notificationService.hasCampaignDeliverySucceeded(
+        campaign.id,
+        recipientId,
+        channel,
+      );
+    if (alreadySent) {
+      await this.notificationService.recordDelivery({
+        messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+        userId: recipientId,
+        sender: 'Agrofount',
+        message: logMessage,
+        channel,
+        campaignId: campaign.id,
+        status: 'SKIPPED',
+        errorMessage: 'Already sent to this recipient for this campaign',
+      });
+    }
+    return alreadySent;
+  }
+
+  // Unlike email (which renders the CTA as a styled button) and IN_APP/PUSH
+  // (which pass ctaLink through as a separate field for the client to
+  // render), SMS is plain text — the link has to be appended to the
+  // message body itself or it's silently dropped.
+  private appendCtaToSmsMessage(
+    message: string,
+    campaign: { ctaText?: string; ctaLink?: string },
+  ): string {
+    if (!campaign.ctaLink) return message;
+    const label = campaign.ctaText ? `${campaign.ctaText}: ` : '';
+    return `${message} ${label}${campaign.ctaLink}`.trim();
   }
 
   private buildEmailHtml(campaign: NotificationCampaignEntity): string {

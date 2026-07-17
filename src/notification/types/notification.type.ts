@@ -1,3 +1,5 @@
+export type FailureCategory = 'PROVIDER_ERROR' | 'INSUFFICIENT_BALANCE';
+
 export type NotificationTypes =
   | 'EMAIL'
   | 'SMS'
