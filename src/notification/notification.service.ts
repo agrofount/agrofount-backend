@@ -112,6 +112,21 @@ export class NotificationService {
       .map((m) => m.userId);
   }
 
+  // Guards against re-sending a campaign to a recipient who already got it —
+  // needed because a BullMQ job retry (e.g. `markSent` failing after every
+  // recipient was already messaged) re-runs the whole campaign send from
+  // scratch, with no other idempotency check in place.
+  async hasCampaignDeliverySucceeded(
+    campaignId: string,
+    userId: string,
+    channel: string,
+  ): Promise<boolean> {
+    const existing = await this.messageRepo.findOne({
+      where: { campaignId, userId, channel, status: 'SENT' },
+    });
+    return !!existing;
+  }
+
   async enqueueNotifications() {
     const today = new Date().toISOString().split('T')[0]; // e.g. "2025-08-20"
     const jobId = `price-updates-${today}`;

@@ -308,4 +308,42 @@ describe('NotificationService', () => {
       expect(ids).toEqual([]);
     });
   });
+
+  describe('hasCampaignDeliverySucceeded', () => {
+    it('returns true when a SENT record already exists for this campaign+recipient+channel', async () => {
+      const { service, messageRepo } = setup({
+        messageRepo: { findOne: jest.fn().mockResolvedValue({ id: 'msg-1' }) },
+      });
+
+      const result = await service.hasCampaignDeliverySucceeded(
+        'campaign-1',
+        'user-1',
+        'EMAIL',
+      );
+
+      expect(messageRepo.findOne).toHaveBeenCalledWith({
+        where: {
+          campaignId: 'campaign-1',
+          userId: 'user-1',
+          channel: 'EMAIL',
+          status: 'SENT',
+        },
+      });
+      expect(result).toBe(true);
+    });
+
+    it('returns false when no matching SENT record exists', async () => {
+      const { service } = setup({
+        messageRepo: { findOne: jest.fn().mockResolvedValue(null) },
+      });
+
+      const result = await service.hasCampaignDeliverySucceeded(
+        'campaign-1',
+        'user-1',
+        'EMAIL',
+      );
+
+      expect(result).toBe(false);
+    });
+  });
 });
