@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class MessageFailureCategory1782500000000
-  implements MigrationInterface
-{
+export class MessageFailureCategory1782500000000 implements MigrationInterface {
   name = 'MessageFailureCategory1782500000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
