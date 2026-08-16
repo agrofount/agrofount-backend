@@ -30,8 +30,9 @@ describe('NotificationService', () => {
     const httpService = { post: jest.fn(), ...overrides.httpService };
     const configService = {
       get: jest.fn().mockReturnValue({
-        base_url: 'https://api.ng.termii.com/api',
+        base_url: 'https://api.africastalking.com/version1',
         api_key: 'test-key',
+        username: 'agrofount',
         sender_id: 'Agrofount',
       }),
       ...overrides.configService,
@@ -125,7 +126,7 @@ describe('NotificationService', () => {
   });
 
   describe('sendNotification SMS delivery tracking', () => {
-    it('records a failed Termii send as FAILED with an errorMessage and failureCategory', async () => {
+    it("records a failed Africa's Talking send as FAILED with an errorMessage and failureCategory", async () => {
       const { service, messageRepo } = setup({
         httpService: {
           post: jest.fn().mockReturnValue(

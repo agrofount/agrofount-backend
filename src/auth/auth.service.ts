@@ -28,6 +28,7 @@ import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
+  randomInt,
   randomUUID,
   timingSafeEqual,
 } from 'crypto';
@@ -58,7 +59,7 @@ type OtpChallenge = {
   userId: string;
   phone: string;
   purpose: OtpPurpose;
-  providerPinId: string;
+  otpHash: string;
   attempts: number;
 };
 
@@ -851,23 +852,23 @@ export class AuthService {
     purpose: OtpPurpose,
   ): Promise<string> {
     const phone = this.normalizePhone(user.phone);
+    const challengeId = randomUUID();
+    const otp = randomInt(100000, 1000000).toString();
     const providerResponse = await this.notificationService.sendNotification(
       NotificationChannels.SMS,
       { phoneNumber: phone },
       MessageTypes.SEND_OTP,
-      { userId: user.id },
+      { userId: user.id, otp },
     );
-    const providerPinId = providerResponse?.pin_id;
-    if (!providerPinId) {
+    if (providerResponse?.success === false) {
       throw new BadRequestException('Unable to issue OTP at this time');
     }
 
-    const challengeId = randomUUID();
     const challenge: OtpChallenge = {
       userId: user.id,
       phone,
       purpose,
-      providerPinId,
+      otpHash: this.hashOtp(challengeId, otp),
       attempts: 0,
     };
     await this.cacheManager.set(
@@ -895,17 +896,13 @@ export class AuthService {
 
     challenge.attempts += 1;
     await this.cacheManager.set(key, challenge, 10 * 60 * 1000);
-    const response = await this.notificationService.sendNotification(
-      NotificationChannels.SMS,
-      { phoneNumber: challenge.phone },
-      MessageTypes.VERIFY_PHONE_OTP,
-      {
-        userId: challenge.userId,
-        otp,
-        pinId: challenge.providerPinId,
-      },
-    );
-    if (response?.verified !== true) {
+    const expectedHash = Buffer.from(challenge.otpHash, 'hex');
+    const actualHash = Buffer.from(this.hashOtp(challengeId, otp), 'hex');
+    const verified =
+      expectedHash.length === actualHash.length &&
+      timingSafeEqual(expectedHash, actualHash);
+
+    if (!verified) {
       if (challenge.attempts >= 5) await this.cacheManager.del(key);
       throw new BadRequestException('Invalid or expired OTP');
     }
@@ -916,6 +913,10 @@ export class AuthService {
 
   private normalizePhone(phone: string): string {
     return phone.replace(/[\s()-]/g, '');
+  }
+
+  private hashOtp(challengeId: string, otp: string): string {
+    return createHash('sha256').update(`${challengeId}:${otp}`).digest('hex');
   }
 
   private async sendOnboardingNotifications(
