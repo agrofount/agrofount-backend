@@ -1,9 +1,12 @@
 import {
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
+  IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -36,4 +39,28 @@ export class AiAnalyticsTopQueryDto extends AiAnalyticsQueryDto {
   @Min(1)
   @Max(50)
   limit?: number;
+}
+
+export class AiUserTokenUsageQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+
+  @IsOptional()
+  @IsIn(['exhausted', 'active'])
+  status?: 'exhausted' | 'active';
 }

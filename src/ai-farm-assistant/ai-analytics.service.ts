@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
 import { ChartGranularity } from './dto/ai-analytics-query.dto';
 import { AiSettingsService } from './ai-settings.service';
+import { AiUserQuotaEntity } from './entities/ai-user-quota.entity';
+import { AYO_CREDIT_LIMIT_PER_USER } from './ai-farm-assistant.constants';
 
 const DISEASE_KEYWORDS: { label: string; keywords: string[] }[] = [
   {
@@ -37,6 +40,8 @@ export class AiAnalyticsService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly aiSettingsService: AiSettingsService,
+    @InjectRepository(AiUserQuotaEntity)
+    private readonly quotaRepository: Repository<AiUserQuotaEntity>,
   ) {}
 
   // ── date helpers ──────────────────────────────────────────────────────────
@@ -429,7 +434,185 @@ export class AiAnalyticsService {
     };
   }
 
+  async resetUserTokens(
+    userId: string,
+    adminId: string,
+  ): Promise<{ userId: string; newLimit: number; bonusTokens: number }> {
+    let quota = await this.quotaRepository.findOne({ where: { userId } });
+    if (!quota) {
+      quota = this.quotaRepository.create({
+        userId,
+        bonusTokens: 0,
+        lastResetBy: null,
+      });
+    }
+    quota.bonusTokens += AYO_CREDIT_LIMIT_PER_USER;
+    quota.lastResetBy = adminId;
+    await this.quotaRepository.save(quota);
+    return {
+      userId,
+      bonusTokens: quota.bonusTokens,
+      newLimit: AYO_CREDIT_LIMIT_PER_USER + quota.bonusTokens,
+    };
+  }
+
   // ── resource consumption ──────────────────────────────────────────────────
+
+  async getUserTokenUsage(params: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: 'exhausted' | 'active';
+  }) {
+    const page = Math.max(1, params.page ?? 1);
+    const limit = Math.min(100, Math.max(1, params.limit ?? 20));
+    const offset = (page - 1) * limit;
+
+    const filters: string[] = [];
+    const args: unknown[] = [];
+
+    if (params.search) {
+      args.push(`%${params.search.trim()}%`);
+      const p = `$${args.length}`;
+      filters.push(
+        `(u.firstname ILIKE ${p} OR u.lastname ILIKE ${p} OR u.email ILIKE ${p} OR u.phone ILIKE ${p})`,
+      );
+    }
+
+    if (params.status === 'exhausted') {
+      filters.push(
+        `usage.credits >= (${AYO_CREDIT_LIMIT_PER_USER} + COALESCE(q."bonusTokens", 0))`,
+      );
+    } else if (params.status === 'active') {
+      filters.push(
+        `usage.credits < (${AYO_CREDIT_LIMIT_PER_USER} + COALESCE(q."bonusTokens", 0))`,
+      );
+    }
+
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
+    const baseCte = `
+      WITH usage AS (
+        SELECT
+          conv."userId" AS user_id,
+          COALESCE(
+            SUM(
+              COALESCE((msg.metadata->>'inputTokens')::bigint, 0)
+              + COALESCE((msg.metadata->>'outputTokens')::bigint, 0)
+            ),
+            0
+          )::bigint AS tokens,
+          COALESCE(
+            SUM(
+              COALESCE(
+                (msg.metadata->>'ayoCredits')::bigint,
+                COALESCE((msg.metadata->>'inputTokens')::bigint, 0)
+                  + COALESCE((msg.metadata->>'outputTokens')::bigint, 0)
+              )
+            ),
+            0
+          )::bigint AS credits,
+          COUNT(DISTINCT conv.id)::int AS conversations,
+          MAX(msg."createdAt") AS last_active
+        FROM farm_assistant_message msg
+        JOIN farm_assistant_conversation conv ON conv.id = msg."conversationId"
+        WHERE msg.role = 'assistant'
+          AND msg.metadata->>'inputTokens' IS NOT NULL
+        GROUP BY conv."userId"
+      )`;
+
+    const countArgs = [...args];
+    const countRows = await this.dataSource.query<{ total: string }[]>(
+      `${baseCte}
+       SELECT COUNT(*)::int AS total
+       FROM usage
+       LEFT JOIN "user" u ON u.id = usage.user_id
+       LEFT JOIN ai_user_quota q ON q."userId"::uuid = usage.user_id
+       ${whereClause}`,
+      countArgs,
+    );
+    const totalItems = Number(countRows[0]?.total ?? 0);
+
+    const dataArgs = [...args, limit, offset];
+    const rows = await this.dataSource.query<
+      {
+        user_id: string;
+        firstname: string | null;
+        lastname: string | null;
+        email: string | null;
+        phone: string | null;
+        tokens: string;
+        credits: string;
+        conversations: number;
+        last_active: string | null;
+        bonus_tokens: string | null;
+      }[]
+    >(
+      `${baseCte}
+       SELECT
+         usage.user_id,
+         u.firstname,
+         u.lastname,
+         u.email,
+         u.phone,
+         usage.tokens,
+         usage.credits,
+         usage.conversations,
+         usage.last_active,
+         COALESCE(q."bonusTokens", 0) AS bonus_tokens
+       FROM usage
+       LEFT JOIN "user" u ON u.id = usage.user_id
+       LEFT JOIN ai_user_quota q ON q."userId"::uuid = usage.user_id
+       ${whereClause}
+       ORDER BY usage.credits DESC
+       LIMIT $${dataArgs.length - 1} OFFSET $${dataArgs.length}`,
+      dataArgs,
+    );
+
+    const data = rows.map((r) => {
+      const tokensUsed = Number(r.tokens);
+      const creditsUsed = Number(r.credits);
+      const bonusTokens = Number(r.bonus_tokens ?? 0);
+      const effectiveLimit = AYO_CREDIT_LIMIT_PER_USER + bonusTokens;
+      const name =
+        [r.firstname, r.lastname].filter(Boolean).join(' ').trim() ||
+        r.email ||
+        r.phone ||
+        'Unknown user';
+      return {
+        userId: r.user_id,
+        name,
+        email: r.email,
+        phone: r.phone,
+        creditsUsed,
+        creditLimit: effectiveLimit,
+        bonusCredits: bonusTokens,
+        creditsRemaining: Math.max(0, effectiveLimit - creditsUsed),
+        tokensUsed,
+        tokenLimit: effectiveLimit,
+        bonusTokens,
+        tokensRemaining: Math.max(0, effectiveLimit - creditsUsed),
+        usagePercent: parseFloat(
+          ((creditsUsed / effectiveLimit) * 100).toFixed(1),
+        ),
+        trialExhausted: creditsUsed >= effectiveLimit,
+        conversations: r.conversations,
+        lastActive: r.last_active,
+      };
+    });
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        currentPage: page,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        creditLimit: AYO_CREDIT_LIMIT_PER_USER,
+        tokenLimit: AYO_CREDIT_LIMIT_PER_USER,
+      },
+    };
+  }
 
   async getResourceConsumption(from?: string, to?: string) {
     const period = this.parseDateRange(from, to);
@@ -441,12 +624,23 @@ export class AiAnalyticsService {
         {
           input_tokens: string;
           output_tokens: string;
+          credits: string;
           total_requests: number;
         }[]
       >(
         `SELECT
            COALESCE(SUM((metadata->>'inputTokens')::bigint), 0)::bigint  AS input_tokens,
            COALESCE(SUM((metadata->>'outputTokens')::bigint), 0)::bigint AS output_tokens,
+           COALESCE(
+             SUM(
+               COALESCE(
+                 (metadata->>'ayoCredits')::bigint,
+                 COALESCE((metadata->>'inputTokens')::bigint, 0)
+                   + COALESCE((metadata->>'outputTokens')::bigint, 0)
+               )
+             ),
+             0
+           )::bigint AS credits,
            COUNT(*)::int                                                  AS total_requests
          FROM farm_assistant_message
          WHERE role = 'assistant'
@@ -458,13 +652,28 @@ export class AiAnalyticsService {
     const [current, previous, dailyRows, chatsRow] = await Promise.all([
       query(period.from, period.to),
       query(prev.from, prev.to),
-      this.dataSource.query<{ date: string; tokens: string }[]>(
+      this.dataSource.query<
+        { date: string; tokens: string; credits: string }[]
+      >(
         `SELECT
            DATE_TRUNC('day', "createdAt") AS date,
            COALESCE(
-             SUM((metadata->>'inputTokens')::bigint + (metadata->>'outputTokens')::bigint),
+             SUM(
+               COALESCE((metadata->>'inputTokens')::bigint, 0)
+               + COALESCE((metadata->>'outputTokens')::bigint, 0)
+             ),
              0
-           )::bigint AS tokens
+           )::bigint AS tokens,
+           COALESCE(
+             SUM(
+               COALESCE(
+                 (metadata->>'ayoCredits')::bigint,
+                 COALESCE((metadata->>'inputTokens')::bigint, 0)
+                   + COALESCE((metadata->>'outputTokens')::bigint, 0)
+               )
+             ),
+             0
+           )::bigint AS credits
          FROM farm_assistant_message
          WHERE role = 'assistant'
            AND metadata->>'inputTokens' IS NOT NULL
@@ -484,6 +693,7 @@ export class AiAnalyticsService {
     const inputTokens = Number(current[0].input_tokens);
     const outputTokens = Number(current[0].output_tokens);
     const totalTokens = inputTokens + outputTokens;
+    const totalCredits = Number(current[0].credits);
     const totalRequests = current[0].total_requests;
     const totalChats = chatsRow[0].count;
 
@@ -496,6 +706,7 @@ export class AiAnalyticsService {
     const prevInput = Number(previous[0].input_tokens);
     const prevOutput = Number(previous[0].output_tokens);
     const prevTotal = prevInput + prevOutput;
+    const prevCredits = Number(previous[0].credits);
     const prevCost =
       (prevInput / 1_000_000) * rateIn + (prevOutput / 1_000_000) * rateOut;
 
@@ -512,6 +723,7 @@ export class AiAnalyticsService {
         ? Number(settings.monthlyBudgetUSD)
         : null,
       totalTokens,
+      totalCredits,
       inputTokens,
       outputTokens,
       totalRequests,
@@ -521,9 +733,11 @@ export class AiAnalyticsService {
       dailyUsage: dailyRows.map((r) => ({
         date: r.date,
         tokens: Number(r.tokens),
+        credits: Number(r.credits),
       })),
       change: {
         totalTokens: this.pct(totalTokens, prevTotal),
+        totalCredits: this.pct(totalCredits, prevCredits),
         totalCostUSD: this.pct(totalCostUSD, prevCost),
       },
     };

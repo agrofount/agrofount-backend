@@ -17,6 +17,7 @@ import { MessageEntity } from './entities/message.entity';
 import { Repository } from 'typeorm';
 import {
   EmailTemplateIds,
+  FailureCategory,
   MessageRecipient,
   MessageTypes,
   NotificationChannels,
@@ -25,12 +26,14 @@ import {
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { TermiiConfig } from '../config/termii.config';
+import { AfricasTalkingConfig } from '../config/africastalking.config';
 import { lastValueFrom } from 'rxjs';
 import { OrderEntity } from '../order/entities/order.entity';
 import { TeamsService } from './services/teams.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { renderTemplate } from './utils/render-template.util';
+import { classifyProviderError } from './utils/classify-provider-error.util';
 
 @Injectable()
 export class NotificationService {
@@ -49,6 +52,79 @@ export class NotificationService {
     const message = this.messageRepo.create(dto);
 
     return this.messageRepo.save(message);
+  }
+
+  async recordDelivery(dto: CreateNotificationDto) {
+    try {
+      await this.create(dto);
+    } catch (error) {
+      this.logger.warn(
+        `Notification sent but delivery record could not be saved: ${
+          error?.message || error
+        }`,
+      );
+    }
+  }
+
+  async listRecipients(
+    filters: { campaignId?: string; jobName?: string },
+    query: PaginateQuery,
+  ): Promise<Paginated<MessageEntity>> {
+    return paginate(query, this.messageRepo, {
+      sortableColumns: ['createdAt', 'status', 'channel'],
+      nullSort: 'last',
+      searchableColumns: ['recipientEmail', 'recipientPhone', 'userId'],
+      defaultSortBy: [['createdAt', 'DESC']],
+      filterableColumns: {
+        channel: [FilterOperator.EQ],
+        status: [FilterOperator.EQ],
+        failureCategory: [FilterOperator.EQ],
+      },
+      where: filters,
+      defaultLimit: 25,
+      maxLimit: 100,
+    });
+  }
+
+  // "Currently failing" users for a job — the *latest* message for that
+  // user+job must itself be FAILED, not just "has ever failed once". That
+  // way a successful retry naturally drops the user out of this set next
+  // time, with no extra bookkeeping needed.
+  async getFailedRecipientIds(
+    jobName: string,
+    failureCategory?: FailureCategory,
+  ): Promise<string[]> {
+    const latest = await this.messageRepo
+      .createQueryBuilder('message')
+      .distinctOn(['message.userId'])
+      .where('message.jobName = :jobName', { jobName })
+      .andWhere('message.userId IS NOT NULL')
+      .orderBy('message.userId', 'ASC')
+      .addOrderBy('message.createdAt', 'DESC')
+      .getMany();
+
+    return latest
+      .filter(
+        (m) =>
+          m.status === 'FAILED' &&
+          (!failureCategory || m.failureCategory === failureCategory),
+      )
+      .map((m) => m.userId);
+  }
+
+  // Guards against re-sending a campaign to a recipient who already got it —
+  // needed because a BullMQ job retry (e.g. `markSent` failing after every
+  // recipient was already messaged) re-runs the whole campaign send from
+  // scratch, with no other idempotency check in place.
+  async hasCampaignDeliverySucceeded(
+    campaignId: string,
+    userId: string,
+    channel: string,
+  ): Promise<boolean> {
+    const existing = await this.messageRepo.findOne({
+      where: { campaignId, userId, channel, status: 'SENT' },
+    });
+    return !!existing;
   }
 
   async enqueueNotifications() {
@@ -295,12 +371,18 @@ export class NotificationService {
     recipient: MessageRecipient,
     messageType: MessageTypes,
     params: Record<string, any>,
+    options?: { campaignId?: string; jobName?: string },
   ): Promise<any> {
     switch (type) {
       case 'EMAIL':
-        return this.sendEmail(recipient, params, messageType);
+        return this.sendEmail(recipient, params, messageType, options);
       case 'SMS':
-        return this.sendSms(recipient.phoneNumber, messageType, params);
+        return this.sendSms(
+          recipient.phoneNumber,
+          messageType,
+          params,
+          options,
+        );
       case 'TEAMS_NOTIFICATION':
         return this.teamsService.sendTeamsNotification(messageType, params);
       case 'PUSH_NOTIFICATION':
@@ -318,7 +400,12 @@ export class NotificationService {
     htmlContent: string,
     textContent: string,
     messageType: MessageTypes,
-    replyTo?: string,
+    options?: {
+      replyTo?: string;
+      campaignId?: string;
+      jobName?: string;
+      channel?: string;
+    },
   ): Promise<void> {
     if (!recipient.email) {
       throw new BadGatewayException(
@@ -326,32 +413,48 @@ export class NotificationService {
       );
     }
 
-    await this.sendInBlue.sendCustomEmail(
-      recipient.email,
-      subject,
-      htmlContent,
-      textContent,
-      replyTo,
-    );
     try {
-      await this.create({
+      await this.sendInBlue.sendCustomEmail(
+        recipient.email,
+        subject,
+        htmlContent,
+        textContent,
+        options?.replyTo,
+      );
+    } catch (error) {
+      const errorMessage = error?.message || String(error);
+      await this.recordDelivery({
         messageType,
         userId: recipient.userId,
         sender: 'Agrofount',
+        recipientEmail: recipient.email,
+        channel: options?.channel ?? 'EMAIL',
+        campaignId: options?.campaignId,
+        jobName: options?.jobName,
+        status: 'FAILED',
+        errorMessage,
+        failureCategory: classifyProviderError(errorMessage),
       });
-    } catch (error) {
-      this.logger.warn(
-        `Custom email sent but message audit could not be saved: ${
-          error?.message || error
-        }`,
-      );
+      throw error;
     }
+
+    await this.recordDelivery({
+      messageType,
+      userId: recipient.userId,
+      sender: 'Agrofount',
+      recipientEmail: recipient.email,
+      channel: options?.channel ?? 'EMAIL',
+      campaignId: options?.campaignId,
+      jobName: options?.jobName,
+      status: 'SENT',
+    });
   }
 
   private async sendEmail(
     recipient: MessageRecipient,
     params: Record<string, any>,
     messageType: MessageTypes,
+    options?: { campaignId?: string; jobName?: string },
   ): Promise<void> {
     if (!recipient.email) {
       throw new BadGatewayException(
@@ -361,13 +464,36 @@ export class NotificationService {
 
     const templateId = EmailTemplateIds[messageType];
 
-    await this.sendInBlue.sendEmail(recipient.email, templateId, params);
+    try {
+      await this.sendInBlue.sendEmail(recipient.email, templateId, params);
+    } catch (error) {
+      const errorMessage = error?.message || String(error);
+      await this.recordDelivery({
+        messageType,
+        templateId,
+        userId: recipient.userId,
+        sender: 'Agrofount Shop',
+        recipientEmail: recipient.email,
+        channel: 'EMAIL',
+        campaignId: options?.campaignId,
+        jobName: options?.jobName,
+        status: 'FAILED',
+        errorMessage,
+        failureCategory: classifyProviderError(errorMessage),
+      });
+      throw error;
+    }
 
-    await this.create({
+    await this.recordDelivery({
       messageType,
       templateId,
       userId: recipient.userId,
       sender: 'Agrofount Shop',
+      recipientEmail: recipient.email,
+      channel: 'EMAIL',
+      campaignId: options?.campaignId,
+      jobName: options?.jobName,
+      status: 'SENT',
     });
   }
 
@@ -375,8 +501,11 @@ export class NotificationService {
     recipient: string,
     messageType: MessageTypes,
     params: Record<string, any> = {},
+    options?: { campaignId?: string; jobName?: string },
   ) {
-    const { sender_id } = this.configService.get<TermiiConfig>('termii');
+    const { sender_id } =
+      this.configService.get<AfricasTalkingConfig>('africasTalking');
+    const smsSender = sender_id || 'Agrofount';
 
     if (!recipient) {
       throw new BadGatewayException(
@@ -384,42 +513,44 @@ export class NotificationService {
       );
     }
 
+    const recordSms = (
+      message?: string,
+      result?: { success?: boolean; error?: string },
+    ) => {
+      const failed = result?.success === false;
+      return this.recordDelivery({
+        messageType,
+        userId: params.userId,
+        sender: smsSender,
+        message,
+        channel: 'SMS',
+        recipientPhone: recipient,
+        campaignId: options?.campaignId,
+        jobName: options?.jobName,
+        status: failed ? 'FAILED' : 'SENT',
+        errorMessage: failed ? result.error : undefined,
+        failureCategory: failed
+          ? classifyProviderError(result.error ?? '')
+          : undefined,
+      });
+    };
+
     // Determine the message content based on the message type
     switch (messageType) {
       case MessageTypes.SEND_OTP:
-        const otpRes = await this.sendOTP(recipient);
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-        });
+        const otpRes = await this.sendOTP(recipient, params.otp);
+        await recordSms(undefined, otpRes);
 
         return otpRes;
 
       case MessageTypes.VERIFY_PHONE_OTP:
-        const res = await this.verifyOTP(params.pinId, params.otp);
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-        });
-
-        return res;
+        return { verified: false };
 
       case MessageTypes.NEW_VOUCHER:
         const voucherMessage = `Your voucher code is ${params.voucher_code}. Amount: ${params.amount}. Valid for 30 days.`;
 
         const smsRes = await this.sendSmsMessage(voucherMessage, recipient);
-
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-          message: voucherMessage,
-        });
+        await recordSms(voucherMessage, smsRes);
 
         return smsRes;
 
@@ -430,14 +561,7 @@ export class NotificationService {
           paymentMessage,
           recipient,
         );
-
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-          message: paymentMessage,
-        });
+        await recordSms(paymentMessage, paymentSmsRes);
 
         return paymentSmsRes;
 
@@ -447,35 +571,89 @@ export class NotificationService {
           orderUpdateMessage,
           recipient,
         );
-
-        // Optionally log or save the message to the database
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-          message: orderUpdateMessage,
-        });
+        await recordSms(orderUpdateMessage, orderUpdateSmsRes);
 
         return orderUpdateSmsRes;
 
       case MessageTypes.PENDING_ORDER_REMINDER:
-        const pendingOrderMessage = `Hi ${params.customer_name}, your Agrofount order ${params.order_id} is still pending. Complete payment by ${params.due_date} to secure your items: ${params.order_link}`;
+        const pendingOrderMessage = this.buildSmsText(messageType, params);
         const pendingOrderSmsRes = await this.sendSmsMessage(
           pendingOrderMessage,
           recipient,
         );
-
-        await this.create({
-          messageType,
-          userId: params.userId,
-          sender: sender_id,
-          message: pendingOrderMessage,
-        });
+        await recordSms(pendingOrderMessage, pendingOrderSmsRes);
 
         return pendingOrderSmsRes;
 
+      case MessageTypes.LOGIN_INACTIVITY_REMINDER:
+        const loginInactivityMessage = this.buildSmsText(messageType, params);
+        const loginInactivitySmsRes = await this.sendSmsMessage(
+          loginInactivityMessage,
+          recipient,
+        );
+        await recordSms(loginInactivityMessage, loginInactivitySmsRes);
+
+        return loginInactivitySmsRes;
+
+      case MessageTypes.CRON_JOB_SUMMARY:
+        const cronSummaryMessage = `Ayo Cron: ${params.jobName} ${
+          params.error ? 'FAILED' : 'completed'
+        } - ${params.sent}/${params.total} sent${
+          params.error ? ` (error: ${params.error})` : ''
+        }.`;
+        const cronSummarySmsRes = await this.sendSmsMessage(
+          cronSummaryMessage,
+          recipient,
+        );
+        await recordSms(cronSummaryMessage, cronSummarySmsRes);
+
+        return cronSummarySmsRes;
+
       default:
         throw new Error(`Unsupported SMS message type: ${messageType}`);
+    }
+  }
+
+  private buildSmsText(
+    messageType: MessageTypes,
+    params: Record<string, any>,
+  ): string {
+    switch (messageType) {
+      case MessageTypes.PENDING_ORDER_REMINDER:
+        return `Hi ${params.customer_name}, your Agrofount order ${params.order_id} is still pending. Complete payment by ${params.due_date} to secure your items: ${params.order_link}`;
+      case MessageTypes.LOGIN_INACTIVITY_REMINDER:
+        return `Hi ${params.customer_name}, it's been a while since you visited Agrofount. Check out what's new: ${params.login_link}`;
+      default:
+        throw new Error(`No SMS preview text builder for: ${messageType}`);
+    }
+  }
+
+  buildSmsPreviewText(
+    messageType: MessageTypes,
+    params: Record<string, any>,
+  ): string {
+    return this.buildSmsText(messageType, params);
+  }
+
+  async renderEmailTemplatePreview(
+    templateId: number,
+    params: Record<string, any>,
+  ): Promise<{ subject?: string; html?: string; renderError?: string }> {
+    try {
+      const template = await this.sendInBlue.getTemplate(templateId);
+      const stringParams: Record<string, string> = Object.fromEntries(
+        Object.entries(params).map(([key, value]) => [key, String(value)]),
+      );
+      return {
+        subject: template.subject
+          ? renderTemplate(template.subject, stringParams)
+          : undefined,
+        html: template.htmlContent
+          ? renderTemplate(template.htmlContent, stringParams)
+          : undefined,
+      };
+    } catch (error) {
+      return { renderError: (error as Error).message };
     }
   }
 
@@ -483,130 +661,105 @@ export class NotificationService {
     message: string,
     recipient: string,
   ): Promise<any> {
-    const { base_url, api_key, sender_id } =
-      this.configService.get<TermiiConfig>('termii');
+    const { base_url, api_key, username, sender_id } =
+      this.configService.get<AfricasTalkingConfig>('africasTalking');
     try {
-      const payload = {
-        api_key,
-        message_type: 'TRANSACTIONAL',
+      const payload = new URLSearchParams({
+        username,
         to: recipient,
-        from: sender_id,
-        channel: 'dnd',
-        message_text: message,
-        sms: message,
-      };
+        message,
+      });
+      if (sender_id) payload.set('from', sender_id);
 
       const response = await lastValueFrom(
-        this.httpService.post(`${base_url}/sms/send`, payload),
+        this.httpService.post(`${base_url}/messaging`, payload.toString(), {
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            apiKey: api_key,
+          },
+        }),
       );
 
-      return response.data;
+      return this.normalizeAfricasTalkingSmsResponse(response.data);
     } catch (error: any) {
-      // Log the error for debugging purposes
       if (error.response) {
-        console.error('Termii API Error Response:', error.response.data);
+        console.error(
+          "Africa's Talking API Error Response:",
+          error.response.data,
+        );
       } else if (error.request) {
-        console.error('No response received from Termii API:', error.request);
+        console.error(
+          "No response received from Africa's Talking API:",
+          error.request,
+        );
       } else {
-        console.error('Error sending SMS via Termii:', error.message);
+        console.error("Error sending SMS via Africa's Talking:", error.message);
       }
 
-      // Return a failure response instead of throwing an exception
+      const responseDetail = error.response?.data
+        ? JSON.stringify(error.response.data)
+        : undefined;
       return {
         success: false,
-        error: error.message || 'Unknown error occurred',
+        error:
+          [error.message, responseDetail].filter(Boolean).join(' — ') ||
+          'Unknown error occurred',
       };
     }
   }
 
-  private async sendOTP(recipient: string) {
-    const { base_url, api_key, sender_id } =
-      this.configService.get<TermiiConfig>('termii');
-    try {
-      // Replace this with your SMS provider's API call
-      const payload = {
-        api_key,
-        message_type: 'NUMERIC',
-        to: recipient,
-        from: sender_id,
-        channel: 'dnd',
-        pin_attempts: 5,
-        pin_time_to_live: 10,
-        pin_length: 6,
-        pin_type: 'NUMERIC',
-        pin_placeholder: '< 1234 >',
-        message_text:
-          'Agrofount Verification pin is < 1234 >. It expires in 30 mins',
-      };
-
-      const response = await lastValueFrom(
-        this.httpService.post(`${base_url}/sms/otp/send`, payload),
-      );
-
-      return response.data;
-    } catch (error) {
-      // Log the error for debugging purposes
-      if (error.response) {
-        console.error('Termii API Error Response:', error.response.data);
-      } else if (error.request) {
-        console.error('No response received from Termii API:', error.request);
-      } else {
-        console.error('Error sending SMS via Termii:', error.message);
-      }
-
-      // Return a failure response instead of throwing an exception
+  private async sendOTP(recipient: string, otp: string) {
+    if (!otp) {
       return {
         success: false,
-        error: error.message || 'Unknown error occurred',
+        error: 'OTP value is required',
       };
     }
+
+    return this.sendSmsMessage(
+      `Agrofount verification code is ${otp}. It expires in 10 minutes.`,
+      recipient,
+    );
   }
 
-  private async verifyOTP(pinId: string, otp: string) {
-    const { base_url, api_key } =
-      this.configService.get<TermiiConfig>('termii');
-    try {
-      // Replace this with your SMS provider's API call
-      const payload = {
-        api_key,
-        pin_id: pinId,
-        pin: otp,
-      };
+  private normalizeAfricasTalkingSmsResponse(response: any) {
+    const recipients = response?.SMSMessageData?.Recipients;
+    const failedRecipient = Array.isArray(recipients)
+      ? recipients.find((recipient) =>
+          /fail|reject|invalid/i.test(String(recipient?.status ?? '')),
+        )
+      : undefined;
 
-      const response = await lastValueFrom(
-        this.httpService.post(`${base_url}/sms/otp/verify`, payload),
-      );
-
-      return response.data;
-    } catch (error) {
-      // Log the error for debugging purposes
-      if (error.response) {
-        console.error('Termii API Error Response:', error.response.data);
-      } else if (error.request) {
-        console.error('No response received from Termii API:', error.request);
-      } else {
-        console.error('Error sending SMS via Termii:', error.message);
-      }
-
-      // Return a failure response instead of throwing an exception
-      return {
-        success: false,
-        error: error.message || 'Unknown error occurred',
-      };
-    }
+    return {
+      ...response,
+      success: !failedRecipient,
+      error: failedRecipient?.status,
+    };
   }
 
   async sendSmsForCampaign(
     phone: string,
     userId: string,
     message: string,
+    options?: { campaignId?: string; jobName?: string },
   ): Promise<any> {
     const result = await this.sendSmsMessage(message, phone);
-    await this.create({
+    const failed = result?.success === false;
+    await this.recordDelivery({
       messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
       userId,
       sender: 'Agrofount',
       message,
+      channel: 'SMS',
+      recipientPhone: phone,
+      campaignId: options?.campaignId,
+      jobName: options?.jobName,
+      status: failed ? 'FAILED' : 'SENT',
+      errorMessage: failed ? result.error : undefined,
+      failureCategory: failed
+        ? classifyProviderError(result.error ?? '')
+        : undefined,
     });
     return result;
   }

@@ -12,6 +12,7 @@ import { CreditFacilityRequestEntity } from '../../credit-facility/entities/cred
 import { AiRunStatus } from '../entities/ai-tool-invocation.entity';
 import { AiPlatformAnalyticsService } from './ai-platform-analytics.service';
 import { AiSecurityService } from './ai-security.service';
+import { FarmFlockService } from './farm-flock.service';
 
 export type AiToolContext = {
   actorType: string;
@@ -25,6 +26,7 @@ export type AiToolDefinition = {
   category: string;
   allowedActors: string[];
   readOnly: boolean;
+  inputSchema: Record<string, unknown>;
 };
 
 const TOOL_DEFINITIONS: AiToolDefinition[] = [
@@ -35,6 +37,21 @@ const TOOL_DEFINITIONS: AiToolDefinition[] = [
       'Search product catalog with prices, availability, and location',
     allowedActors: ['farmer', 'sales_rep', 'admin', 'system'],
     readOnly: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description:
+            'Search term - product name, category, or need (e.g. "layer feed", "dewormer")',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results to return (default 5, max 12)',
+        },
+      },
+      required: ['query'],
+    },
   },
   {
     name: 'order.track',
@@ -42,6 +59,16 @@ const TOOL_DEFINITIONS: AiToolDefinition[] = [
     description: 'Fetch order status and shipment information',
     allowedActors: ['farmer', 'sales_rep', 'admin', 'system'],
     readOnly: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'Order code/reference the farmer mentioned, if any',
+        },
+        orderId: { type: 'string', description: 'Order UUID, if known' },
+      },
+    },
   },
   {
     name: 'customer.profile',
@@ -49,6 +76,7 @@ const TOOL_DEFINITIONS: AiToolDefinition[] = [
     description: 'Fetch customer purchase, credit, and saved profile summary',
     allowedActors: ['farmer', 'sales_rep', 'admin', 'system'],
     readOnly: true,
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'credit.eligibility',
@@ -56,6 +84,25 @@ const TOOL_DEFINITIONS: AiToolDefinition[] = [
     description: 'Compute rule-based credit eligibility signals',
     allowedActors: ['farmer', 'sales_rep', 'admin', 'system'],
     readOnly: true,
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'vaccination.schedule',
+    category: 'farm_health',
+    description:
+      "Compute a farmer's active flock vaccination status: due today, upcoming, and missed",
+    allowedActors: ['farmer', 'sales_rep', 'admin', 'system'],
+    readOnly: true,
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'feed.advisor',
+    category: 'farm_health',
+    description:
+      "Compute a farmer's active flock feed stage, daily quantity, and supplement guidance",
+    allowedActors: ['farmer', 'sales_rep', 'admin', 'system'],
+    readOnly: true,
+    inputSchema: { type: 'object', properties: {} },
   },
 ];
 
@@ -72,6 +119,7 @@ export class AiToolRegistryService {
     private readonly creditFacilityRepository: Repository<CreditFacilityRequestEntity>,
     private readonly analyticsService: AiPlatformAnalyticsService,
     private readonly aiSecurityService: AiSecurityService,
+    private readonly farmFlockService: FarmFlockService,
   ) {}
 
   listTools(actorType = 'farmer') {
@@ -124,7 +172,7 @@ export class AiToolRegistryService {
     toolName: string,
     input: Record<string, unknown>,
     context: AiToolContext,
-  ) {
+  ): Promise<Record<string, unknown>> {
     if (toolName === 'commerce.product_search') {
       return this.productSearch(input);
     }
@@ -137,8 +185,36 @@ export class AiToolRegistryService {
     if (toolName === 'credit.eligibility') {
       return this.creditEligibility(input, context);
     }
+    if (toolName === 'vaccination.schedule') {
+      return this.vaccinationSchedule(context);
+    }
+    if (toolName === 'feed.advisor') {
+      return this.feedAdvisor(context);
+    }
 
     throw new NotFoundException(`Unknown AI tool: ${toolName}`);
+  }
+
+  private async vaccinationSchedule(context: AiToolContext) {
+    const targetUserId = context.userId;
+    if (!targetUserId) throw new ForbiddenException('User context is required');
+
+    const flock = await this.farmFlockService.getActiveFlock(targetUserId);
+    return {
+      success: true,
+      ...this.farmFlockService.computeVaccinationStatus(flock),
+    };
+  }
+
+  private async feedAdvisor(context: AiToolContext) {
+    const targetUserId = context.userId;
+    if (!targetUserId) throw new ForbiddenException('User context is required');
+
+    const flock = await this.farmFlockService.getActiveFlock(targetUserId);
+    return {
+      success: true,
+      ...this.farmFlockService.computeFeedRecommendation(flock),
+    };
   }
 
   private async productSearch(input: Record<string, unknown>) {
@@ -153,6 +229,8 @@ export class AiToolRegistryService {
         { product: { name: ILike(`%${query}%`) } },
         { product: { category: ILike(`%${query}%`) } as any },
         { product: { subCategory: ILike(`%${query}%`) } },
+        { product: { primaryCategory: ILike(`%${query}%`) } as any },
+        { product: { description: ILike(`%${query}%`) } },
       ],
       relations: ['product', 'state', 'country'],
       take: limit,

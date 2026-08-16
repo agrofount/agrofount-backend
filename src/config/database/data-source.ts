@@ -1,5 +1,6 @@
 import { DataSource } from 'typeorm';
 import * as dotenv from 'dotenv';
+import * as path from 'path';
 
 dotenv.config();
 
@@ -13,8 +14,8 @@ export const AppDataSource = new DataSource({
   schema: process.env.DB_SCHEMA || 'public',
   synchronize: false,
   logging: false,
-  entities: ['src/**/entities/*.ts'],
-  migrations: ['src/config/database/migrations/*.ts'],
+  entities: [path.join(__dirname, '../../**/entities/*{.ts,.js}')],
+  migrations: [path.join(__dirname, 'migrations/*{.ts,.js}')],
   ...(process.env.DB_SSL === 'true'
     ? {
         ssl: {

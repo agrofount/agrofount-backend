@@ -9,6 +9,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { AiKnowledgeSourceType } from '../entities/ai-knowledge-document.entity';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class IngestKnowledgeDocumentDto {
   @IsIn(Object.values(AiKnowledgeSourceType))
@@ -37,6 +38,35 @@ export class IngestKnowledgeDocumentDto {
   @IsString()
   @MaxLength(80)
   externalId?: string;
+}
+
+export class PdfIngestDto {
+  @ApiProperty({ enum: AiKnowledgeSourceType })
+  @IsIn(Object.values(AiKnowledgeSourceType))
+  sourceType: AiKnowledgeSourceType;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(220)
+  title?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  externalId?: string;
+
+  @ApiProperty({ required: false, type: 'string' })
+  @IsOptional()
+  @IsString()
+  tagsJson?: string;
+
+  @ApiProperty({ required: false, type: 'string' })
+  @IsOptional()
+  @IsString()
+  metadataJson?: string;
 }
 
 export class RagSearchDto {

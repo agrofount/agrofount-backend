@@ -18,6 +18,7 @@ import { CampaignProcessor } from './processors/campaign.processor';
 import { NotificationGateway } from './gateways/notification.gateway';
 import { NotificationTriggersJob } from './jobs/notification-triggers.job';
 import { ProductLikeModule } from '../product-like/product-like.module';
+import { AiPlatformModule } from '../ai-platform/ai-platform.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { ProductLikeModule } from '../product-like/product-like.module';
     BullModule.registerQueue({ name: 'price-updates' }),
     BullModule.registerQueue({ name: 'notification-campaigns' }),
     ProductLikeModule,
+    AiPlatformModule,
   ],
   controllers: [NotificationController],
   providers: [

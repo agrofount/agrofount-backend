@@ -40,6 +40,8 @@ export class AiSettingsService {
     const settings = await this.getSettings();
 
     if (dto.isActive !== undefined) settings.isActive = dto.isActive;
+    if (dto.provider !== undefined) settings.provider = dto.provider;
+    if (dto.model !== undefined) settings.model = dto.model;
     if (dto.monthlyBudgetUSD !== undefined)
       settings.monthlyBudgetUSD = dto.monthlyBudgetUSD ?? null;
     if (dto.costPer1MInputTokensUSD !== undefined)

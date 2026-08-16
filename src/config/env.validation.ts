@@ -18,9 +18,8 @@ const REQUIRED_PRODUCTION_VARIABLES = [
   'PAYSTACK_URL',
   'SEND_IN_BLUE_API_KEY',
   'SEND_IN_BLUE_FROM_EMAIL',
-  'TERMII_API_KEY',
-  'TERMII_SENDER_ID',
-  'TERMII_BASE_URL',
+  'AFRICASTALKING_API_KEY',
+  'AFRICASTALKING_USERNAME',
   'AWS_S3_REGION',
   'AWS_BUCKET_NAME',
   'FRONTEND_URL',
@@ -95,6 +94,15 @@ export function validateEnvironment(
     ) {
       throw new Error(
         'AWS credentials (AWS_ACCESS_KEY_ID or an IAM role) are required when AI Farm Assistant is enabled with Bedrock',
+      );
+    }
+    if (
+      config.AI_FARM_ASSISTANT_ENABLED === 'true' &&
+      config.AI_PROVIDER === 'gemini' &&
+      !config.GEMINI_API_KEY
+    ) {
+      throw new Error(
+        'GEMINI_API_KEY is required when AI Farm Assistant is enabled with Gemini',
       );
     }
     const jwtExpiration = String(config.JWT_EXPIRATION || '15m');

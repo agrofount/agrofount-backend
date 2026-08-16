@@ -28,15 +28,18 @@ import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
+  randomInt,
   randomUUID,
   timingSafeEqual,
 } from 'crypto';
 import { VerifyPhoneDto } from './dto/verify-phoneDto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 import { AppConfig } from '../config/app.config';
 import { VoucherService } from '../voucher/voucher.service';
 import { WalletService } from '../wallet/wallet.service';
 import { VoucherEntity } from '../voucher/entities/voucher.entity';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { LeadsService } from '../leads/leads.service';
 import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
 import {
   AuthPrincipalType,
@@ -56,7 +59,7 @@ type OtpChallenge = {
   userId: string;
   phone: string;
   purpose: OtpPurpose;
-  providerPinId: string;
+  otpHash: string;
   attempts: number;
 };
 
@@ -79,6 +82,7 @@ export class AuthService {
     @InjectRepository(AuthSessionEntity)
     private readonly sessionRepository: Repository<AuthSessionEntity>,
     private readonly dataSource: DataSource,
+    private readonly leadsService: LeadsService,
   ) {}
 
   async validateUser(
@@ -97,7 +101,11 @@ export class AuthService {
     }
 
     if (!user.isVerified) {
-      throw new BadRequestException('Please verify your email');
+      throw new BadRequestException({
+        message: 'Please verify your account to continue.',
+        errorCode: 'ACCOUNT_UNVERIFIED',
+        channel: user.email ? 'email' : 'phone',
+      });
     }
 
     const isValid = await bcrypt.compare(passwd, user.password);
@@ -271,6 +279,12 @@ export class AuthService {
       if (!savedUser) {
         throw new BadRequestException('User not created');
       }
+
+      void this.leadsService
+        .linkConversionByContact(savedUser.id, { email, phone })
+        .catch((error) =>
+          Logger.error('Failed to link lead conversion on registration', error),
+        );
 
       if (email) {
         const frontendUrl = this.configService.get<string>('app.frontend_url');
@@ -461,6 +475,63 @@ export class AuthService {
     }
 
     return { challengeId: isEmail ? undefined : randomUUID() };
+  }
+
+  async resendOtp(
+    dto: ResendOtpDto,
+  ): Promise<{ challengeId: string; expiresInSeconds: number }> {
+    const { phone, challengeId } = dto;
+
+    const user = await this.userRepository.findOne({ where: { phone } });
+    if (!user) {
+      throw new NotFoundException('No account found with that phone number.');
+    }
+    if (user.isVerified) {
+      throw new BadRequestException(
+        'This account is already verified. Please log in.',
+      );
+    }
+
+    if (challengeId) {
+      await this.cacheManager
+        .del(`auth:otp:${challengeId}`)
+        .catch(() => undefined);
+    }
+
+    const newChallengeId = await this.issueOtpChallenge(
+      user,
+      'phone-verification',
+    );
+    return { challengeId: newChallengeId, expiresInSeconds: 600 };
+  }
+
+  async resendVerificationEmail(identifier: string): Promise<void> {
+    const isEmail = identifier.includes('@');
+    if (!isEmail) return;
+
+    const user = await this.userRepository.findOne({
+      where: { email: identifier.trim().toLowerCase() },
+    });
+    if (!user || user.isVerified) return;
+
+    const verificationToken = this.generateToken();
+    user.verificationToken = this.hashToken(verificationToken);
+    user.verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await this.userRepository.save(user);
+
+    const frontendUrl = this.configService.get<string>('app.frontend_url');
+    const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
+
+    void this.notificationService
+      .sendNotification(
+        NotificationChannels.EMAIL,
+        { email: user.email },
+        MessageTypes.VERIFY_EMAIL,
+        { verification_link: verificationUrl },
+      )
+      .catch((error) =>
+        Logger.error('Failed to resend verification email', error),
+      );
   }
 
   async resetPassword(data: ResetPasswordDto): Promise<void> {
@@ -781,23 +852,23 @@ export class AuthService {
     purpose: OtpPurpose,
   ): Promise<string> {
     const phone = this.normalizePhone(user.phone);
+    const challengeId = randomUUID();
+    const otp = randomInt(100000, 1000000).toString();
     const providerResponse = await this.notificationService.sendNotification(
       NotificationChannels.SMS,
       { phoneNumber: phone },
       MessageTypes.SEND_OTP,
-      { userId: user.id },
+      { userId: user.id, otp },
     );
-    const providerPinId = providerResponse?.pin_id;
-    if (!providerPinId) {
+    if (providerResponse?.success === false) {
       throw new BadRequestException('Unable to issue OTP at this time');
     }
 
-    const challengeId = randomUUID();
     const challenge: OtpChallenge = {
       userId: user.id,
       phone,
       purpose,
-      providerPinId,
+      otpHash: this.hashOtp(challengeId, otp),
       attempts: 0,
     };
     await this.cacheManager.set(
@@ -825,17 +896,13 @@ export class AuthService {
 
     challenge.attempts += 1;
     await this.cacheManager.set(key, challenge, 10 * 60 * 1000);
-    const response = await this.notificationService.sendNotification(
-      NotificationChannels.SMS,
-      { phoneNumber: challenge.phone },
-      MessageTypes.VERIFY_PHONE_OTP,
-      {
-        userId: challenge.userId,
-        otp,
-        pinId: challenge.providerPinId,
-      },
-    );
-    if (response?.verified !== true) {
+    const expectedHash = Buffer.from(challenge.otpHash, 'hex');
+    const actualHash = Buffer.from(this.hashOtp(challengeId, otp), 'hex');
+    const verified =
+      expectedHash.length === actualHash.length &&
+      timingSafeEqual(expectedHash, actualHash);
+
+    if (!verified) {
       if (challenge.attempts >= 5) await this.cacheManager.del(key);
       throw new BadRequestException('Invalid or expired OTP');
     }
@@ -846,6 +913,10 @@ export class AuthService {
 
   private normalizePhone(phone: string): string {
     return phone.replace(/[\s()-]/g, '');
+  }
+
+  private hashOtp(challengeId: string, otp: string): string {
+    return createHash('sha256').update(`${challengeId}:${otp}`).digest('hex');
   }
 
   private async sendOnboardingNotifications(

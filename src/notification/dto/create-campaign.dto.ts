@@ -10,6 +10,7 @@ import {
   IsString,
 } from 'class-validator';
 import {
+  CampaignAudienceType,
   CampaignCategory,
   CampaignFrequency,
 } from '../entities/notification-campaign.entity';
@@ -30,6 +31,14 @@ export class AudienceDto {
   @IsOptional()
   @IsBoolean()
   isVerified?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  leadStatuses?: string[];
+
+  @IsOptional()
+  @IsArray()
+  leadSources?: string[];
 }
 
 export class CreateCampaignDto {
@@ -87,4 +96,13 @@ export class CreateCampaignDto {
   @IsOptional()
   @IsEnum(CampaignFrequency)
   frequency?: CampaignFrequency;
+
+  @ApiPropertyOptional({
+    enum: CampaignAudienceType,
+    description:
+      'Defaults to "users". Set to "leads" to broadcast to leads instead.',
+  })
+  @IsOptional()
+  @IsEnum(CampaignAudienceType)
+  audienceType?: CampaignAudienceType;
 }

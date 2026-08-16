@@ -7,13 +7,13 @@ import {
   ParseUUIDPipe,
   Post,
   Res,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
 import { Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiConsumes,
@@ -21,6 +21,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ConfigService } from '@nestjs/config';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UserAuthGuard } from '../auth/guards/user.guard';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
@@ -28,32 +29,55 @@ import { UserEntity } from '../user/entities/user.entity';
 import { AskFarmAssistantDto } from './dto/ask-farm-assistant.dto';
 import { AiFarmAssistantService } from './ai-farm-assistant.service';
 
+const DEFAULT_STREAM_CHUNK_DELAY_MS = 40;
+
 @Controller('ai-farm-assistant')
 @ApiTags('AI Farm Assistant')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, UserAuthGuard)
 export class AiFarmAssistantController {
-  constructor(private readonly farmAssistantService: AiFarmAssistantService) {}
+  constructor(
+    private readonly farmAssistantService: AiFarmAssistantService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('ask')
   @Throttle({ default: { limit: 20, ttl: 60 * 60 * 1000 } })
   @ApiOperation({ summary: 'Ask the AI farm assistant a question' })
   @ApiConsumes('multipart/form-data', 'application/json')
   @UseInterceptors(
-    FileInterceptor('image', {
-      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
-      fileFilter: (_req, file, cb) => {
-        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-        cb(null, allowed.includes(file.mimetype));
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'document', maxCount: 1 },
+      ],
+      {
+        limits: { fileSize: 10 * 1024 * 1024 },
+        fileFilter: (_req, file, cb) => {
+          const allowed = [
+            'image/jpeg',
+            'image/png',
+            'image/webp',
+            'image/gif',
+            'application/pdf',
+          ];
+          cb(null, allowed.includes(file.mimetype));
+        },
       },
-    }),
+    ),
   )
   ask(
     @CurrentUser() user: UserEntity,
     @Body() dto: AskFarmAssistantDto,
-    @UploadedFile() image?: Express.Multer.File,
+    @UploadedFiles()
+    files?: { image?: Express.Multer.File[]; document?: Express.Multer.File[] },
   ) {
-    return this.farmAssistantService.ask(user.id, dto, image);
+    return this.farmAssistantService.ask(
+      user,
+      dto,
+      files?.image?.[0],
+      files?.document?.[0],
+    );
   }
 
   @Post('ask/stream')
@@ -70,7 +94,7 @@ export class AiFarmAssistantController {
     res.flushHeaders?.();
 
     try {
-      const response = await this.farmAssistantService.ask(user.id, dto);
+      const response = await this.farmAssistantService.ask(user, dto);
 
       this.writeSse(res, 'start', {
         success: true,
@@ -80,12 +104,16 @@ export class AiFarmAssistantController {
         requiresVetAttention: response.requiresVetAttention,
       });
 
+      const chunkDelayMs =
+        Number(this.configService.get('AI_STREAM_CHUNK_DELAY_MS')) ||
+        DEFAULT_STREAM_CHUNK_DELAY_MS;
+
       for (const delta of this.chunkMessage(response.reply || '')) {
         if (res.destroyed) {
           return;
         }
         this.writeSse(res, 'chunk', { delta });
-        await this.sleep(10);
+        await this.sleep(chunkDelayMs);
       }
 
       this.writeSse(res, 'done', response);

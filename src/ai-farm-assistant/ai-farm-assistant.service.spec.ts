@@ -52,6 +52,13 @@ describe('AiFarmAssistantService', () => {
       find: jest.fn(async ({ where }: any) =>
         messages.filter((item) => item.conversationId === where.conversationId),
       ),
+      createQueryBuilder: jest.fn(() => ({
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        getRawOne: jest.fn().mockResolvedValue({ total: '0' }),
+      })),
       ...overrides.messageRepository,
     };
     const productLocationRepository = {
@@ -77,6 +84,10 @@ describe('AiFarmAssistantService', () => {
           : 'Use starter feed and clean water.',
         quickReplies: ['How much feed do I need?'],
         requiresVetAttention: input.requiresVetAttention,
+        inputTokens: 1000,
+        outputTokens: 100,
+        latencyMs: 250,
+        modelId: 'amazon.nova-lite-v1:0',
       })),
       ...overrides.aiProviderService,
     };
@@ -93,14 +104,52 @@ describe('AiFarmAssistantService', () => {
     };
     const aiSettingsService = {
       isAyoActive: jest.fn().mockResolvedValue(true),
+      getSettings: jest.fn().mockResolvedValue({
+        costPer1MInputTokensUSD: 0.06,
+        costPer1MOutputTokensUSD: 0.24,
+      }),
+      ...overrides.aiSettingsService,
+    };
+    const aiRagService = {
+      search: jest.fn().mockResolvedValue({ results: [] }),
+      ...overrides.aiRagService,
+    };
+    const quotaRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockImplementation((v) => Promise.resolve(v)),
+      ...overrides.quotaRepository,
+    };
+    const farmerProfileRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      ...overrides.farmerProfileRepository,
+    };
+    const aiToolRegistryService = {
+      executeTool: jest.fn().mockResolvedValue({
+        success: true,
+        flock: null,
+        dueToday: [],
+        upcoming7Days: [],
+        missed: [],
+      }),
+      ...overrides.aiToolRegistryService,
+    };
+    const farmFlockService = {
+      upsertFromChatContext: jest.fn().mockResolvedValue(null),
+      ...overrides.farmFlockService,
     };
     const service = new AiFarmAssistantService(
       conversationRepository as any,
       messageRepository as any,
       feedbackRepository as any,
       productLocationRepository as any,
+      quotaRepository as any,
+      farmerProfileRepository as any,
       aiProviderService as any,
       aiSettingsService as any,
+      aiRagService as any,
+      aiToolRegistryService as any,
+      farmFlockService as any,
       configService as any,
     );
 
@@ -111,6 +160,9 @@ describe('AiFarmAssistantService', () => {
       conversationRepository,
       messageRepository,
       productLocationRepository,
+      farmerProfileRepository,
+      aiToolRegistryService,
+      farmFlockService,
       aiProviderService,
     };
   }
@@ -118,10 +170,13 @@ describe('AiFarmAssistantService', () => {
   it('asks a new question and stores user and assistant messages', async () => {
     const { service, messages } = setup();
 
-    const result = await service.ask(userId, {
-      message: 'My broilers are 3 weeks old. What feed should I use?',
-      farmContext: { birdType: 'broiler', birdAgeWeeks: 3 },
-    });
+    const result = await service.ask(
+      { id: userId },
+      {
+        message: 'My broilers are 3 weeks old. What feed should I use?',
+        farmContext: { birdType: 'broiler', birdAgeWeeks: 3 },
+      },
+    );
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -135,7 +190,179 @@ describe('AiFarmAssistantService', () => {
       expect.objectContaining({ role: FarmAssistantMessageRole.User }),
     );
     expect(messages[1]).toEqual(
-      expect.objectContaining({ role: FarmAssistantMessageRole.Assistant }),
+      expect.objectContaining({
+        role: FarmAssistantMessageRole.Assistant,
+        metadata: expect.objectContaining({
+          inputTokens: 1000,
+          outputTokens: 100,
+          ayoCredits: 84,
+          provider: 'AWS Bedrock',
+        }),
+      }),
+    );
+  });
+
+  it('saves a flock from complete chat context and threads vaccination status to the AI provider', async () => {
+    const { service, aiProviderService, farmFlockService } = setup({
+      farmFlockService: {
+        upsertFromChatContext: jest.fn().mockResolvedValue(null),
+      },
+      aiToolRegistryService: {
+        executeTool: jest.fn().mockResolvedValue({
+          success: true,
+          flock: {
+            birdType: 'Broiler',
+            quantity: 500,
+            startDate: '2026-06-27',
+          },
+          dueToday: [
+            {
+              vaccineName: 'Newcastle Disease (Lasota) - Dose 1',
+              method: 'Eye drop or drinking water',
+              targetDay: 7,
+            },
+          ],
+          upcoming7Days: [],
+          missed: [],
+        }),
+      },
+    });
+
+    await service.ask(
+      { id: userId },
+      {
+        message: 'What vaccines are due?',
+        farmContext: { birdType: 'Broiler', quantity: 500, birdAgeWeeks: 1 },
+      },
+    );
+
+    expect(farmFlockService.upsertFromChatContext).toHaveBeenCalledWith(
+      userId,
+      expect.objectContaining({
+        birdType: 'Broiler',
+        quantity: 500,
+        birdAgeWeeks: 1,
+      }),
+    );
+    expect(aiProviderService.generateFarmAssistantReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vaccinationStatus: expect.stringContaining(
+          'Newcastle Disease (Lasota) - Dose 1',
+        ),
+      }),
+    );
+  });
+
+  it('threads feed advice from the feed.advisor tool to the AI provider', async () => {
+    const { service, aiProviderService } = setup({
+      aiToolRegistryService: {
+        executeTool: jest.fn().mockImplementation((toolName: string) => {
+          if (toolName === 'feed.advisor') {
+            return Promise.resolve({
+              success: true,
+              flock: {
+                birdType: 'Broiler',
+                quantity: 500,
+                startDate: '2026-06-13',
+              },
+              stage: 'Grower',
+              gramsPerBirdPerDay: 90,
+              totalDailyKgForFlock: 45,
+              nextStage: null,
+              weeksUntilNextStage: null,
+              supplementNote: 'Transition gradually over 2-3 days.',
+            });
+          }
+          return Promise.resolve({
+            success: true,
+            flock: null,
+            dueToday: [],
+            upcoming7Days: [],
+            missed: [],
+          });
+        }),
+      },
+    });
+
+    await service.ask(
+      { id: userId },
+      { message: 'How much feed do my birds need?' },
+    );
+
+    expect(aiProviderService.generateFarmAssistantReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feedAdvice: expect.stringContaining('Grower'),
+      }),
+    );
+  });
+
+  it('persists and returns the diagnosisAssessment from the AI provider', async () => {
+    const diagnosisAssessment = {
+      possibleConditions: [{ name: 'Newcastle Disease', likelihood: 'high' }],
+      urgencyTier: 'emergency',
+      immediateActions: ['Isolate affected birds'],
+      isolationAdvice: 'Separate weak birds from the flock.',
+      vetReferralRecommended: true,
+    };
+    const { service, messages } = setup({
+      aiProviderService: {
+        generateFarmAssistantReply: jest.fn().mockResolvedValue({
+          reply: 'This needs urgent vet attention.',
+          quickReplies: [],
+          requiresVetAttention: true,
+          diagnosisAssessment,
+          inputTokens: 100,
+          outputTokens: 50,
+          latencyMs: 200,
+          modelId: 'amazon.nova-lite-v1:0',
+        }),
+      },
+    });
+
+    const result = await service.ask(
+      { id: userId },
+      { message: 'Many birds died suddenly with greenish diarrhoea' },
+    );
+
+    expect(result.diagnosisAssessment).toEqual(diagnosisAssessment);
+    expect(messages[messages.length - 1].metadata).toEqual(
+      expect.objectContaining({ diagnosisAssessment }),
+    );
+  });
+
+  it("loads the farmer's persistent profile and passes it to the AI provider", async () => {
+    const { service, aiProviderService, farmerProfileRepository } = setup({
+      farmerProfileRepository: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 'profile-1',
+          livestockTypes: ['Poultry'],
+          farmSize: 'Medium',
+          productionSystem: 'Intensive',
+          feedSource: 'Commercial',
+          breeds: [
+            {
+              breedName: 'Cobb 500',
+              livestockType: 'Poultry',
+              currentStock: 500,
+              primaryPurpose: 'Meat',
+            },
+          ],
+        }),
+      },
+    });
+
+    await service.ask(
+      { id: userId, profileId: 'profile-1' },
+      { message: 'What feed should I use?' },
+    );
+
+    expect(farmerProfileRepository.findOne).toHaveBeenCalledWith({
+      where: { id: 'profile-1' },
+    });
+    expect(aiProviderService.generateFarmAssistantReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        farmerProfile: expect.stringContaining('Cobb 500'),
+      }),
     );
   });
 
@@ -148,10 +375,13 @@ describe('AiFarmAssistantService', () => {
       farmContext: null,
     });
 
-    await service.ask(userId, {
-      conversationId,
-      message: 'What vaccination should I give next?',
-    });
+    await service.ask(
+      { id: userId },
+      {
+        conversationId,
+        message: 'What vaccination should I give next?',
+      },
+    );
 
     expect(conversationRepository.findOne).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: conversationId } }),
@@ -175,9 +405,12 @@ describe('AiFarmAssistantService', () => {
   it('returns product suggestions when the question mentions feed', async () => {
     const { service, productLocationRepository } = setup();
 
-    const result = await service.ask(userId, {
-      message: 'I need broiler starter feed',
-    });
+    const result = await service.ask(
+      { id: userId },
+      {
+        message: 'I need broiler starter feed',
+      },
+    );
 
     expect(productLocationRepository.find).toHaveBeenCalled();
     expect(result.suggestedProducts).toEqual([
@@ -189,12 +422,53 @@ describe('AiFarmAssistantService', () => {
     ]);
   });
 
+  it('matches products by description in addition to name and category', async () => {
+    const { service, productLocationRepository } = setup();
+
+    await service.ask(
+      { id: userId },
+      { message: 'I need broiler starter feed' },
+    );
+
+    const [callArgs] = productLocationRepository.find.mock.calls[0];
+    const matchesDescription = callArgs.where.some(
+      (clause: any) => clause.product?.description !== undefined,
+    );
+    expect(matchesDescription).toBe(true);
+  });
+
+  it('recommends brooding equipment, not day-old chicks, for a brooder-temperature question', async () => {
+    const { service, productLocationRepository } = setup();
+
+    await service.ask(
+      { id: userId },
+      {
+        message: 'What temperature should my brooder be at for day-old chicks?',
+      },
+    );
+
+    const where = productLocationRepository.find.mock.calls[0][0].where;
+    const patterns = where.flatMap((clause: any) =>
+      Object.values(clause.product).map((op: any) => op.value),
+    );
+
+    expect(patterns).toEqual(
+      expect.arrayContaining([expect.stringContaining('thermometer')]),
+    );
+    expect(patterns).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('chick')]),
+    );
+  });
+
   it('sets requiresVetAttention for severe disease symptoms', async () => {
     const { service } = setup();
 
-    const result = await service.ask(userId, {
-      message: 'Many are dying suddenly and some cannot stand',
-    });
+    const result = await service.ask(
+      { id: userId },
+      {
+        message: 'Many are dying suddenly and some cannot stand',
+      },
+    );
 
     expect(result.requiresVetAttention).toBe(true);
     expect(result.reply).toContain('vet');
@@ -212,7 +486,7 @@ describe('AiFarmAssistantService', () => {
     });
 
     await expect(
-      service.ask(userId, { message: 'What feed should I use?' }),
+      service.ask({ id: userId }, { message: 'What feed should I use?' }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

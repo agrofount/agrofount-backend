@@ -60,6 +60,9 @@ export class SellerInterestEntity {
   @Column({ type: 'text', nullable: true })
   additionalNotes: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  internalNotes: string | null;
+
   @Column('uuid', { array: true, default: () => "'{}'" })
   sampleAssetIds: string[];
 

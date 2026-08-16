@@ -3,7 +3,10 @@ import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 /**
  * Singleton configuration row for Ayo AI. Always ID = 1.
  * isActive controls whether the marketplace exposes Ayo to farmers.
- * Cost fields are used for approximate spend tracking from Bedrock token usage.
+ * provider/model drive which AI backend AiProviderService actually calls
+ * (env vars AI_PROVIDER/BEDROCK_MODEL_ID/GEMINI_MODEL_ID are only the fallback
+ * when this row is unreadable). model must match the selected provider.
+ * Cost fields are used for approximate spend tracking from token usage.
  */
 @Entity('ai_settings')
 export class AiSettingsEntity {

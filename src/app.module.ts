@@ -31,12 +31,13 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { BlogModule } from './blog/blog.module';
 import { InvoiceModule } from './invoice/invoice.module';
 import { VoucherModule } from './voucher/voucher.module';
-import termiiConfig from './config/termii.config';
+import africasTalkingConfig from './config/africastalking.config';
 // import { AiChatModule } from './ai-chat/ai-chat.module';
 import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
 import KeyvRedis from '@keyv/redis';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { CustomThrottlerGuard } from './common/throttling/custom-throttler.guard';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { validateEnvironment } from './config/env.validation';
 import { RedisThrottlerStorage } from './common/throttling/redis-throttler.storage';
@@ -46,6 +47,7 @@ import { OutboxModule } from './outbox/outbox.module';
 import { RequestAuditInterceptor } from './common/interceptors/request-audit.interceptor';
 import { AppThrottlingModule } from './common/throttling/throttling.module';
 import { CareersModule } from './careers/careers.module';
+import { LeadsModule } from './leads/leads.module';
 import { AiFarmAssistantModule } from './ai-farm-assistant/ai-farm-assistant.module';
 import { AiPlatformModule } from './ai-platform/ai-platform.module';
 import { BullModule } from '@nestjs/bullmq';
@@ -53,7 +55,7 @@ import { BullModule } from '@nestjs/bullmq';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      load: [databaseConfig, appConfig, termiiConfig],
+      load: [databaseConfig, appConfig, africasTalkingConfig],
       isGlobal: true,
       cache: true,
       validate: validateEnvironment,
@@ -136,6 +138,7 @@ import { BullModule } from '@nestjs/bullmq';
     InvoiceModule,
     VoucherModule,
     CareersModule,
+    LeadsModule,
     // AiChatModule,
     DisbursementModule,
   ],
@@ -144,7 +147,7 @@ import { BullModule } from '@nestjs/bullmq';
     AppService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: CustomThrottlerGuard,
     },
     {
       provide: APP_INTERCEPTOR,

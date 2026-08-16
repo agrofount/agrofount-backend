@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  Query,
   UseGuards,
   Put,
   Patch,
@@ -71,11 +72,13 @@ export class OrderController {
   @Get('admin/all')
   @UseGuards(AdminAuthGuard, RolesGuard)
   @RequiredPermissions('read_orders')
+  @ApiOperation({ summary: 'Get all orders, optionally filtered by state' })
   findAllForAdmin(
     @Paginate() query: PaginateQuery,
     @CurrentUser() admin: AdminEntity,
+    @Query('state') state?: string,
   ): Promise<Paginated<OrderEntity>> {
-    return this.orderService.findAll(query, admin);
+    return this.orderService.findAll(query, admin, state);
   }
 
   @Get('monthly-target')

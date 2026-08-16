@@ -1,4 +1,12 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
@@ -9,6 +17,7 @@ import {
   AiAnalyticsChartQueryDto,
   AiAnalyticsQueryDto,
   AiAnalyticsTopQueryDto,
+  AiUserTokenUsageQueryDto,
   ChartGranularity,
 } from './dto/ai-analytics-query.dto';
 
@@ -99,7 +108,8 @@ export class AdminAiAnalyticsController {
   @Get('resource-consumption')
   @RequiredPermissions('read_ai_analytics')
   @ApiOperation({
-    summary: 'AI provider resource consumption — tokens, cost, daily usage',
+    summary:
+      'AI provider resource consumption — credits, tokens, cost, daily usage',
   })
   getResourceConsumption(@Query() query: AiAnalyticsQueryDto) {
     return this.analyticsService.getResourceConsumption(query.from, query.to);
@@ -110,5 +120,28 @@ export class AdminAiAnalyticsController {
   @ApiOperation({ summary: 'Conversation breakdown by bird type' })
   getBirdTypeBreakdown(@Query() query: AiAnalyticsQueryDto) {
     return this.analyticsService.getBirdTypeBreakdown(query.from, query.to);
+  }
+
+  @Get('user-token-usage')
+  @RequiredPermissions('read_ai_analytics')
+  @ApiOperation({
+    summary:
+      'Per-user Ayo trial credit usage with remaining quota and exhaustion status',
+  })
+  getUserTokenUsage(@Query() query: AiUserTokenUsageQueryDto) {
+    return this.analyticsService.getUserTokenUsage(query);
+  }
+
+  @Post('user-token-usage/:userId/reset')
+  @RequiredPermissions('manage_ai_analytics')
+  @ApiOperation({
+    summary:
+      "Reset a user's Ayo credit quota — increases their effective limit by the base quota amount",
+  })
+  resetUserTokens(
+    @Param('userId') userId: string,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.analyticsService.resetUserTokens(userId, req.user.id);
   }
 }

@@ -5,10 +5,16 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { CronJobConfigEntity } from '../entities/cron-job-config.entity';
 import { CronJobRunEntity } from '../entities/cron-job-run.entity';
 import { CronJobName } from '../enums/cron-job-name.enum';
+import { NotificationService } from '../notification.service';
+import { MessageTypes } from '../types/notification.type';
+
+const DEFAULT_OPS_EMAIL = 'dayo.akinbami@agrofount.com';
+const DEFAULT_OPS_PHONE = '2349019170273';
 
 @Injectable()
 export class CronMonitorService implements OnModuleInit {
@@ -19,16 +25,30 @@ export class CronMonitorService implements OnModuleInit {
     private readonly configRepo: Repository<CronJobConfigEntity>,
     @InjectRepository(CronJobRunEntity)
     private readonly runRepo: Repository<CronJobRunEntity>,
+    private readonly notificationService: NotificationService,
+    private readonly configService: ConfigService,
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const seeds = Object.values(CronJobName).map((name) =>
-      this.configRepo.create({ jobName: name, enabled: false }),
+    // Insert-only seeding: must never touch a row that already exists, or an
+    // admin's enabled=true setting gets silently reset to false on every
+    // app restart/deploy (this previously used `upsert`, which performs an
+    // UPDATE on conflict — overwriting `enabled` back to the seed's `false`
+    // any time it differed from the stored value).
+    const existing = await this.configRepo.find({ select: ['jobName'] });
+    const existingNames = new Set(existing.map((row) => row.jobName));
+    const missing = Object.values(CronJobName).filter(
+      (name) => !existingNames.has(name),
     );
-    await this.configRepo.upsert(seeds, {
-      conflictPaths: ['jobName'],
-      skipUpdateIfNoValuesChanged: true,
-    });
+    if (!missing.length) return;
+
+    await this.configRepo
+      .createQueryBuilder()
+      .insert()
+      .into(CronJobConfigEntity)
+      .values(missing.map((name) => ({ jobName: name, enabled: false })))
+      .orIgnore()
+      .execute();
   }
 
   async isEnabled(jobName: CronJobName): Promise<boolean> {
@@ -90,6 +110,63 @@ export class CronMonitorService implements OnModuleInit {
       })
       .where('"jobName" = :jobName', { jobName: run.jobName })
       .execute();
+
+    if (result.sent > 0 || result.error) {
+      await this.notifyOpsOfRunStats(run.jobName, result);
+    }
+  }
+
+  private async notifyOpsOfRunStats(
+    jobName: CronJobName,
+    result: { sent: number; total: number; error?: string },
+  ): Promise<void> {
+    const opsEmail =
+      this.configService.get<string>('CRON_SUMMARY_ADMIN_EMAIL') ||
+      DEFAULT_OPS_EMAIL;
+    const opsPhone =
+      this.configService.get<string>('CRON_SUMMARY_ADMIN_PHONE') ||
+      DEFAULT_OPS_PHONE;
+
+    const status = result.error ? 'FAILED' : 'completed';
+    const summaryLine = `${jobName} ${status} — ${result.sent}/${
+      result.total
+    } notifications sent${result.error ? ` (error: ${result.error})` : ''}.`;
+
+    try {
+      await this.notificationService.sendCustomEmail(
+        { email: opsEmail },
+        `Ayo Cron: ${jobName} ${status}`,
+        `<p>${summaryLine}</p>`,
+        summaryLine,
+        MessageTypes.CRON_JOB_SUMMARY,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to email cron run summary for ${jobName}: ${
+          (err as Error).message
+        }`,
+      );
+    }
+
+    try {
+      await this.notificationService.sendNotification(
+        'SMS',
+        { phoneNumber: opsPhone },
+        MessageTypes.CRON_JOB_SUMMARY,
+        {
+          jobName,
+          sent: result.sent,
+          total: result.total,
+          error: result.error,
+        },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to SMS cron run summary for ${jobName}: ${
+          (err as Error).message
+        }`,
+      );
+    }
   }
 
   async listJobs(): Promise<CronJobConfigEntity[]> {

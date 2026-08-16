@@ -10,11 +10,14 @@ import { AiToolInvocationEntity } from './entities/ai-tool-invocation.entity';
 import { AiWorkflowRunEntity } from './entities/ai-workflow-run.entity';
 import { AiAgentRunEntity } from './entities/ai-agent-run.entity';
 import { AiRagQueryEntity } from './entities/ai-rag-query.entity';
+import { FarmFlockEntity } from './entities/farm-flock.entity';
 import { AiSecurityService } from './services/ai-security.service';
 import { AiRagService } from './services/ai-rag.service';
+import { AiEmbeddingService } from './services/ai-embedding.service';
 import { AiPlatformAnalyticsService } from './services/ai-platform-analytics.service';
 import { AiToolRegistryService } from './services/ai-tool-registry.service';
 import { AyoRouterService } from './services/ayo-router.service';
+import { FarmFlockService } from './services/farm-flock.service';
 import { AyoGatewayController } from './controllers/ayo-gateway.controller';
 import { AdminAiKnowledgeController } from './controllers/admin-ai-knowledge.controller';
 import { AdminAiPlatformController } from './controllers/admin-ai-platform.controller';
@@ -32,6 +35,7 @@ import { AdminAiPlatformController } from './controllers/admin-ai-platform.contr
       OrderEntity,
       UserEntity,
       CreditFacilityRequestEntity,
+      FarmFlockEntity,
     ]),
   ],
   controllers: [
@@ -42,16 +46,20 @@ import { AdminAiPlatformController } from './controllers/admin-ai-platform.contr
   providers: [
     AiSecurityService,
     AiRagService,
+    AiEmbeddingService,
     AiPlatformAnalyticsService,
     AiToolRegistryService,
     AyoRouterService,
+    FarmFlockService,
   ],
   exports: [
     AiSecurityService,
     AiRagService,
+    AiEmbeddingService,
     AiPlatformAnalyticsService,
     AiToolRegistryService,
     AyoRouterService,
+    FarmFlockService,
   ],
 })
 export class AiPlatformModule {}

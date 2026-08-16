@@ -1,5 +1,6 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { SellerInterestService } from './seller-interest.service';
+import { SellerInterestStatus } from './entities/seller-interest.entity';
 
 describe('SellerInterestService', () => {
   const dto = {
@@ -22,7 +23,10 @@ describe('SellerInterestService', () => {
     buffer: Buffer.from([0xff, 0xd8, 0xff, 0x00]),
   } as Express.Multer.File;
 
-  function setup(transactionError?: Error) {
+  function setup(
+    transactionError?: Error,
+    options: { adminEmail?: string } = { adminEmail: 'admin@agrofount.com' },
+  ) {
     const entityRepository = {
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => ({ ...value, createdAt: new Date() })),
@@ -51,7 +55,7 @@ describe('SellerInterestService', () => {
       dispatch: jest.fn(async () => undefined),
     };
     const configService = {
-      get: jest.fn(() => undefined),
+      get: jest.fn(() => options.adminEmail),
     };
     const service = new SellerInterestService(
       repository as any,
@@ -65,6 +69,7 @@ describe('SellerInterestService', () => {
       service,
       dataSource,
       entityRepository,
+      repository,
       uploadService,
       outboxService,
     };
@@ -91,12 +96,22 @@ describe('SellerInterestService', () => {
       }),
     );
     expect(outboxService.create).toHaveBeenCalledTimes(2);
+    expect(outboxService.create.mock.calls[0][0]).toBe('notification.send');
     expect(outboxService.create.mock.calls[0][1]).toEqual(
-      expect.objectContaining({ recipient: { email: dto.email } }),
+      expect.objectContaining({
+        channel: 'EMAIL',
+        recipient: { email: dto.email },
+        messageType: 'SELLER_INTEREST_CONFIRMATION',
+        params: {
+          customer_name: dto.contactName,
+          business_name: dto.businessName,
+          reference: expect.any(String),
+        },
+      }),
     );
     expect(outboxService.create.mock.calls[1][1]).toEqual(
       expect.objectContaining({
-        recipient: { email: 'dayo.akinbami@agrofount.com' },
+        recipient: { email: 'admin@agrofount.com' },
       }),
     );
     expect(outboxService.create.mock.calls[1][1].htmlContent).toContain(
@@ -104,6 +119,21 @@ describe('SellerInterestService', () => {
     );
     expect(outboxService.dispatch).toHaveBeenCalledTimes(2);
     expect(result).toEqual(expect.objectContaining({ email: dto.email }));
+  });
+
+  it('falls back to productName for business_name when businessName is not provided', async () => {
+    const { service, outboxService } = setup();
+    const dtoWithoutBusinessName = { ...dto, businessName: undefined };
+
+    await service.create(dtoWithoutBusinessName as any, [file]);
+
+    expect(outboxService.create.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          business_name: dto.productName,
+        }),
+      }),
+    );
   });
 
   it('requires at least one product sample', async () => {
@@ -125,5 +155,93 @@ describe('SellerInterestService', () => {
       expect.any(String),
       'asset-id',
     );
+  });
+
+  it('skips the admin notification when no admin email is configured', async () => {
+    const { service, outboxService, entityRepository } = setup(undefined, {
+      adminEmail: undefined,
+    });
+
+    await service.create(dto, [file]);
+
+    expect(entityRepository.save).toHaveBeenCalledTimes(1);
+    expect(outboxService.create).toHaveBeenCalledTimes(1);
+    expect(outboxService.create.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ recipient: { email: dto.email } }),
+    );
+    expect(outboxService.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  describe('updateStatus', () => {
+    it('throws when the seller interest does not exist', async () => {
+      const { service, repository } = setup();
+      repository.findOne.mockResolvedValue(undefined);
+
+      await expect(
+        service.updateStatus('missing-id', SellerInterestStatus.Contacted),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('updates the status without emailing on a non-terminal transition', async () => {
+      const { service, repository, outboxService } = setup();
+      const interest = {
+        id: 'interest-1',
+        email: dto.email,
+        contactName: dto.contactName,
+        productName: dto.productName,
+        status: SellerInterestStatus.New,
+      };
+      repository.findOne.mockResolvedValue(interest);
+
+      const result = await service.updateStatus(
+        'interest-1',
+        SellerInterestStatus.Contacted,
+      );
+
+      expect(result.status).toBe(SellerInterestStatus.Contacted);
+      expect(outboxService.create).not.toHaveBeenCalled();
+      expect(outboxService.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('emails the applicant when approved', async () => {
+      const { service, repository, outboxService } = setup();
+      const interest = {
+        id: 'interest-1',
+        email: dto.email,
+        contactName: dto.contactName,
+        productName: dto.productName,
+        status: SellerInterestStatus.New,
+      };
+      repository.findOne.mockResolvedValue(interest);
+
+      const result = await service.updateStatus(
+        'interest-1',
+        SellerInterestStatus.Approved,
+      );
+
+      expect(result.status).toBe(SellerInterestStatus.Approved);
+      expect(outboxService.create).toHaveBeenCalledTimes(1);
+      expect(outboxService.create.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ recipient: { email: dto.email } }),
+      );
+      expect(outboxService.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('emails the applicant when rejected', async () => {
+      const { service, repository, outboxService } = setup();
+      const interest = {
+        id: 'interest-1',
+        email: dto.email,
+        contactName: dto.contactName,
+        productName: dto.productName,
+        status: SellerInterestStatus.New,
+      };
+      repository.findOne.mockResolvedValue(interest);
+
+      await service.updateStatus('interest-1', SellerInterestStatus.Rejected);
+
+      expect(outboxService.create).toHaveBeenCalledTimes(1);
+      expect(outboxService.dispatch).toHaveBeenCalledTimes(1);
+    });
   });
 });

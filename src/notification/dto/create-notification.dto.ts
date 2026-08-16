@@ -22,4 +22,20 @@ export class CreateNotificationDto {
   sender: string;
 
   userId: string;
+
+  campaignId?: string;
+
+  jobName?: string;
+
+  channel?: string;
+
+  status?: string;
+
+  errorMessage?: string;
+
+  failureCategory?: string;
+
+  recipientEmail?: string;
+
+  recipientPhone?: string;
 }

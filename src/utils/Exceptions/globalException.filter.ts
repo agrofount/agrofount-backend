@@ -33,12 +33,33 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       exception instanceof Error ? exception.stack : '',
     );
 
+    const responseBody =
+      exception instanceof HttpException ? exception.getResponse() : undefined;
+    const extra =
+      responseBody &&
+      typeof responseBody === 'object' &&
+      !Array.isArray(responseBody)
+        ? Object.fromEntries(
+            Object.entries(responseBody).filter(
+              ([key]) =>
+                ![
+                  'statusCode',
+                  'message',
+                  'error',
+                  'timestamp',
+                  'path',
+                ].includes(key),
+            ),
+          )
+        : {};
+
     // Send a user-friendly response
     response.status(status).json({
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,
       message,
+      ...extra,
     });
   }
 }

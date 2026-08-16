@@ -48,6 +48,8 @@ import { Throttle } from '@nestjs/throttler';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { SellerInterestService } from './seller-interest.service';
 import { CreateSellerInterestDto } from './dto/create-seller-interest.dto';
+import { UpdateSellerInterestStatusDto } from './dto/update-seller-interest-status.dto';
+import { UpdateSellerInterestNotesDto } from './dto/update-seller-interest-notes.dto';
 import { SellerInterestEntity } from './entities/seller-interest.entity';
 import { SELLER_INTEREST_PAGINATION_CONFIG } from './config/seller-interest-pagination.config';
 
@@ -149,6 +151,35 @@ export class ProductLocationController {
   @ApiOperation({ summary: 'Get a prospective seller submission' })
   findSellerInterest(@Param('id', ParseUUIDPipe) id: string) {
     return this.sellerInterestService.findOne(id);
+  }
+
+  @Patch('seller-interests/:id/status')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_productLocations')
+  @ApiOperation({
+    summary: 'Update the status of a prospective seller submission',
+  })
+  @ApiBody({ type: UpdateSellerInterestStatusDto })
+  updateSellerInterestStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateSellerInterestStatusDto,
+  ) {
+    return this.sellerInterestService.updateStatus(id, dto.status);
+  }
+
+  @Patch('seller-interests/:id/notes')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_productLocations')
+  @ApiOperation({
+    summary:
+      'Update the internal admin notes on a prospective seller submission',
+  })
+  @ApiBody({ type: UpdateSellerInterestNotesDto })
+  updateSellerInterestNotes(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateSellerInterestNotesDto,
+  ) {
+    return this.sellerInterestService.updateNotes(id, dto.notes);
   }
 
   @Get(':slug')

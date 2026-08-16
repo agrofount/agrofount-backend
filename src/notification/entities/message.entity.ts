@@ -33,6 +33,30 @@ export class MessageEntity {
   @Column({ nullable: true })
   message: string;
 
+  @Column({ nullable: true })
+  campaignId: string;
+
+  @Column({ nullable: true })
+  jobName: string;
+
+  @Column({ nullable: true })
+  channel: string;
+
+  @Column({ default: 'SENT' })
+  status: string;
+
+  @Column({ nullable: true, type: 'text' })
+  errorMessage: string;
+
+  @Column({ nullable: true })
+  failureCategory: string;
+
+  @Column({ nullable: true })
+  recipientEmail: string;
+
+  @Column({ nullable: true })
+  recipientPhone: string;
+
   @CreateDateColumn()
   createdAt: Date;
 

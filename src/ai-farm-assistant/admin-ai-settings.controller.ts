@@ -28,7 +28,7 @@ export class AdminAiSettingsController {
   @RequiredPermissions('manage_ai_settings')
   @ApiOperation({
     summary:
-      'Update Ayo AI settings — toggle active state, set budget or token cost rates',
+      'Update Ayo AI settings — toggle active state, switch provider/model, set budget or token cost rates',
   })
   updateSettings(@Body() dto: UpdateAiSettingsDto) {
     return this.aiSettingsService.updateSettings(dto);
