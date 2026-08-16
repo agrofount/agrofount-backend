@@ -26,6 +26,7 @@ import {
 } from '../../leads/lead-insights.util';
 import { CronJobTarget } from '../types/cron-job-target.type';
 import { CronJobMessagePreview } from '../types/cron-job-message-preview.type';
+import { CronJobRunEntity } from '../entities/cron-job-run.entity';
 
 type FarmingTipContent = {
   title: string;
@@ -772,14 +773,12 @@ export class NotificationTriggersJob {
       CronJobName.PENDING_ORDER_REMINDERS,
     );
 
-    // Target orders pending for 24–48 h so each order gets exactly one reminder
-    const cutoffStart = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    const cutoffEnd = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
     try {
       const result = await this.dispatchPendingOrderReminders({
-        cutoffStart,
-        cutoffEnd,
+        cutoffStart:
+          NotificationTriggersJob.PENDING_ORDER_REMINDER_WINDOW.cutoffStart(),
+        cutoffEnd:
+          NotificationTriggersJob.PENDING_ORDER_REMINDER_WINDOW.cutoffEnd(),
       });
       await this.cronMonitor.finishRun(run, result);
     } catch (err) {
@@ -822,18 +821,25 @@ export class NotificationTriggersJob {
       ]);
 
     if (filter.orderIds?.length) {
+      // Explicit admin action (manual trigger/retry) — send to exactly these
+      // orders regardless of whether a reminder was already sent.
       qb.andWhere('order.id IN (:...orderIds)', { orderIds: filter.orderIds });
     } else {
+      // Automatic daily discovery: pending for at least 24h (give the
+      // customer a day before nudging), capped at 7 days (older than that,
+      // a reminder is unlikely to help and starts to feel stale), and never
+      // reminded before — this is what makes the window safe to widen
+      // without reminding the same order every day.
       qb.andWhere('order.createdAt BETWEEN :start AND :end', {
         start: filter.cutoffStart,
         end: filter.cutoffEnd,
-      });
+      }).andWhere('order.pendingReminderSentAt IS NULL');
     }
     return qb;
   }
 
   private static readonly PENDING_ORDER_REMINDER_WINDOW = {
-    cutoffStart: () => new Date(Date.now() - 48 * 60 * 60 * 1000),
+    cutoffStart: () => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
     cutoffEnd: () => new Date(Date.now() - 24 * 60 * 60 * 1000),
   };
 
@@ -857,7 +863,7 @@ export class NotificationTriggersJob {
           : `Order ${order.code}`,
         email: order.user?.email,
         phone: order.user?.phone,
-        reason: 'Order pending payment for 24-48h',
+        reason: 'Order pending payment, not yet reminded',
       }));
   }
 
@@ -1007,6 +1013,17 @@ export class NotificationTriggersJob {
             { jobName: CronJobName.PENDING_ORDER_REMINDERS },
           );
         }
+
+        // Only mark on success — a failed send leaves the order eligible to
+        // be picked up again (by the next day's run, or an explicit retry)
+        // instead of being permanently skipped.
+        await this.dataSource
+          .createQueryBuilder()
+          .update(OrderEntity)
+          .set({ pendingReminderSentAt: new Date() })
+          .where('id = :id', { id: order.id })
+          .execute();
+
         sent++;
       } catch (err) {
         this.logger.warn(
@@ -1662,10 +1679,42 @@ export class NotificationTriggersJob {
     }
   }
 
+  // A retry can touch anywhere from a handful to thousands of recipients —
+  // sequential provider calls for that many people can take minutes, far
+  // past any HTTP/proxy timeout. So this only *starts* the retry (tracked
+  // via CronMonitorService, same as a real scheduled run) and returns
+  // immediately; the actual sending happens in the background and the
+  // result shows up in the job's run history a moment later.
+  async retryFailedForJob(jobName: CronJobName): Promise<{ started: true }> {
+    const run = await this.cronMonitor.startRun(jobName);
+    this.executeRetryFailedForJob(jobName, run).catch((err) => {
+      this.logger.error(
+        `Retry-failed crashed for ${jobName}: ${(err as Error).message}`,
+      );
+    });
+    return { started: true };
+  }
+
+  private async executeRetryFailedForJob(
+    jobName: CronJobName,
+    run: CronJobRunEntity,
+  ): Promise<void> {
+    try {
+      const result = await this.doRetryFailedForJob(jobName);
+      await this.cronMonitor.finishRun(run, result);
+    } catch (err) {
+      await this.cronMonitor.finishRun(run, {
+        sent: 0,
+        total: 0,
+        error: (err as Error).message,
+      });
+    }
+  }
+
   // Resends only to users whose most recent message for this job currently
   // shows FAILED — a successful retry naturally drops them out of that set,
   // so there's no separate "already retried" bookkeeping to maintain.
-  async retryFailedForJob(
+  private async doRetryFailedForJob(
     jobName: CronJobName,
   ): Promise<{ sent: number; total: number }> {
     const failedUserIds = await this.notificationService.getFailedRecipientIds(
@@ -1719,10 +1768,48 @@ export class NotificationTriggersJob {
       .map((order) => order.id);
   }
 
+  // Same "start and return immediately, track via run history" reasoning as
+  // retryFailedForJob — a "full audience" manual run can hit thousands of
+  // recipients and must not block the request that triggered it.
+  async runJobNowForContactFilter(
+    jobName: CronJobName,
+    contactFilter?: 'EMAIL_ONLY' | 'PHONE_ONLY',
+  ): Promise<{ started: true }> {
+    const run = await this.cronMonitor.startRun(jobName);
+    this.executeRunJobNowForContactFilter(jobName, contactFilter, run).catch(
+      (err) => {
+        this.logger.error(
+          `Run-now crashed for ${jobName}: ${(err as Error).message}`,
+        );
+      },
+    );
+    return { started: true };
+  }
+
+  private async executeRunJobNowForContactFilter(
+    jobName: CronJobName,
+    contactFilter: 'EMAIL_ONLY' | 'PHONE_ONLY' | undefined,
+    run: CronJobRunEntity,
+  ): Promise<void> {
+    try {
+      const result = await this.doRunJobNowForContactFilter(
+        jobName,
+        contactFilter,
+      );
+      await this.cronMonitor.finishRun(run, result);
+    } catch (err) {
+      await this.cronMonitor.finishRun(run, {
+        sent: 0,
+        total: 0,
+        error: (err as Error).message,
+      });
+    }
+  }
+
   // Manually runs a job right now against a filtered slice of its normal
   // audience — reuses the exact same candidate queries and "send to
   // targets" methods retry uses, so both share one mechanism.
-  async runJobNowForContactFilter(
+  private async doRunJobNowForContactFilter(
     jobName: CronJobName,
     contactFilter?: 'EMAIL_ONLY' | 'PHONE_ONLY',
   ): Promise<{ sent: number; total: number }> {

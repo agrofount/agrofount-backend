@@ -16,18 +16,25 @@ describe('NotificationController', () => {
         sampleTarget: { name: 'Amina', email: 'a@example.com' },
         usedFallbackSample: false,
       }),
-      retryFailedForJob: jest.fn().mockResolvedValue({ sent: 0, total: 0 }),
-      runJobNowForContactFilter: jest
+      retryFailedForJob: jest.fn().mockResolvedValue({ started: true }),
+      runJobNowForContactFilter: jest.fn().mockResolvedValue({ started: true }),
+    };
+    const campaignProcessor = {
+      testSend: jest
         .fn()
-        .mockResolvedValue({ sent: 0, total: 0 }),
+        .mockResolvedValue([{ channel: 'EMAIL', success: true }]),
+      testSendDraft: jest
+        .fn()
+        .mockResolvedValue([{ channel: 'EMAIL', success: true }]),
     };
     const controller = new NotificationController(
       notificationService as any,
       campaignService as any,
       cronMonitorService as any,
       triggersJob as any,
+      campaignProcessor as any,
     );
-    return { controller, notificationService, triggersJob };
+    return { controller, notificationService, triggersJob, campaignProcessor };
   }
 
   describe('getCronJobRecipients', () => {
@@ -121,9 +128,8 @@ describe('NotificationController', () => {
   });
 
   describe('retryFailedForJob', () => {
-    it('delegates to the job for a supported cron job', async () => {
+    it('delegates to the job for a supported cron job, returning immediately', async () => {
       const { controller, triggersJob } = setup();
-      triggersJob.retryFailedForJob.mockResolvedValue({ sent: 2, total: 2 });
 
       const result = await controller.retryFailedForJob(
         CronJobName.LOGIN_INACTIVITY_REMINDERS,
@@ -132,7 +138,7 @@ describe('NotificationController', () => {
       expect(triggersJob.retryFailedForJob).toHaveBeenCalledWith(
         CronJobName.LOGIN_INACTIVITY_REMINDERS,
       );
-      expect(result).toEqual({ sent: 2, total: 2 });
+      expect(result).toEqual({ started: true });
     });
 
     it('rejects an unknown job name', async () => {
@@ -151,12 +157,8 @@ describe('NotificationController', () => {
   });
 
   describe('runCronJobNow', () => {
-    it('delegates to the job with the given contact filter', async () => {
+    it('delegates to the job with the given contact filter, returning immediately', async () => {
       const { controller, triggersJob } = setup();
-      triggersJob.runJobNowForContactFilter.mockResolvedValue({
-        sent: 1,
-        total: 1,
-      });
 
       const result = await controller.runCronJobNow(
         CronJobName.LOGIN_INACTIVITY_REMINDERS,
@@ -167,7 +169,7 @@ describe('NotificationController', () => {
         CronJobName.LOGIN_INACTIVITY_REMINDERS,
         'PHONE_ONLY',
       );
-      expect(result).toEqual({ sent: 1, total: 1 });
+      expect(result).toEqual({ started: true });
     });
 
     it('rejects an invalid contactFilter value', async () => {
@@ -191,6 +193,81 @@ describe('NotificationController', () => {
       await expect(
         controller.runCronJobNow(CronJobName.VACCINATION_DUE_REMINDERS, {}),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('testSendCampaign', () => {
+    it('delegates to the campaign processor with the given email', async () => {
+      const { controller, campaignProcessor } = setup();
+
+      const result = await controller.testSendCampaign('campaign-1', {
+        email: 'a@example.com',
+      });
+
+      expect(campaignProcessor.testSend).toHaveBeenCalledWith('campaign-1', {
+        email: 'a@example.com',
+      });
+      expect(result).toEqual([{ channel: 'EMAIL', success: true }]);
+    });
+
+    it('rejects a body with neither email nor phone', () => {
+      const { controller, campaignProcessor } = setup();
+
+      expect(() => controller.testSendCampaign('campaign-1', {})).toThrow(
+        BadRequestException,
+      );
+      expect(campaignProcessor.testSend).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('testSendCampaignDraft', () => {
+    it('delegates unsaved compose-form content to the campaign processor', async () => {
+      const { controller, campaignProcessor } = setup();
+
+      const result = await controller.testSendCampaignDraft({
+        title: 'Hi there',
+        message: 'Check out our new feed',
+        ctaText: 'Shop Now',
+        ctaLink: 'https://agrofount.com',
+        email: 'admin@example.com',
+      });
+
+      expect(campaignProcessor.testSendDraft).toHaveBeenCalledWith(
+        {
+          title: 'Hi there',
+          message: 'Check out our new feed',
+          ctaText: 'Shop Now',
+          ctaLink: 'https://agrofount.com',
+          emailContent: undefined,
+          audienceType: undefined,
+        },
+        { email: 'admin@example.com', phone: undefined },
+      );
+      expect(result).toEqual([{ channel: 'EMAIL', success: true }]);
+    });
+
+    it('rejects a body missing title or message', () => {
+      const { controller, campaignProcessor } = setup();
+
+      expect(() =>
+        controller.testSendCampaignDraft({
+          message: 'Check out our new feed',
+          email: 'admin@example.com',
+        }),
+      ).toThrow(BadRequestException);
+      expect(campaignProcessor.testSendDraft).not.toHaveBeenCalled();
+    });
+
+    it('rejects a body with neither email nor phone', () => {
+      const { controller, campaignProcessor } = setup();
+
+      expect(() =>
+        controller.testSendCampaignDraft({
+          title: 'Hi there',
+          message: 'Check out our new feed',
+        }),
+      ).toThrow(BadRequestException);
+      expect(campaignProcessor.testSendDraft).not.toHaveBeenCalled();
     });
   });
 });
