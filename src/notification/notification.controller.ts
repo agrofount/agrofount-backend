@@ -22,6 +22,7 @@ import { AdminAuthGuard } from '../auth/guards/admin.guard';
 import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CampaignService } from './services/campaign.service';
+import { CampaignProcessor } from './processors/campaign.processor';
 import { CronMonitorService } from './services/cron-monitor.service';
 import { NotificationTriggersJob } from './jobs/notification-triggers.job';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
@@ -41,6 +42,7 @@ export class NotificationController {
     private readonly campaignService: CampaignService,
     private readonly cronMonitorService: CronMonitorService,
     private readonly triggersJob: NotificationTriggersJob,
+    private readonly campaignProcessor: CampaignProcessor,
   ) {}
 
   // ── Campaign endpoints (must be before :id to avoid route shadowing) ────
@@ -80,6 +82,48 @@ export class NotificationController {
     );
   }
 
+  @Post('campaign/test-send')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      'Send a one-off test copy of unsaved campaign content to a single email/phone, before creating the campaign',
+  })
+  testSendCampaignDraft(
+    @Body()
+    body: {
+      title?: string;
+      message?: string;
+      ctaText?: string;
+      ctaLink?: string;
+      emailContent?: string;
+      audienceType?: CampaignAudienceType;
+      email?: string;
+      phone?: string;
+    },
+  ) {
+    if (!body?.title || !body?.message) {
+      throw new BadRequestException(
+        'title and message are required to test-send',
+      );
+    }
+    if (!body?.email && !body?.phone) {
+      throw new BadRequestException(
+        'Provide an email or a phone number to test-send to',
+      );
+    }
+    return this.campaignProcessor.testSendDraft(
+      {
+        title: body.title,
+        message: body.message,
+        ctaText: body.ctaText,
+        ctaLink: body.ctaLink,
+        emailContent: body.emailContent,
+        audienceType: body.audienceType,
+      },
+      { email: body.email, phone: body.phone },
+    );
+  }
+
   @Get('campaign/:id')
   @UseGuards(JwtAuthGuard, AdminAuthGuard)
   @ApiOperation({ summary: 'Get a single campaign' })
@@ -97,6 +141,24 @@ export class NotificationController {
     @Query() query: PaginateQuery,
   ) {
     return this.notificationService.listRecipients({ campaignId: id }, query);
+  }
+
+  @Post('campaign/:id/test-send')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      'Send a one-off test copy of this campaign to a single email/phone, before sending to the real audience',
+  })
+  testSendCampaign(
+    @Param('id') id: string,
+    @Body() body: { email?: string; phone?: string },
+  ) {
+    if (!body?.email && !body?.phone) {
+      throw new BadRequestException(
+        'Provide an email or a phone number to test-send to',
+      );
+    }
+    return this.campaignProcessor.testSend(id, body);
   }
 
   // ── Cron job admin endpoints ─────────────────────────────────────────────

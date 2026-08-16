@@ -1,5 +1,5 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { CampaignService } from '../services/campaign.service';
 import { NotificationService } from '../notification.service';
@@ -18,6 +18,28 @@ import { renderTemplate } from '../utils/render-template.util';
 // token, no websocket session), so IN_APP/PUSH are structurally
 // inapplicable, not just missing contact info.
 const LEAD_CAPABLE_CHANNELS = new Set(['EMAIL', 'SMS']);
+
+// Sample personalization values for a test-send, so an admin previewing a
+// lead campaign's {{tokens}} sees realistic-looking content rather than
+// blank substitutions — this is a one-off address, not a real lead record.
+const TEST_SEND_VARIABLES: Record<string, string> = {
+  name: 'Test User',
+  state: 'Lagos',
+  statedInterest: 'poultry feed',
+  isNewFarmer: 'Yes',
+};
+
+// Minimal shape a test-send needs — deliberately not the full
+// NotificationCampaignEntity, so unsaved compose-form content (no id, no
+// audience/channels yet) can be tested before the campaign is ever created.
+export type CampaignDraftContent = {
+  title: string;
+  message: string;
+  ctaText?: string;
+  ctaLink?: string;
+  emailContent?: string;
+  audienceType?: CampaignAudienceType;
+};
 
 function leadTemplateVariables(lead: LeadEntity): Record<string, string> {
   const insights = extractLeadInsights(lead.customFields);
@@ -106,6 +128,98 @@ export class CampaignProcessor extends WorkerHost {
     this.logger.log(
       `Campaign ${campaignId} complete: ${totalDelivered}/${totalSent} delivered`,
     );
+  }
+
+  // Sends a one-off copy of this campaign to a single email/phone, reusing
+  // the exact same content-building helpers as a real send (buildEmailHtml,
+  // appendCtaToSmsMessage, lead-token rendering) so what the admin previews
+  // can't drift from what a real recipient would get. Deliberately does not
+  // go through `isDuplicateDelivery`/get recorded against `campaignId` —
+  // a test send must never mark the real audience as "already sent" and
+  // skip them once the actual campaign goes out.
+  async testSend(
+    campaignId: string,
+    target: { email?: string; phone?: string },
+  ): Promise<{ channel: string; success: boolean; error?: string }[]> {
+    const campaign = await this.campaignService.findOne(campaignId);
+    return this.testSendContent(campaign, target);
+  }
+
+  // Same test-send, but for content that hasn't been saved as a campaign
+  // yet — the compose form's "Send Test" action happens before the admin
+  // hits the real create/send button, so there's no campaignId to look up.
+  async testSendDraft(
+    draft: CampaignDraftContent,
+    target: { email?: string; phone?: string },
+  ): Promise<{ channel: string; success: boolean; error?: string }[]> {
+    return this.testSendContent(draft, target);
+  }
+
+  private async testSendContent(
+    campaign: CampaignDraftContent,
+    target: { email?: string; phone?: string },
+  ): Promise<{ channel: string; success: boolean; error?: string }[]> {
+    if (!target.email && !target.phone) {
+      throw new BadRequestException(
+        'Provide an email or a phone number to test-send to',
+      );
+    }
+
+    const isLeadAudience = campaign.audienceType === CampaignAudienceType.Leads;
+    const variables = isLeadAudience ? TEST_SEND_VARIABLES : {};
+    const title = isLeadAudience
+      ? renderTemplate(campaign.title, variables) || campaign.title
+      : campaign.title;
+    const message = isLeadAudience
+      ? renderTemplate(campaign.message, variables)
+      : campaign.message;
+
+    const results: { channel: string; success: boolean; error?: string }[] = [];
+
+    if (target.email) {
+      try {
+        await this.notificationService.sendCustomEmail(
+          { userId: 'test-send', email: target.email },
+          title,
+          this.buildEmailHtml({
+            ...campaign,
+            title,
+            message,
+            emailContent:
+              isLeadAudience && campaign.emailContent
+                ? renderTemplate(campaign.emailContent, variables)
+                : campaign.emailContent,
+          }),
+          message,
+          MessageTypes.CAMPAIGN_NOTIFICATION,
+          { channel: 'EMAIL' },
+        );
+        results.push({ channel: 'EMAIL', success: true });
+      } catch (error) {
+        results.push({
+          channel: 'EMAIL',
+          success: false,
+          error: error?.message || String(error),
+        });
+      }
+    }
+
+    if (target.phone) {
+      const smsResult = await this.notificationService.sendSmsForCampaign(
+        target.phone,
+        'test-send',
+        this.appendCtaToSmsMessage(message, campaign),
+        {},
+      );
+      const failed = smsResult?.success === false;
+      results.push({
+        channel: 'SMS',
+        success: !failed,
+        error: failed ? smsResult.error : undefined,
+      });
+    }
+
+    return results;
   }
 
   private async sendToLeadRecipient(
@@ -419,7 +533,14 @@ export class CampaignProcessor extends WorkerHost {
     return `${message} ${label}${campaign.ctaLink}`.trim();
   }
 
-  private buildEmailHtml(campaign: NotificationCampaignEntity): string {
+  private buildEmailHtml(campaign: {
+    title: string;
+    message: string;
+    ctaText?: string;
+    ctaLink?: string;
+    bannerImageUrl?: string;
+    emailContent?: string;
+  }): string {
     if (campaign.emailContent) return campaign.emailContent;
 
     const banner = campaign.bannerImageUrl

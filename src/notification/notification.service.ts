@@ -26,7 +26,7 @@ import {
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { TermiiConfig } from '../config/termii.config';
+import { AfricasTalkingConfig } from '../config/africastalking.config';
 import { lastValueFrom } from 'rxjs';
 import { OrderEntity } from '../order/entities/order.entity';
 import { TeamsService } from './services/teams.service';
@@ -503,7 +503,9 @@ export class NotificationService {
     params: Record<string, any> = {},
     options?: { campaignId?: string; jobName?: string },
   ) {
-    const { sender_id } = this.configService.get<TermiiConfig>('termii');
+    const { sender_id } =
+      this.configService.get<AfricasTalkingConfig>('africasTalking');
+    const smsSender = sender_id || 'Agrofount';
 
     if (!recipient) {
       throw new BadGatewayException(
@@ -519,7 +521,7 @@ export class NotificationService {
       return this.recordDelivery({
         messageType,
         userId: params.userId,
-        sender: sender_id,
+        sender: smsSender,
         message,
         channel: 'SMS',
         recipientPhone: recipient,
@@ -536,16 +538,13 @@ export class NotificationService {
     // Determine the message content based on the message type
     switch (messageType) {
       case MessageTypes.SEND_OTP:
-        const otpRes = await this.sendOTP(recipient);
+        const otpRes = await this.sendOTP(recipient, params.otp);
         await recordSms(undefined, otpRes);
 
         return otpRes;
 
       case MessageTypes.VERIFY_PHONE_OTP:
-        const res = await this.verifyOTP(params.pinId, params.otp);
-        await recordSms(undefined, res);
-
-        return res;
+        return { verified: false };
 
       case MessageTypes.NEW_VOUCHER:
         const voucherMessage = `Your voucher code is ${params.voucher_code}. Amount: ${params.amount}. Valid for 30 days.`;
@@ -662,40 +661,42 @@ export class NotificationService {
     message: string,
     recipient: string,
   ): Promise<any> {
-    const { base_url, api_key, sender_id } =
-      this.configService.get<TermiiConfig>('termii');
+    const { base_url, api_key, username, sender_id } =
+      this.configService.get<AfricasTalkingConfig>('africasTalking');
     try {
-      const payload = {
-        api_key,
-        message_type: 'TRANSACTIONAL',
+      const payload = new URLSearchParams({
+        username,
         to: recipient,
-        from: sender_id,
-        channel: 'dnd',
-        message_text: message,
-        sms: message,
-      };
+        message,
+      });
+      if (sender_id) payload.set('from', sender_id);
 
       const response = await lastValueFrom(
-        this.httpService.post(`${base_url}/sms/send`, payload),
+        this.httpService.post(`${base_url}/messaging`, payload.toString(), {
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            apiKey: api_key,
+          },
+        }),
       );
 
-      return response.data;
+      return this.normalizeAfricasTalkingSmsResponse(response.data);
     } catch (error: any) {
-      // Log the error for debugging purposes
       if (error.response) {
-        console.error('Termii API Error Response:', error.response.data);
+        console.error(
+          "Africa's Talking API Error Response:",
+          error.response.data,
+        );
       } else if (error.request) {
-        console.error('No response received from Termii API:', error.request);
+        console.error(
+          "No response received from Africa's Talking API:",
+          error.request,
+        );
       } else {
-        console.error('Error sending SMS via Termii:', error.message);
+        console.error("Error sending SMS via Africa's Talking:", error.message);
       }
 
-      // Return a failure response instead of throwing an exception. Include
-      // the response body detail (previously only console.logged) so
-      // callers can classify the failure instead of seeing a generic
-      // "Unknown error" — Termii's exact field names for e.g. an
-      // insufficient-balance condition aren't verified against their live
-      // API, so this is passed through as-is rather than parsed further.
       const responseDetail = error.response?.data
         ? JSON.stringify(error.response.data)
         : undefined;
@@ -708,81 +709,33 @@ export class NotificationService {
     }
   }
 
-  private async sendOTP(recipient: string) {
-    const { base_url, api_key, sender_id } =
-      this.configService.get<TermiiConfig>('termii');
-    try {
-      // Replace this with your SMS provider's API call
-      const payload = {
-        api_key,
-        message_type: 'NUMERIC',
-        to: recipient,
-        from: sender_id,
-        channel: 'dnd',
-        pin_attempts: 5,
-        pin_time_to_live: 10,
-        pin_length: 6,
-        pin_type: 'NUMERIC',
-        pin_placeholder: '< 1234 >',
-        message_text:
-          'Agrofount Verification pin is < 1234 >. It expires in 30 mins',
-      };
-
-      const response = await lastValueFrom(
-        this.httpService.post(`${base_url}/sms/otp/send`, payload),
-      );
-
-      return response.data;
-    } catch (error) {
-      // Log the error for debugging purposes
-      if (error.response) {
-        console.error('Termii API Error Response:', error.response.data);
-      } else if (error.request) {
-        console.error('No response received from Termii API:', error.request);
-      } else {
-        console.error('Error sending SMS via Termii:', error.message);
-      }
-
-      // Return a failure response instead of throwing an exception
+  private async sendOTP(recipient: string, otp: string) {
+    if (!otp) {
       return {
         success: false,
-        error: error.message || 'Unknown error occurred',
+        error: 'OTP value is required',
       };
     }
+
+    return this.sendSmsMessage(
+      `Agrofount verification code is ${otp}. It expires in 10 minutes.`,
+      recipient,
+    );
   }
 
-  private async verifyOTP(pinId: string, otp: string) {
-    const { base_url, api_key } =
-      this.configService.get<TermiiConfig>('termii');
-    try {
-      // Replace this with your SMS provider's API call
-      const payload = {
-        api_key,
-        pin_id: pinId,
-        pin: otp,
-      };
+  private normalizeAfricasTalkingSmsResponse(response: any) {
+    const recipients = response?.SMSMessageData?.Recipients;
+    const failedRecipient = Array.isArray(recipients)
+      ? recipients.find((recipient) =>
+          /fail|reject|invalid/i.test(String(recipient?.status ?? '')),
+        )
+      : undefined;
 
-      const response = await lastValueFrom(
-        this.httpService.post(`${base_url}/sms/otp/verify`, payload),
-      );
-
-      return response.data;
-    } catch (error) {
-      // Log the error for debugging purposes
-      if (error.response) {
-        console.error('Termii API Error Response:', error.response.data);
-      } else if (error.request) {
-        console.error('No response received from Termii API:', error.request);
-      } else {
-        console.error('Error sending SMS via Termii:', error.message);
-      }
-
-      // Return a failure response instead of throwing an exception
-      return {
-        success: false,
-        error: error.message || 'Unknown error occurred',
-      };
-    }
+    return {
+      ...response,
+      success: !failedRecipient,
+      error: failedRecipient?.status,
+    };
   }
 
   async sendSmsForCampaign(

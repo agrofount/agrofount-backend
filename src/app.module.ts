@@ -31,7 +31,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { BlogModule } from './blog/blog.module';
 import { InvoiceModule } from './invoice/invoice.module';
 import { VoucherModule } from './voucher/voucher.module';
-import termiiConfig from './config/termii.config';
+import africasTalkingConfig from './config/africastalking.config';
 // import { AiChatModule } from './ai-chat/ai-chat.module';
 import { DisbursementModule } from './disbursement/disbursement.module';
 import { SupplyChainModule } from './supply-chain/supply-chain.module';
@@ -55,7 +55,7 @@ import { BullModule } from '@nestjs/bullmq';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      load: [databaseConfig, appConfig, termiiConfig],
+      load: [databaseConfig, appConfig, africasTalkingConfig],
       isGlobal: true,
       cache: true,
       validate: validateEnvironment,

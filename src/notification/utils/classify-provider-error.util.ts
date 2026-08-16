@@ -1,6 +1,6 @@
 import { FailureCategory } from '../types/notification.type';
 
-// Brevo's and Termii's exact error-response field names for an "insufficient
+// Brevo and SMS providers use different error-response field names for an "insufficient
 // balance" condition aren't verified against their live APIs — rather than
 // hardcode a guess that could be wrong, this looks for common wording in
 // whatever error text we can capture and defaults to a generic provider

@@ -143,6 +143,12 @@ export class OrderEntity {
   @Column({ nullable: true })
   updatedById: string;
 
+  // Set once the pending-order reminder has actually been sent for this
+  // order, so it's never reminded twice regardless of how wide the
+  // reminder job's targeting window is.
+  @Column({ type: 'timestamp', nullable: true })
+  pendingReminderSentAt: Date;
+
   @CreateDateColumn()
   createdAt: Date;
 

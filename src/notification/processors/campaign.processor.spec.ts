@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { CampaignProcessor } from './campaign.processor';
 import { CampaignAudienceType } from '../entities/notification-campaign.entity';
 import { MessageTypes } from '../types/notification.type';
@@ -274,5 +275,134 @@ describe('CampaignProcessor', () => {
       MessageTypes.CAMPAIGN_NOTIFICATION,
       { campaignId: 'campaign-1', channel: 'EMAIL' },
     );
+  });
+
+  describe('testSend', () => {
+    it('sends the rendered content to a single email, tagged without a campaignId', async () => {
+      const { processor, notificationService, campaignService } = setup();
+      campaignService.findOne.mockResolvedValue({
+        ...baseCampaign,
+        ctaText: 'Get Started',
+        ctaLink: 'https://agrofount.com/register',
+      });
+
+      const result = await processor.testSend('campaign-1', {
+        email: 'admin@example.com',
+      });
+
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+        { userId: 'test-send', email: 'admin@example.com' },
+        'Hi Test User',
+        expect.any(String),
+        expect.stringContaining('poultry feed'),
+        MessageTypes.CAMPAIGN_NOTIFICATION,
+        { channel: 'EMAIL' },
+      );
+      expect(result).toEqual([{ channel: 'EMAIL', success: true }]);
+    });
+
+    it('appends the CTA and sends to a single phone number', async () => {
+      const { processor, notificationService, campaignService } = setup();
+      campaignService.findOne.mockResolvedValue({
+        ...baseCampaign,
+        ctaText: 'Get Started',
+        ctaLink: 'https://agrofount.com/register',
+      });
+
+      const result = await processor.testSend('campaign-1', {
+        phone: '+2348012345678',
+      });
+
+      expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
+        '+2348012345678',
+        'test-send',
+        expect.stringContaining('Get Started: https://agrofount.com/register'),
+        {},
+      );
+      expect(result).toEqual([{ channel: 'SMS', success: true }]);
+    });
+
+    it('does not personalize with lead tokens when the campaign audience is Users', async () => {
+      const { processor, notificationService, campaignService } = setup();
+      campaignService.findOne.mockResolvedValue({
+        ...baseCampaign,
+        audienceType: CampaignAudienceType.Users,
+      });
+
+      await processor.testSend('campaign-1', { email: 'admin@example.com' });
+
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+        expect.any(Object),
+        'Hi {{name}}',
+        expect.any(String),
+        'You told us you want {{statedInterest}} in {{state}}.',
+        MessageTypes.CAMPAIGN_NOTIFICATION,
+        { channel: 'EMAIL' },
+      );
+    });
+
+    it('reports a failed channel without throwing, when the other channel is also requested', async () => {
+      const { processor, campaignService } = setup({
+        notificationService: {
+          sendCustomEmail: jest.fn().mockRejectedValue(new Error('Brevo down')),
+        },
+      });
+      campaignService.findOne.mockResolvedValue(baseCampaign);
+
+      const result = await processor.testSend('campaign-1', {
+        email: 'admin@example.com',
+        phone: '+2348012345678',
+      });
+
+      expect(result).toEqual([
+        { channel: 'EMAIL', success: false, error: 'Brevo down' },
+        { channel: 'SMS', success: true },
+      ]);
+    });
+
+    it('rejects when neither email nor phone is given', async () => {
+      const { processor, campaignService } = setup();
+      campaignService.findOne.mockResolvedValue(baseCampaign);
+
+      await expect(processor.testSend('campaign-1', {})).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('testSendDraft', () => {
+    it('sends unsaved compose-form content without looking up a campaign', async () => {
+      const { processor, notificationService, campaignService } = setup();
+
+      const result = await processor.testSendDraft(
+        {
+          title: 'Hi {{name}}',
+          message: 'You told us you want {{statedInterest}} in {{state}}.',
+          ctaText: 'Get Started',
+          ctaLink: 'https://agrofount.com/register',
+          audienceType: CampaignAudienceType.Leads,
+        },
+        { email: 'admin@example.com' },
+      );
+
+      expect(campaignService.findOne).not.toHaveBeenCalled();
+      expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+        { userId: 'test-send', email: 'admin@example.com' },
+        'Hi Test User',
+        expect.any(String),
+        expect.stringContaining('poultry feed'),
+        MessageTypes.CAMPAIGN_NOTIFICATION,
+        { channel: 'EMAIL' },
+      );
+      expect(result).toEqual([{ channel: 'EMAIL', success: true }]);
+    });
+
+    it('rejects draft content with neither email nor phone', async () => {
+      const { processor } = setup();
+
+      await expect(
+        processor.testSendDraft({ title: 'Hi', message: 'Body' }, {}),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 });
