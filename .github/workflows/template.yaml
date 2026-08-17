@@ -216,6 +216,69 @@ jobs:
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
 
+      - name: Diagnose failed ECS deployment
+        if: failure()
+        run: |
+          echo "::group::Recent ECS service events"
+          aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ inputs.service }} \
+            --query 'services[0].events[0:15].[createdAt,message]' \
+            --output table || true
+          echo "::endgroup::"
+
+          echo "::group::Recent stopped service tasks"
+          TASK_ARNS=$(aws ecs list-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ inputs.service }} \
+            --desired-status STOPPED \
+            --max-items 5 \
+            --query 'taskArns' \
+            --output text || true)
+
+          if [ -n "$TASK_ARNS" ] && [ "$TASK_ARNS" != "None" ]; then
+            aws ecs describe-tasks \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --tasks $TASK_ARNS \
+              --query 'tasks[].{taskArn:taskArn,lastStatus:lastStatus,stoppedReason:stoppedReason,containers:containers[].{name:name,lastStatus:lastStatus,exitCode:exitCode,reason:reason}}' \
+              --output json || true
+          else
+            echo "No recently stopped tasks found for ${{ inputs.service }}"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Recent container logs"
+          LOG_GROUP=$(jq -r \
+            '.containerDefinitions[] | select(.name == "${{ inputs.container-name }}") | .logConfiguration.options["awslogs-group"] // empty' \
+            "${{ steps.task-def.outputs.task-definition }}")
+          LOG_PREFIX=$(jq -r \
+            '.containerDefinitions[] | select(.name == "${{ inputs.container-name }}") | .logConfiguration.options["awslogs-stream-prefix"] // empty' \
+            "${{ steps.task-def.outputs.task-definition }}")
+
+          if [ -n "$LOG_GROUP" ] && [ -n "$LOG_PREFIX" ]; then
+            LOG_STREAMS=$(aws logs describe-log-streams \
+              --log-group-name "$LOG_GROUP" \
+              --log-stream-name-prefix "$LOG_PREFIX/${{ inputs.container-name }}" \
+              --order-by LastEventTime \
+              --descending \
+              --max-items 3 \
+              --query 'logStreams[].logStreamName' \
+              --output text || true)
+
+            for LOG_STREAM in $LOG_STREAMS; do
+              echo "---- $LOG_STREAM ----"
+              aws logs get-log-events \
+                --log-group-name "$LOG_GROUP" \
+                --log-stream-name "$LOG_STREAM" \
+                --limit 80 \
+                --query 'events[].message' \
+                --output text || true
+            done
+          else
+            echo "No awslogs configuration found in rendered task definition"
+          fi
+          echo "::endgroup::"
+
       - name: Seed career positions
         run: |
           TASK_DEFINITION=$(aws ecs describe-services \
