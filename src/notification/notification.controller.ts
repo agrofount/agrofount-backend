@@ -202,6 +202,33 @@ export class NotificationController {
     return this.triggersJob.sendReminderForOrders(orderIds);
   }
 
+  @Post('cron-jobs/unverified-account-reminders/test')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      'Send an unverified account reminder to one specific email or phone number (test/manual trigger)',
+  })
+  testUnverifiedAccountReminder(
+    @Body() body: { email?: string; phone?: string },
+  ) {
+    const email = body?.email?.trim();
+    const phone = body?.phone?.trim();
+
+    if (!email && !phone) {
+      throw new BadRequestException(
+        'Provide an email or a phone number to test-send to',
+      );
+    }
+
+    if (email && phone) {
+      throw new BadRequestException(
+        'Provide either email or phone, not both, for a single-recipient test',
+      );
+    }
+
+    return this.triggersJob.sendUnverifiedReminderForContact({ email, phone });
+  }
+
   @Get('cron-jobs/:name/runs')
   @UseGuards(JwtAuthGuard, AdminAuthGuard)
   @ApiOperation({ summary: 'Get run history for a cron job' })

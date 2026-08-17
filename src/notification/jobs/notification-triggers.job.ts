@@ -606,6 +606,45 @@ export class NotificationTriggersJob {
     return { sent, total: users.length };
   }
 
+  async sendUnverifiedReminderForContact(contact: {
+    email?: string;
+    phone?: string;
+  }): Promise<{ sent: number; total: number }> {
+    const qb = this.dataSource
+      .createQueryBuilder(UserEntity, 'user')
+      .where('user.isVerified = false')
+      .andWhere('user.deletedAt IS NULL')
+      .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
+      .limit(1);
+
+    if (contact.email) {
+      qb.andWhere('LOWER(user.email) = LOWER(:email)', {
+        email: contact.email.trim(),
+      });
+    } else {
+      qb.andWhere('user.phone = :phone', { phone: contact.phone?.trim() });
+    }
+
+    const users = await qb.getMany();
+    let sent = 0;
+
+    for (const user of users) {
+      if (!user.email && !user.phone) continue;
+      try {
+        await this.dispatchUnverifiedReminder(user);
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Unverified reminder (admin test) failed for user ${user.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+
+    return { sent, total: users.length };
+  }
+
   private async dispatchUnverifiedReminder(user: {
     id: string;
     email?: string | null;

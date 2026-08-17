@@ -18,6 +18,9 @@ describe('NotificationController', () => {
       }),
       retryFailedForJob: jest.fn().mockResolvedValue({ started: true }),
       runJobNowForContactFilter: jest.fn().mockResolvedValue({ started: true }),
+      sendUnverifiedReminderForContact: jest
+        .fn()
+        .mockResolvedValue({ sent: 1, total: 1 }),
     };
     const campaignProcessor = {
       testSend: jest
@@ -193,6 +196,58 @@ describe('NotificationController', () => {
       await expect(
         controller.runCronJobNow(CronJobName.VACCINATION_DUE_REMINDERS, {}),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('testUnverifiedAccountReminder', () => {
+    it('delegates to the unverified reminder job with the given email', async () => {
+      const { controller, triggersJob } = setup();
+
+      const result = await controller.testUnverifiedAccountReminder({
+        email: ' amina@example.com ',
+      });
+
+      expect(triggersJob.sendUnverifiedReminderForContact).toHaveBeenCalledWith(
+        { email: 'amina@example.com', phone: undefined },
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('delegates to the unverified reminder job with the given phone', async () => {
+      const { controller, triggersJob } = setup();
+
+      await controller.testUnverifiedAccountReminder({
+        phone: ' +2348012345678 ',
+      });
+
+      expect(triggersJob.sendUnverifiedReminderForContact).toHaveBeenCalledWith(
+        { email: undefined, phone: '+2348012345678' },
+      );
+    });
+
+    it('rejects a body with neither email nor phone', () => {
+      const { controller, triggersJob } = setup();
+
+      expect(() => controller.testUnverifiedAccountReminder({})).toThrow(
+        BadRequestException,
+      );
+      expect(
+        triggersJob.sendUnverifiedReminderForContact,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('rejects a body with both email and phone', () => {
+      const { controller, triggersJob } = setup();
+
+      expect(() =>
+        controller.testUnverifiedAccountReminder({
+          email: 'amina@example.com',
+          phone: '+2348012345678',
+        }),
+      ).toThrow(BadRequestException);
+      expect(
+        triggersJob.sendUnverifiedReminderForContact,
+      ).not.toHaveBeenCalled();
     });
   });
 
