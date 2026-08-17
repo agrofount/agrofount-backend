@@ -64,6 +64,7 @@
     "ioredis": "^5.10.1",
     "nestjs-paginate": "^11.1.1",
     "otplib": "^12.0.1",
+    "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
     "pdf-parse": "^1.1.1",
