@@ -219,11 +219,20 @@ jobs:
       - name: Diagnose failed ECS deployment
         if: failure()
         run: |
+          TASK_FAMILY=$(jq -r '.family' "${{ steps.task-def.outputs.task-definition }}")
+
+          echo "::group::Rendered task definition"
+          echo "Registered task definition: ${{ steps.register-task-def.outputs.task-definition-arn }}"
+          echo "Task family: $TASK_FAMILY"
+          jq '{family, cpu, memory, networkMode, requiresCompatibilities, containerDefinitions: [.containerDefinitions[] | {name, image, cpu, memory, essential, portMappings, healthCheck, environmentFiles, logConfiguration}]}' \
+            "${{ steps.task-def.outputs.task-definition }}" || true
+          echo "::endgroup::"
+
           echo "::group::Recent ECS service events"
           aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services ${{ inputs.service }} \
-            --query 'services[0].events[0:15].[createdAt,message]' \
+            --query 'services[0].events[0:30].[createdAt,message]' \
             --output table || true
           echo "::endgroup::"
 
@@ -244,6 +253,26 @@ jobs:
               --output json || true
           else
             echo "No recently stopped tasks found for ${{ inputs.service }}"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Recent stopped tasks for rendered task family"
+          FAMILY_TASK_ARNS=$(aws ecs list-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --family "$TASK_FAMILY" \
+            --desired-status STOPPED \
+            --max-items 10 \
+            --query 'taskArns' \
+            --output text || true)
+
+          if [ -n "$FAMILY_TASK_ARNS" ] && [ "$FAMILY_TASK_ARNS" != "None" ]; then
+            aws ecs describe-tasks \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --tasks $FAMILY_TASK_ARNS \
+              --query 'tasks[].{taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,lastStatus:lastStatus,stopCode:stopCode,stoppedReason:stoppedReason,stoppedAt:stoppedAt,containers:containers[].{name:name,lastStatus:lastStatus,exitCode:exitCode,reason:reason,healthStatus:healthStatus}}' \
+              --output json || true
+          else
+            echo "No recently stopped tasks found for task family $TASK_FAMILY"
           fi
           echo "::endgroup::"
 
