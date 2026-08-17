@@ -1547,4 +1547,106 @@ describe('NotificationTriggersJob', () => {
       );
     });
   });
+
+  describe('sendUnverifiedReminderForContact', () => {
+    it('finds one unverified user by email and sends the email reminder', async () => {
+      const user = {
+        id: 'user-1',
+        email: 'amina@example.com',
+        phone: null,
+        firstname: 'Amina',
+      };
+      const qb = chainableQueryBuilder([user]);
+      const updateQb = chainableQueryBuilder([]);
+      const dataSource = {
+        createQueryBuilder: jest
+          .fn()
+          .mockReturnValueOnce(qb)
+          .mockReturnValueOnce(updateQb),
+      };
+      const { job, notificationService } = setup({ dataSource });
+
+      const result = await job.sendUnverifiedReminderForContact({
+        email: ' Amina@Example.com ',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'LOWER(user.email) = LOWER(:email)',
+        { email: 'Amina@Example.com' },
+      );
+      expect(updateQb.update).toHaveBeenCalled();
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'EMAIL',
+        { userId: 'user-1', email: 'amina@example.com' },
+        MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+        expect.objectContaining({
+          customer_name: 'Amina',
+          verification_link: expect.stringContaining('/verify-email?token='),
+        }),
+        { jobName: CronJobName.UNVERIFIED_ACCOUNT_REMINDERS },
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('finds one unverified user by phone and sends the SMS reminder', async () => {
+      const user = {
+        id: 'user-1',
+        email: null,
+        phone: '+2348012345678',
+        firstname: 'Bola',
+      };
+      const qb = chainableQueryBuilder([user]);
+      const dataSource = {
+        createQueryBuilder: jest.fn().mockReturnValue(qb),
+      };
+      const { job, notificationService, cacheManager } = setup({ dataSource });
+
+      const result = await job.sendUnverifiedReminderForContact({
+        phone: ' +2348012345678 ',
+      });
+
+      expect(qb.andWhere).toHaveBeenCalledWith('user.phone = :phone', {
+        phone: '+2348012345678',
+      });
+      expect(cacheManager.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^auth:otp:/),
+        expect.objectContaining({
+          userId: 'user-1',
+          phone: '+2348012345678',
+          purpose: 'phone-verification',
+        }),
+        10 * 60 * 1000,
+      );
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'SMS',
+        { userId: 'user-1', phoneNumber: '+2348012345678' },
+        MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+        expect.objectContaining({
+          customer_name: 'Bola',
+          verification_link: expect.stringContaining(
+            '/verify-phone?challengeId=',
+          ),
+        }),
+        { jobName: CronJobName.UNVERIFIED_ACCOUNT_REMINDERS },
+      );
+      expect(result).toEqual({ sent: 1, total: 1 });
+    });
+
+    it('returns zero totals when no unverified user matches the contact', async () => {
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest
+            .fn()
+            .mockReturnValue(chainableQueryBuilder([])),
+        },
+      });
+
+      const result = await job.sendUnverifiedReminderForContact({
+        email: 'verified@example.com',
+      });
+
+      expect(notificationService.sendNotification).not.toHaveBeenCalled();
+      expect(result).toEqual({ sent: 0, total: 0 });
+    });
+  });
 });

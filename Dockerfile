@@ -8,8 +8,8 @@ WORKDIR /app
 # Build tools needed for native modules (e.g. sharp)
 RUN apk add --no-cache python3 make g++
 
-# Copy dependency files
-COPY package*.json ./
+# Copy dependency files and npm config used by the lockfile install
+COPY package*.json .npmrc ./
 
 # Install ALL dependencies (including devDeps for build)
 RUN npm ci
