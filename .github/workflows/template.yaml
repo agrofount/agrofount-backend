@@ -317,14 +317,17 @@ jobs:
           if [ -n "$LOG_GROUP" ] && [ -n "$LOG_PREFIX" ]; then
             LOG_STREAMS=$(aws logs describe-log-streams \
               --log-group-name "$LOG_GROUP" \
-              --log-stream-name-prefix "$LOG_PREFIX/${{ inputs.container-name }}" \
               --order-by LastEventTime \
               --descending \
-              --max-items 3 \
+              --max-items 20 \
               --query 'logStreams[].logStreamName' \
               --output text || true)
 
             for LOG_STREAM in $LOG_STREAMS; do
+              case "$LOG_STREAM" in
+                "$LOG_PREFIX/${{ inputs.container-name }}"/*) ;;
+                *) continue ;;
+              esac
               echo "---- $LOG_STREAM ----"
               aws logs get-log-events \
                 --log-group-name "$LOG_GROUP" \
