@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'crypto';
 import { DataSource, MoreThan } from 'typeorm';
 import { NotificationService } from '../notification.service';
 import { NotificationGateway } from '../gateways/notification.gateway';
@@ -146,6 +147,7 @@ export class NotificationTriggersJob {
     private readonly notificationGateway: NotificationGateway,
     private readonly cronMonitor: CronMonitorService,
     private readonly farmFlockService: FarmFlockService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
 
   @Cron('0 10 * * *')
@@ -470,7 +472,7 @@ export class NotificationTriggersJob {
 
       total = users.length;
       for (const user of users) {
-        if (!user.email) continue;
+        if (!user.email && !user.phone) continue;
         try {
           await this.dispatchUnverifiedReminder(user);
           sent++;
@@ -500,19 +502,19 @@ export class NotificationTriggersJob {
       .createQueryBuilder(UserEntity, 'user')
       .where('user.isVerified = false')
       .andWhere('user.deletedAt IS NULL')
-      .select(['user.id', 'user.email', 'user.firstname'])
+      .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
       .getMany();
   }
 
   private async getUnverifiedAccountTargets(): Promise<CronJobTarget[]> {
     const users = await this.getUnverifiedAccountCandidates();
     return users
-      .filter((user) => user.email)
+      .filter((user) => user.email || user.phone)
       .map((user) => ({
         id: user.id,
         name: user.firstname || 'Unnamed user',
         email: user.email,
-        phone: null,
+        phone: user.email ? null : user.phone,
         reason: 'Unverified account',
       }));
   }
@@ -522,9 +524,36 @@ export class NotificationTriggersJob {
   // instead of calling dispatchUnverifiedReminder.
   private async getUnverifiedAccountPreview(): Promise<CronJobMessagePreview> {
     const users = await this.getUnverifiedAccountCandidates();
-    const real = users.find((user) => user.email);
+    const real = users.find((user) => user.email || user.phone);
     const usedFallbackSample = !real;
     const sample = real ?? PLACEHOLDER_USER;
+    const sampleTarget = {
+      name: sample.firstname || 'Unnamed user',
+      email: sample.email,
+      phone: sample.email ? null : sample.phone,
+    };
+
+    if (!sample.email && sample.phone) {
+      const params = {
+        customer_name: sample.firstname ?? 'there',
+        otp: '123456',
+        verification_link: `${
+          process.env.FRONTEND_URL ?? ''
+        }/verify-phone?challengeId=sample-preview-challenge`,
+      };
+      const text = this.notificationService.buildSmsPreviewText(
+        MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+        params,
+      );
+      return {
+        channel: 'SMS',
+        params,
+        text,
+        sampleTarget,
+        usedFallbackSample,
+      };
+    }
+
     const params = {
       customer_name: sample.firstname ?? 'there',
       verification_link: `${
@@ -544,11 +573,7 @@ export class NotificationTriggersJob {
       subject: rendered.subject,
       html: rendered.html,
       renderError: rendered.renderError,
-      sampleTarget: {
-        name: sample.firstname || 'Unnamed user',
-        email: sample.email,
-        phone: null,
-      },
+      sampleTarget,
       usedFallbackSample,
     };
   }
@@ -561,12 +586,12 @@ export class NotificationTriggersJob {
       .where('user.isVerified = false')
       .andWhere('user.deletedAt IS NULL')
       .andWhere('user.id IN (:...userIds)', { userIds })
-      .select(['user.id', 'user.email', 'user.firstname'])
+      .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
       .getMany();
 
     let sent = 0;
     for (const user of users) {
-      if (!user.email) continue;
+      if (!user.email && !user.phone) continue;
       try {
         await this.dispatchUnverifiedReminder(user);
         sent++;
@@ -583,9 +608,21 @@ export class NotificationTriggersJob {
 
   private async dispatchUnverifiedReminder(user: {
     id: string;
-    email: string;
+    email?: string | null;
+    phone?: string | null;
     firstname: string;
   }): Promise<void> {
+    if (!user.email && user.phone) {
+      await this.dispatchPhoneUnverifiedReminder({
+        id: user.id,
+        phone: user.phone,
+        firstname: user.firstname,
+      });
+      return;
+    }
+
+    if (!user.email) return;
+
     const rawToken = randomBytes(32).toString('hex');
     const hashedToken = createHash('sha256').update(rawToken).digest('hex');
     const expires = new Date(Date.now() + 48 * 60 * 60 * 1000);
@@ -613,6 +650,50 @@ export class NotificationTriggersJob {
       },
       { jobName: CronJobName.UNVERIFIED_ACCOUNT_REMINDERS },
     );
+  }
+
+  private async dispatchPhoneUnverifiedReminder(user: {
+    id: string;
+    phone: string;
+    firstname: string;
+  }): Promise<void> {
+    const phone = this.normalizePhone(user.phone);
+    const challengeId = randomUUID();
+    const otp = randomInt(100000, 1000000).toString();
+
+    await this.cacheManager.set(
+      `auth:otp:${challengeId}`,
+      {
+        userId: user.id,
+        phone,
+        purpose: 'phone-verification',
+        otpHash: this.hashOtp(challengeId, otp),
+        attempts: 0,
+      },
+      10 * 60 * 1000,
+    );
+
+    await this.notificationService.sendNotification(
+      'SMS',
+      { userId: user.id, phoneNumber: phone },
+      MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+      {
+        customer_name: user.firstname ?? 'there',
+        otp,
+        verification_link: `${
+          process.env.FRONTEND_URL ?? ''
+        }/verify-phone?challengeId=${challengeId}`,
+      },
+      { jobName: CronJobName.UNVERIFIED_ACCOUNT_REMINDERS },
+    );
+  }
+
+  private normalizePhone(phone: string): string {
+    return phone.replace(/[\s()-]/g, '');
+  }
+
+  private hashOtp(challengeId: string, otp: string): string {
+    return createHash('sha256').update(`${challengeId}:${otp}`).digest('hex');
   }
 
   @Cron('0 10 * * 3')
@@ -1837,7 +1918,7 @@ export class NotificationTriggersJob {
       case CronJobName.UNVERIFIED_ACCOUNT_REMINDERS: {
         const users = await this.getUnverifiedAccountCandidates();
         const ids = users
-          .filter((u) => matches(u.email, null))
+          .filter((u) => matches(u.email, u.phone))
           .map((u) => u.id);
         return this.sendUnverifiedReminderForUsers(ids);
       }

@@ -54,6 +54,7 @@
     "axios": "^1.18.0",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.78.1",
+    "cache-manager": "^7.2.9",
     "cacheable": "^1.10.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
@@ -132,6 +133,7 @@
   "overrides": {
     "multer": "^2.2.0",
     "ws": "^8.21.0",
-    "fast-xml-parser": ">=5.7.0"
+    "fast-xml-parser": ">=5.7.0",
+    "js-yaml": "5.3.0"
   }
 }

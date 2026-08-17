@@ -595,6 +595,16 @@ export class NotificationService {
 
         return loginInactivitySmsRes;
 
+      case MessageTypes.UNVERIFIED_ACCOUNT_REMINDER:
+        const unverifiedAccountMessage = this.buildSmsText(messageType, params);
+        const unverifiedAccountSmsRes = await this.sendSmsMessage(
+          unverifiedAccountMessage,
+          recipient,
+        );
+        await recordSms(unverifiedAccountMessage, unverifiedAccountSmsRes);
+
+        return unverifiedAccountSmsRes;
+
       case MessageTypes.CRON_JOB_SUMMARY:
         const cronSummaryMessage = `Ayo Cron: ${params.jobName} ${
           params.error ? 'FAILED' : 'completed'
@@ -623,6 +633,8 @@ export class NotificationService {
         return `Hi ${params.customer_name}, your Agrofount order ${params.order_id} is still pending. Complete payment by ${params.due_date} to secure your items: ${params.order_link}`;
       case MessageTypes.LOGIN_INACTIVITY_REMINDER:
         return `Hi ${params.customer_name}, it's been a while since you visited Agrofount. Check out what's new: ${params.login_link}`;
+      case MessageTypes.UNVERIFIED_ACCOUNT_REMINDER:
+        return `Hi ${params.customer_name}, complete your Agrofount registration with this code: ${params.otp}. Verify here: ${params.verification_link}`;
       default:
         throw new Error(`No SMS preview text builder for: ${messageType}`);
     }

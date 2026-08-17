@@ -52,7 +52,9 @@ export class LeadsService {
     }
     if (this.isXlsxBuffer(buffer)) {
       const workbook = new Workbook();
-      await workbook.xlsx.load(buffer);
+      await workbook.xlsx.load(
+        buffer as unknown as Parameters<typeof workbook.xlsx.load>[0],
+      );
       const sheet = workbook.worksheets[0];
       if (!sheet) return [];
       const rows: string[][] = [];
