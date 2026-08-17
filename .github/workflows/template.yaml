@@ -219,24 +219,35 @@ jobs:
       - name: Diagnose failed ECS deployment
         if: failure()
         run: |
+          DIAG_FILE="ecs-deployment-diagnostics.txt"
+          exec > >(tee -a "$DIAG_FILE") 2>&1
+
           TASK_FAMILY=$(jq -r '.family' "${{ steps.task-def.outputs.task-definition }}")
 
-          echo "::group::Rendered task definition"
+          echo "================ Rendered task definition ================"
           echo "Registered task definition: ${{ steps.register-task-def.outputs.task-definition-arn }}"
           echo "Task family: $TASK_FAMILY"
           jq '{family, cpu, memory, networkMode, requiresCompatibilities, containerDefinitions: [.containerDefinitions[] | {name, image, cpu, memory, essential, portMappings, healthCheck, environmentFiles, logConfiguration}]}' \
             "${{ steps.task-def.outputs.task-definition }}" || true
-          echo "::endgroup::"
+          echo
 
-          echo "::group::Recent ECS service events"
+          echo "================ ECS service deployments ================"
+          aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ inputs.service }} \
+            --query 'services[0].deployments' \
+            --output json || true
+          echo
+
+          echo "================ Recent ECS service events ================"
           aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services ${{ inputs.service }} \
             --query 'services[0].events[0:30].[createdAt,message]' \
             --output table || true
-          echo "::endgroup::"
+          echo
 
-          echo "::group::Recent stopped service tasks"
+          echo "================ Recent stopped service tasks ================"
           TASK_ARNS=$(aws ecs list-tasks \
             --cluster ${{ env.ECS_CLUSTER }} \
             --service-name ${{ inputs.service }} \
@@ -254,9 +265,9 @@ jobs:
           else
             echo "No recently stopped tasks found for ${{ inputs.service }}"
           fi
-          echo "::endgroup::"
+          echo
 
-          echo "::group::Recent stopped tasks for rendered task family"
+          echo "================ Recent stopped tasks for rendered task family ================"
           FAMILY_TASK_ARNS=$(aws ecs list-tasks \
             --cluster ${{ env.ECS_CLUSTER }} \
             --family "$TASK_FAMILY" \
@@ -274,9 +285,28 @@ jobs:
           else
             echo "No recently stopped tasks found for task family $TASK_FAMILY"
           fi
-          echo "::endgroup::"
+          echo
 
-          echo "::group::Recent container logs"
+          echo "================ Recent stopped tasks in cluster ================"
+          CLUSTER_TASK_ARNS=$(aws ecs list-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --desired-status STOPPED \
+            --max-items 20 \
+            --query 'taskArns' \
+            --output text || true)
+
+          if [ -n "$CLUSTER_TASK_ARNS" ] && [ "$CLUSTER_TASK_ARNS" != "None" ]; then
+            aws ecs describe-tasks \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --tasks $CLUSTER_TASK_ARNS \
+              --query 'tasks[].{taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,group:group,lastStatus:lastStatus,stopCode:stopCode,stoppedReason:stoppedReason,stoppedAt:stoppedAt,containers:containers[].{name:name,lastStatus:lastStatus,exitCode:exitCode,reason:reason,healthStatus:healthStatus}}' \
+              --output json || true
+          else
+            echo "No recently stopped tasks found in cluster ${{ env.ECS_CLUSTER }}"
+          fi
+          echo
+
+          echo "================ Recent container logs ================"
           LOG_GROUP=$(jq -r \
             '.containerDefinitions[] | select(.name == "${{ inputs.container-name }}") | .logConfiguration.options["awslogs-group"] // empty' \
             "${{ steps.task-def.outputs.task-definition }}")
@@ -306,7 +336,14 @@ jobs:
           else
             echo "No awslogs configuration found in rendered task definition"
           fi
-          echo "::endgroup::"
+
+          {
+            echo "## ECS Deployment Diagnostics"
+            echo
+            echo '```text'
+            cat "$DIAG_FILE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Seed career positions
         run: |
