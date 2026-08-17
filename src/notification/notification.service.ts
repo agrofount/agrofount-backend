@@ -26,7 +26,7 @@ import {
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { AfricasTalkingConfig } from '../config/africastalking.config';
+import { SmsConfig } from '../config/sms.config';
 import { lastValueFrom } from 'rxjs';
 import { OrderEntity } from '../order/entities/order.entity';
 import { TeamsService } from './services/teams.service';
@@ -503,8 +503,11 @@ export class NotificationService {
     params: Record<string, any> = {},
     options?: { campaignId?: string; jobName?: string },
   ) {
-    const { sender_id } =
-      this.configService.get<AfricasTalkingConfig>('africasTalking');
+    const smsConfig = this.getSmsConfig();
+    const sender_id =
+      smsConfig.provider === 'africastalking'
+        ? smsConfig.africasTalking.sender_id
+        : smsConfig.termii.sender_id;
     const smsSender = sender_id || 'Agrofount';
 
     if (!recipient) {
@@ -673,8 +676,71 @@ export class NotificationService {
     message: string,
     recipient: string,
   ): Promise<any> {
+    const smsConfig = this.getSmsConfig();
+    if (smsConfig.provider === 'africastalking') {
+      return this.sendAfricasTalkingSmsMessage(message, recipient, smsConfig);
+    }
+    return this.sendTermiiSmsMessage(message, recipient, smsConfig);
+  }
+
+  private getSmsConfig(): SmsConfig {
+    return this.configService.get<SmsConfig>('sms');
+  }
+
+  private async sendTermiiSmsMessage(
+    message: string,
+    recipient: string,
+    smsConfig: SmsConfig,
+  ): Promise<any> {
+    const { base_url, api_key, sender_id } = smsConfig.termii;
+    try {
+      const payload = {
+        to: recipient,
+        from: sender_id || 'Agrofount',
+        sms: message,
+        type: 'plain',
+        channel: 'generic',
+        api_key,
+      };
+
+      const response = await lastValueFrom(
+        this.httpService.post(`${base_url}/sms/send`, payload, {
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+        }),
+      );
+
+      return this.normalizeTermiiSmsResponse(response.data);
+    } catch (error: any) {
+      if (error.response) {
+        console.error('Termii API Error Response:', error.response.data);
+      } else if (error.request) {
+        console.error('No response received from Termii API:', error.request);
+      } else {
+        console.error('Error sending SMS via Termii:', error.message);
+      }
+
+      const responseDetail = error.response?.data
+        ? JSON.stringify(error.response.data)
+        : undefined;
+      return {
+        success: false,
+        error:
+          [error.message, responseDetail].filter(Boolean).join(' — ') ||
+          'Unknown error occurred',
+      };
+    }
+  }
+
+  private async sendAfricasTalkingSmsMessage(
+    message: string,
+    recipient: string,
+    smsConfig: SmsConfig,
+  ): Promise<any> {
     const { base_url, api_key, username, sender_id } =
-      this.configService.get<AfricasTalkingConfig>('africasTalking');
+      smsConfig.africasTalking;
     try {
       const payload = new URLSearchParams({
         username,
@@ -733,6 +799,21 @@ export class NotificationService {
       `Agrofount verification code is ${otp}. It expires in 10 minutes.`,
       recipient,
     );
+  }
+
+  private normalizeTermiiSmsResponse(response: any) {
+    const statusText = String(
+      response?.code ?? response?.message ?? response?.status ?? '',
+    );
+    const failed = /fail|reject|invalid|error|insufficient|unauthorized/i.test(
+      statusText,
+    );
+
+    return {
+      ...response,
+      success: !failed,
+      error: failed ? statusText : undefined,
+    };
   }
 
   private normalizeAfricasTalkingSmsResponse(response: any) {

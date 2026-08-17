@@ -2,6 +2,7 @@ import { NotificationTriggersJob } from './notification-triggers.job';
 import { CronJobName } from '../enums/cron-job-name.enum';
 import { MessageTypes } from '../types/notification.type';
 import { AiRunStatus } from '../../ai-platform/entities/ai-tool-invocation.entity';
+import { BadRequestException } from '@nestjs/common';
 
 // retryFailedForJob/runJobNowForContactFilter are fire-and-forget (they
 // return before the background send loop finishes) — flush the microtask
@@ -1647,6 +1648,82 @@ describe('NotificationTriggersJob', () => {
 
       expect(notificationService.sendNotification).not.toHaveBeenCalled();
       expect(result).toEqual({ sent: 0, total: 0 });
+    });
+  });
+
+  describe('sendCronJobTestMessage', () => {
+    it('sends one email test message for a templated cron job', async () => {
+      const { job, notificationService } = setup();
+
+      const result = await job.sendCronJobTestMessage(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        { email: ' admin@example.com ', name: 'Amina' },
+      );
+
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'EMAIL',
+        { email: 'admin@example.com' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.objectContaining({
+          customer_name: 'Amina',
+          login_link: expect.stringContaining('/login'),
+        }),
+        { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
+      );
+      expect(result).toEqual({
+        sent: 1,
+        total: 1,
+        channel: 'EMAIL',
+        jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      });
+    });
+
+    it('sends one SMS test message when the cron job has SMS content', async () => {
+      const { job, notificationService } = setup();
+
+      const result = await job.sendCronJobTestMessage(
+        CronJobName.PENDING_ORDER_REMINDERS,
+        { phone: ' +234 801 234 5678 ', name: 'Bola' },
+      );
+
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'SMS',
+        { phoneNumber: '+2348012345678' },
+        MessageTypes.PENDING_ORDER_REMINDER,
+        expect.objectContaining({
+          customer_name: 'Bola',
+          order_id: 'AGF-00001',
+        }),
+        { jobName: CronJobName.PENDING_ORDER_REMINDERS },
+      );
+      expect(result).toEqual({
+        sent: 1,
+        total: 1,
+        channel: 'SMS',
+        jobName: CronJobName.PENDING_ORDER_REMINDERS,
+      });
+    });
+
+    it('rejects phone tests for email-only cron jobs', async () => {
+      const { job, notificationService } = setup();
+
+      await expect(
+        job.sendCronJobTestMessage(CronJobName.EDUCATIONAL_CONTENT, {
+          phone: '+2348012345678',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(notificationService.sendNotification).not.toHaveBeenCalled();
+    });
+
+    it('rejects the in-app-only vaccination reminder job', async () => {
+      const { job, notificationService } = setup();
+
+      await expect(
+        job.sendCronJobTestMessage(CronJobName.VACCINATION_DUE_REMINDERS, {
+          email: 'admin@example.com',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(notificationService.sendNotification).not.toHaveBeenCalled();
     });
   });
 });

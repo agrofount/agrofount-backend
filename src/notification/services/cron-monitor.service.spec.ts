@@ -109,7 +109,7 @@ describe('CronMonitorService', () => {
       new Error('SMTP down'),
     );
     notificationService.sendNotification.mockRejectedValue(
-      new Error("Africa's Talking down"),
+      new Error('Termii down'),
     );
 
     await expect(

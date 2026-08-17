@@ -1,5 +1,10 @@
 import { CACHE_MANAGER, Cache } from '@nestjs/cache-manager';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { createHash, randomBytes, randomInt, randomUUID } from 'crypto';
 import { DataSource, MoreThan } from 'typeorm';
@@ -111,6 +116,19 @@ type PendingOrderContent = {
     email?: string | null;
     phone?: string | null;
   };
+};
+
+type CronJobTestContact = {
+  email?: string;
+  phone?: string;
+  name?: string;
+};
+
+type CronJobTestSendResult = {
+  sent: number;
+  total: number;
+  channel: 'EMAIL' | 'SMS';
+  jobName: CronJobName;
 };
 
 const PLACEHOLDER_ORDER: PendingOrderContent = {
@@ -1796,6 +1814,184 @@ export class NotificationTriggersJob {
         return this.getAyoIntentPreview();
       default:
         throw new Error(`Unknown cron job: ${jobName}`);
+    }
+  }
+
+  async sendCronJobTestMessage(
+    jobName: CronJobName,
+    contact: CronJobTestContact,
+  ): Promise<CronJobTestSendResult> {
+    const email = contact.email?.trim();
+    const phone = contact.phone?.trim();
+    const name = contact.name?.trim() || 'there';
+
+    if (!email && !phone) {
+      throw new BadRequestException(
+        'Provide an email or a phone number to test-send to',
+      );
+    }
+    if (email && phone) {
+      throw new BadRequestException(
+        'Provide either email or phone, not both, for a single-recipient test',
+      );
+    }
+
+    const channel = email ? 'EMAIL' : 'SMS';
+    const recipient = email
+      ? { email }
+      : { phoneNumber: this.normalizePhone(phone as string) };
+
+    switch (jobName) {
+      case CronJobName.ORDER_FEEDBACK_REQUESTS: {
+        this.assertEmailTestChannel(jobName, channel);
+        const order = {
+          ...PLACEHOLDER_ORDER,
+          user: { ...PLACEHOLDER_ORDER.user, firstname: name },
+        };
+        const body = `Hi ${name}, how was your recent order (${order.code})? A quick rating helps us serve you better.`;
+        await this.notificationService.sendCustomEmail(
+          recipient,
+          `How was your order ${order.code}?`,
+          this.buildSimpleEmail(
+            "We'd love your feedback!",
+            body,
+            'Leave a Review',
+            `${process.env.FRONTEND_URL ?? ''}/orders/${order.id}`,
+          ),
+          body,
+          MessageTypes.ORDER_FEEDBACK_REQUEST,
+          { jobName, channel: 'EMAIL' },
+        );
+        return { sent: 1, total: 1, channel, jobName };
+      }
+
+      case CronJobName.LOGIN_INACTIVITY_REMINDERS: {
+        const params = this.buildLoginInactivityParams(name);
+        await this.notificationService.sendNotification(
+          channel,
+          recipient,
+          MessageTypes.LOGIN_INACTIVITY_REMINDER,
+          params,
+          { jobName },
+        );
+        return { sent: 1, total: 1, channel, jobName };
+      }
+
+      case CronJobName.UNVERIFIED_ACCOUNT_REMINDERS: {
+        const params =
+          channel === 'EMAIL'
+            ? {
+                customer_name: name,
+                verification_link: `${
+                  process.env.FRONTEND_URL ?? ''
+                }/verify-email?token=sample-test-token`,
+                account_link: `${process.env.FRONTEND_URL ?? ''}/account`,
+              }
+            : {
+                customer_name: name,
+                otp: '123456',
+                verification_link: `${
+                  process.env.FRONTEND_URL ?? ''
+                }/verify-phone?challengeId=sample-test-challenge`,
+              };
+        await this.notificationService.sendNotification(
+          channel,
+          recipient,
+          MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+          params,
+          { jobName },
+        );
+        return { sent: 1, total: 1, channel, jobName };
+      }
+
+      case CronJobName.EDUCATIONAL_CONTENT: {
+        this.assertEmailTestChannel(jobName, channel);
+        await this.notificationService.sendNotification(
+          'EMAIL',
+          recipient,
+          MessageTypes.EDUCATIONAL_CONTENT,
+          this.buildEducationalContentParams(name, this.getWeeklyFarmingTip()),
+          { jobName },
+        );
+        return { sent: 1, total: 1, channel, jobName };
+      }
+
+      case CronJobName.PENDING_ORDER_REMINDERS: {
+        const order = {
+          ...PLACEHOLDER_ORDER,
+          user: { ...PLACEHOLDER_ORDER.user, firstname: name },
+        };
+        const { sharedParams, emailParams } =
+          this.buildPendingOrderReminderParams(order);
+        await this.notificationService.sendNotification(
+          channel,
+          recipient,
+          MessageTypes.PENDING_ORDER_REMINDER,
+          channel === 'EMAIL' ? emailParams : sharedParams,
+          { jobName },
+        );
+        return { sent: 1, total: 1, channel, jobName };
+      }
+
+      case CronJobName.REGISTERED_NO_ORDER_NUDGE: {
+        this.assertEmailTestChannel(jobName, channel);
+        const touchpoint =
+          NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS[0];
+        await this.notificationService.sendCustomEmail(
+          recipient,
+          touchpoint.heading,
+          this.buildSimpleEmail(
+            touchpoint.heading,
+            touchpoint.body,
+            'Shop Now',
+            process.env.FRONTEND_URL ?? '',
+          ),
+          touchpoint.body,
+          MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+          { jobName, channel: 'EMAIL' },
+        );
+        return { sent: 1, total: 1, channel, jobName };
+      }
+
+      case CronJobName.AYO_INTENT_FOLLOW_UP: {
+        this.assertEmailTestChannel(jobName, channel);
+        const heading = 'Still looking for layer feed?';
+        const body =
+          'You asked Ayo about "layer feed" recently — it is still available. Want help placing an order?';
+        await this.notificationService.sendCustomEmail(
+          recipient,
+          heading,
+          this.buildSimpleEmail(
+            heading,
+            body,
+            'Shop Now',
+            process.env.FRONTEND_URL ?? '',
+          ),
+          body,
+          MessageTypes.AYO_INTENT_FOLLOW_UP,
+          { jobName, channel: 'EMAIL' },
+        );
+        return { sent: 1, total: 1, channel, jobName };
+      }
+
+      case CronJobName.VACCINATION_DUE_REMINDERS:
+        throw new BadRequestException(
+          'Test-send by email or phone is not supported for vaccination due reminders because this job is in-app only',
+        );
+
+      default:
+        throw new BadRequestException(`Unknown cron job: ${jobName}`);
+    }
+  }
+
+  private assertEmailTestChannel(
+    jobName: CronJobName,
+    channel: 'EMAIL' | 'SMS',
+  ): void {
+    if (channel !== 'EMAIL') {
+      throw new BadRequestException(
+        `${jobName} does not have SMS content; provide an email address instead`,
+      );
     }
   }
 

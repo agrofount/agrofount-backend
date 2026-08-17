@@ -229,6 +229,23 @@ export class NotificationController {
     return this.triggersJob.sendUnverifiedReminderForContact({ email, phone });
   }
 
+  @Post('cron-jobs/:name/test-send')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({
+    summary:
+      'Send a one-off test copy of a cron job message to a single email or phone number',
+  })
+  testSendCronJobMessage(
+    @Param('name') name: string,
+    @Body() body: { email?: string; phone?: string; name?: string },
+  ) {
+    this.assertSupportedCronJob(name);
+    return this.triggersJob.sendCronJobTestMessage(
+      name as CronJobName,
+      body ?? {},
+    );
+  }
+
   @Get('cron-jobs/:name/runs')
   @UseGuards(JwtAuthGuard, AdminAuthGuard)
   @ApiOperation({ summary: 'Get run history for a cron job' })

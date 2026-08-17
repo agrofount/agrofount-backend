@@ -30,10 +30,18 @@ describe('NotificationService', () => {
     const httpService = { post: jest.fn(), ...overrides.httpService };
     const configService = {
       get: jest.fn().mockReturnValue({
-        base_url: 'https://api.africastalking.com/version1',
-        api_key: 'test-key',
-        username: 'agrofount',
-        sender_id: 'Agrofount',
+        provider: 'termii',
+        termii: {
+          base_url: 'https://api.ng.termii.com/api',
+          api_key: 'test-key',
+          sender_id: 'Agrofount',
+        },
+        africasTalking: {
+          base_url: 'https://api.africastalking.com/version1',
+          api_key: 'africastalking-key',
+          username: 'agrofount',
+          sender_id: 'Agrofount',
+        },
       }),
       ...overrides.configService,
     };
@@ -144,7 +152,7 @@ describe('NotificationService', () => {
   });
 
   describe('sendNotification SMS delivery tracking', () => {
-    it("records a failed Africa's Talking send as FAILED with an errorMessage and failureCategory", async () => {
+    it('records a failed Termii send as FAILED with an errorMessage and failureCategory', async () => {
       const { service, messageRepo } = setup({
         httpService: {
           post: jest.fn().mockReturnValue(
@@ -203,6 +211,106 @@ describe('NotificationService', () => {
       const recorded = (messageRepo.create as jest.Mock).mock.calls[0][0];
       expect(recorded.errorMessage).toBeUndefined();
       expect(recorded.failureCategory).toBeUndefined();
+    });
+
+    it('sends SMS through the Termii sms/send endpoint', async () => {
+      const { service, httpService } = setup({
+        httpService: {
+          post: jest.fn().mockReturnValue(
+            of({
+              data: {
+                code: 'ok',
+                message_id: 'termii-message-id',
+                message: 'Successfully Sent',
+              },
+            }),
+          ),
+        },
+      });
+
+      await service.sendNotification(
+        'SMS',
+        { userId: 'user-1', phoneNumber: '+2348012345678' },
+        MessageTypes.PENDING_ORDER_REMINDER,
+        {
+          customer_name: 'Amina',
+          order_id: 'ORD-1',
+          due_date: '3 Jan 2026',
+          order_link: 'https://agrofount.com/account?tab=orders',
+        },
+      );
+
+      expect(httpService.post).toHaveBeenCalledWith(
+        'https://api.ng.termii.com/api/sms/send',
+        expect.objectContaining({
+          to: '+2348012345678',
+          from: 'Agrofount',
+          sms: expect.stringContaining('Hi Amina'),
+          type: 'plain',
+          channel: 'generic',
+          api_key: 'test-key',
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+          }),
+        }),
+      );
+    });
+
+    it("sends SMS through Africa's Talking when SMS_PROVIDER selects it", async () => {
+      const { service, httpService } = setup({
+        configService: {
+          get: jest.fn().mockReturnValue({
+            provider: 'africastalking',
+            termii: {
+              base_url: 'https://api.ng.termii.com/api',
+              api_key: 'test-key',
+              sender_id: 'Agrofount',
+            },
+            africasTalking: {
+              base_url: 'https://api.africastalking.com/version1',
+              api_key: 'africastalking-key',
+              username: 'agrofount',
+              sender_id: 'Agrofount',
+            },
+          }),
+        },
+        httpService: {
+          post: jest.fn().mockReturnValue(
+            of({
+              data: {
+                SMSMessageData: {
+                  Recipients: [{ status: 'Success' }],
+                },
+              },
+            }),
+          ),
+        },
+      });
+
+      await service.sendNotification(
+        'SMS',
+        { userId: 'user-1', phoneNumber: '+2348012345678' },
+        MessageTypes.PENDING_ORDER_REMINDER,
+        {
+          customer_name: 'Amina',
+          order_id: 'ORD-1',
+          due_date: '3 Jan 2026',
+          order_link: 'https://agrofount.com/account?tab=orders',
+        },
+      );
+
+      expect(httpService.post).toHaveBeenCalledWith(
+        'https://api.africastalking.com/version1/messaging',
+        expect.stringContaining('username=agrofount'),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'Content-Type': 'application/x-www-form-urlencoded',
+            apiKey: 'africastalking-key',
+          }),
+        }),
+      );
     });
   });
 

@@ -18,13 +18,16 @@ const REQUIRED_PRODUCTION_VARIABLES = [
   'PAYSTACK_URL',
   'SEND_IN_BLUE_API_KEY',
   'SEND_IN_BLUE_FROM_EMAIL',
-  'AFRICASTALKING_API_KEY',
-  'AFRICASTALKING_USERNAME',
   'AWS_S3_REGION',
   'AWS_BUCKET_NAME',
   'FRONTEND_URL',
   'ADMIN_FRONTEND_URL',
 ] as const;
+
+const getConfigValue = (
+  config: Record<string, unknown>,
+  keys: string[],
+): unknown => keys.find((key) => config[key]) ? true : undefined;
 
 export function validateEnvironment(
   config: Record<string, unknown>,
@@ -66,6 +69,34 @@ export function validateEnvironment(
     if (missingProduction.length) {
       throw new Error(
         `Missing production environment variables: ${missingProduction.join(
+          ', ',
+        )}`,
+      );
+    }
+    const smsProviderRaw = String(config.SMS_PROVIDER || 'termii').toLowerCase();
+    const smsProvider = [
+      'africastalking',
+      'africa_talking',
+      'africas_talking',
+    ].includes(smsProviderRaw)
+      ? 'africastalking'
+      : smsProviderRaw;
+    if (!['termii', 'africastalking'].includes(smsProvider)) {
+      throw new Error('SMS_PROVIDER must be either termii or africastalking');
+    }
+    const requiredSmsVariables: string[][] =
+      smsProvider === 'africastalking'
+        ? [
+            ['AFRICASTALKING_API_KEY', 'AFRICA_TALKING_API_KEY'],
+            ['AFRICASTALKING_USERNAME', 'AFRICA_TALKING_USERNAME'],
+          ]
+        : [['TERMII_API_KEY']];
+    const missingSmsVariables = requiredSmsVariables
+      .filter((keys) => !getConfigValue(config, keys))
+      .map((keys) => keys[0]);
+    if (missingSmsVariables.length) {
+      throw new Error(
+        `Missing production environment variables: ${missingSmsVariables.join(
           ', ',
         )}`,
       );
