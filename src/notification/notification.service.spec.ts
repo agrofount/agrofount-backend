@@ -123,6 +123,24 @@ describe('NotificationService', () => {
         "Hi Amina, it's been a while since you visited Agrofount. Check out what's new: https://agrofount.com/login",
       );
     });
+
+    it('matches the exact text the unverified-account phone reminder SMS send builds', () => {
+      const { service } = setup();
+
+      const text = service.buildSmsPreviewText(
+        MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+        {
+          customer_name: 'Amina',
+          otp: '123456',
+          verification_link:
+            'https://agrofount.com/verify-phone?challengeId=abc123',
+        },
+      );
+
+      expect(text).toBe(
+        'Hi Amina, complete your Agrofount registration with this code: 123456. Verify here: https://agrofount.com/verify-phone?challengeId=abc123',
+      );
+    });
   });
 
   describe('sendNotification SMS delivery tracking', () => {

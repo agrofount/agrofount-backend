@@ -63,6 +63,10 @@ describe('NotificationTriggersJob', () => {
       getRepository: jest.fn(),
       ...overrides.dataSource,
     };
+    const cacheManager = {
+      set: jest.fn().mockResolvedValue(undefined),
+      ...overrides.cacheManager,
+    };
 
     const job = new NotificationTriggersJob(
       dataSource as any,
@@ -70,9 +74,10 @@ describe('NotificationTriggersJob', () => {
       notificationGateway as any,
       cronMonitor as any,
       farmFlockService as any,
+      cacheManager as any,
     );
 
-    return { job, dataSource, notificationService, cronMonitor };
+    return { job, dataSource, notificationService, cronMonitor, cacheManager };
   }
 
   describe('sendRegisteredNoOrderNudges', () => {
@@ -520,10 +525,16 @@ describe('NotificationTriggersJob', () => {
       expect(targets[0].name).toBe('Unnamed user');
     });
 
-    it('UNVERIFIED_ACCOUNT_REMINDERS: excludes users without an email', async () => {
+    it('UNVERIFIED_ACCOUNT_REMINDERS: includes email users and phone-only users', async () => {
       const qb = chainableQueryBuilder([
         { id: 'user-1', email: 'a@example.com', firstname: 'Amina' },
-        { id: 'user-2', email: null, firstname: 'No Email' },
+        {
+          id: 'user-2',
+          email: null,
+          phone: '+2348012345678',
+          firstname: 'No Email',
+        },
+        { id: 'user-3', email: null, phone: null, firstname: 'No Contact' },
       ]);
       const { job } = setup({
         dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
@@ -533,8 +544,19 @@ describe('NotificationTriggersJob', () => {
         CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
       );
 
-      expect(targets).toHaveLength(1);
-      expect(targets[0].id).toBe('user-1');
+      expect(targets).toHaveLength(2);
+      expect(targets).toEqual([
+        expect.objectContaining({
+          id: 'user-1',
+          email: 'a@example.com',
+          phone: null,
+        }),
+        expect.objectContaining({
+          id: 'user-2',
+          email: null,
+          phone: '+2348012345678',
+        }),
+      ]);
     });
 
     it('EDUCATIONAL_CONTENT: maps every verified subscriber returned by the query', async () => {
@@ -841,6 +863,43 @@ describe('NotificationTriggersJob', () => {
       ).mock.calls[0][1];
       expect(params.verification_link).toContain('sample-preview-token');
       expect(preview.templateId).toBe(25);
+    });
+
+    it('UNVERIFIED_ACCOUNT_REMINDERS: previews SMS with a verification challenge link for phone-only users', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: null,
+          phone: '+2348012345678',
+          firstname: 'Amina',
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+      );
+
+      expect(preview.channel).toBe('SMS');
+      expect(preview.text).toBe('stub sms text');
+      expect(notificationService.buildSmsPreviewText).toHaveBeenCalledWith(
+        MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+        expect.objectContaining({
+          customer_name: 'Amina',
+          otp: '123456',
+          verification_link: expect.stringContaining(
+            '/verify-phone?challengeId=sample-preview-challenge',
+          ),
+        }),
+      );
+      expect(preview.sampleTarget).toEqual(
+        expect.objectContaining({
+          email: null,
+          phone: '+2348012345678',
+        }),
+      );
     });
 
     it('EDUCATIONAL_CONTENT: falls back to a placeholder sample when there are no subscribers', async () => {
