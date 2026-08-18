@@ -24,9 +24,9 @@ describe('validateEnvironment', () => {
     PAYSTACK_URL: 'https://api.paystack.co',
     SEND_IN_BLUE_API_KEY: 'sendinblue',
     SEND_IN_BLUE_FROM_EMAIL: 'hello@example.com',
-    AFRICASTALKING_API_KEY: 'africastalking',
-    AFRICASTALKING_USERNAME: 'agrofount',
-    AFRICASTALKING_SENDER_ID: 'Agrofount',
+    SMS_PROVIDER: 'termii',
+    TERMII_API_KEY: 'termii',
+    TERMII_SENDER_ID: 'Agrofount',
     AWS_S3_REGION: 'eu-west-2',
     AWS_BUCKET_NAME: 'agrofount',
     FRONTEND_URL: 'https://agrofount.com',
@@ -73,5 +73,47 @@ describe('validateEnvironment', () => {
     };
 
     expect(validateEnvironment(config)).toBe(config);
+  });
+
+  it('accepts Africa’s Talking production SMS when that provider is selected', () => {
+    const { TERMII_API_KEY, TERMII_SENDER_ID, ...config } = {
+      ...validProduction,
+      SMS_PROVIDER: 'africastalking',
+      AFRICASTALKING_API_KEY: 'africastalking',
+      AFRICASTALKING_USERNAME: 'agrofount',
+    };
+    void TERMII_API_KEY;
+    void TERMII_SENDER_ID;
+
+    expect(validateEnvironment(config)).toBe(config);
+  });
+
+  it('accepts legacy Africa Talking env names when that provider is selected', () => {
+    const { TERMII_API_KEY, TERMII_SENDER_ID, ...config } = {
+      ...validProduction,
+      SMS_PROVIDER: 'africa_talking',
+      AFRICA_TALKING_API_KEY: 'africastalking',
+      AFRICA_TALKING_USERNAME: 'agrofount',
+    };
+    void TERMII_API_KEY;
+    void TERMII_SENDER_ID;
+
+    expect(validateEnvironment(config)).toBe(config);
+  });
+
+  it('requires only Termii keys by default for production SMS', () => {
+    const { TERMII_API_KEY, ...config } = validProduction;
+    void TERMII_API_KEY;
+
+    expect(() => validateEnvironment(config)).toThrow('TERMII_API_KEY');
+  });
+
+  it('rejects unknown SMS providers in production', () => {
+    expect(() =>
+      validateEnvironment({
+        ...validProduction,
+        SMS_PROVIDER: 'carrier-bird',
+      }),
+    ).toThrow('SMS_PROVIDER');
   });
 });

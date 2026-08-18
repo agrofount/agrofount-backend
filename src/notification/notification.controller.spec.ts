@@ -21,6 +21,12 @@ describe('NotificationController', () => {
       sendUnverifiedReminderForContact: jest
         .fn()
         .mockResolvedValue({ sent: 1, total: 1 }),
+      sendCronJobTestMessage: jest.fn().mockResolvedValue({
+        sent: 1,
+        total: 1,
+        channel: 'EMAIL',
+        jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      }),
     };
     const campaignProcessor = {
       testSend: jest
@@ -248,6 +254,40 @@ describe('NotificationController', () => {
       expect(
         triggersJob.sendUnverifiedReminderForContact,
       ).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('testSendCronJobMessage', () => {
+    it('delegates a single-recipient cron test send to the job', async () => {
+      const { controller, triggersJob } = setup();
+
+      const result = await controller.testSendCronJobMessage(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        { email: 'admin@example.com', name: 'Amina' },
+      );
+
+      expect(triggersJob.sendCronJobTestMessage).toHaveBeenCalledWith(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        { email: 'admin@example.com', name: 'Amina' },
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          sent: 1,
+          total: 1,
+          channel: 'EMAIL',
+        }),
+      );
+    });
+
+    it('rejects an unknown cron job', () => {
+      const { controller, triggersJob } = setup();
+
+      expect(() =>
+        controller.testSendCronJobMessage('not-a-real-job', {
+          email: 'admin@example.com',
+        }),
+      ).toThrow(BadRequestException);
+      expect(triggersJob.sendCronJobTestMessage).not.toHaveBeenCalled();
     });
   });
 
