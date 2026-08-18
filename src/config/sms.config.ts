@@ -39,8 +39,7 @@ export const smsConfig: SmsConfig = {
       process.env.AFRICA_TALKING_BASE_URL ||
       'https://api.africastalking.com/version1',
     api_key:
-      process.env.AFRICASTALKING_API_KEY ||
-      process.env.AFRICA_TALKING_API_KEY,
+      process.env.AFRICASTALKING_API_KEY || process.env.AFRICA_TALKING_API_KEY,
     username:
       process.env.AFRICASTALKING_USERNAME ||
       process.env.AFRICA_TALKING_USERNAME,

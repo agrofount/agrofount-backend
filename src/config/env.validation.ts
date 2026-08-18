@@ -27,7 +27,7 @@ const REQUIRED_PRODUCTION_VARIABLES = [
 const getConfigValue = (
   config: Record<string, unknown>,
   keys: string[],
-): unknown => keys.find((key) => config[key]) ? true : undefined;
+): unknown => (keys.find((key) => config[key]) ? true : undefined);
 
 export function validateEnvironment(
   config: Record<string, unknown>,
@@ -73,7 +73,9 @@ export function validateEnvironment(
         )}`,
       );
     }
-    const smsProviderRaw = String(config.SMS_PROVIDER || 'termii').toLowerCase();
+    const smsProviderRaw = String(
+      config.SMS_PROVIDER || 'termii',
+    ).toLowerCase();
     const smsProvider = [
       'africastalking',
       'africa_talking',
