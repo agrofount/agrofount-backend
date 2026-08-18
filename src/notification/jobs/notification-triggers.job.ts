@@ -168,6 +168,16 @@ export class NotificationTriggersJob {
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
 
+  private frontendUrl(path = '', options?: { preferSmsLinkBase?: boolean }) {
+    const rawBase =
+      (options?.preferSmsLinkBase ? process.env.SMS_LINK_BASE_URL : undefined) ||
+      process.env.FRONTEND_URL ||
+      '';
+    const base = rawBase.replace(/\/+$/, '');
+    const suffix = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${suffix}`;
+  }
+
   @Cron('0 10 * * *')
   async sendOrderFeedbackRequests() {
     if (
@@ -555,9 +565,10 @@ export class NotificationTriggersJob {
       const params = {
         customer_name: sample.firstname ?? 'there',
         otp: '123456',
-        verification_link: `${
-          process.env.FRONTEND_URL ?? ''
-        }/verify-phone?challengeId=sample-preview-challenge`,
+        verification_link: this.frontendUrl(
+          '/verify-phone?challengeId=sample-preview-challenge',
+          { preferSmsLinkBase: true },
+        ),
       };
       const text = this.notificationService.buildSmsPreviewText(
         MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
@@ -574,10 +585,10 @@ export class NotificationTriggersJob {
 
     const params = {
       customer_name: sample.firstname ?? 'there',
-      verification_link: `${
-        process.env.FRONTEND_URL ?? ''
-      }/verify-email?token=sample-preview-token`,
-      account_link: `${process.env.FRONTEND_URL ?? ''}/account`,
+      verification_link: this.frontendUrl(
+        '/verify-email?token=sample-preview-token',
+      ),
+      account_link: this.frontendUrl('/account'),
     };
     const rendered = await this.notificationService.renderEmailTemplatePreview(
       EmailTemplateIds.UNVERIFIED_ACCOUNT_REMINDER,
@@ -700,10 +711,8 @@ export class NotificationTriggersJob {
       MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
       {
         customer_name: user.firstname ?? 'there',
-        verification_link: `${
-          process.env.FRONTEND_URL ?? ''
-        }/verify-email?token=${rawToken}`,
-        account_link: `${process.env.FRONTEND_URL ?? ''}/account`,
+        verification_link: this.frontendUrl(`/verify-email?token=${rawToken}`),
+        account_link: this.frontendUrl('/account'),
       },
       { jobName: CronJobName.UNVERIFIED_ACCOUNT_REMINDERS },
     );
@@ -737,9 +746,10 @@ export class NotificationTriggersJob {
       {
         customer_name: user.firstname ?? 'there',
         otp,
-        verification_link: `${
-          process.env.FRONTEND_URL ?? ''
-        }/verify-phone?challengeId=${challengeId}`,
+        verification_link: this.frontendUrl(
+          `/verify-phone?challengeId=${challengeId}`,
+          { preferSmsLinkBase: true },
+        ),
       },
       { jobName: CronJobName.UNVERIFIED_ACCOUNT_REMINDERS },
     );
@@ -1882,17 +1892,18 @@ export class NotificationTriggersJob {
           channel === 'EMAIL'
             ? {
                 customer_name: name,
-                verification_link: `${
-                  process.env.FRONTEND_URL ?? ''
-                }/verify-email?token=sample-test-token`,
-                account_link: `${process.env.FRONTEND_URL ?? ''}/account`,
+                verification_link: this.frontendUrl(
+                  '/verify-email?token=sample-test-token',
+                ),
+                account_link: this.frontendUrl('/account'),
               }
             : {
                 customer_name: name,
                 otp: '123456',
-                verification_link: `${
-                  process.env.FRONTEND_URL ?? ''
-                }/verify-phone?challengeId=sample-test-challenge`,
+                verification_link: this.frontendUrl(
+                  '/verify-phone?challengeId=sample-test-challenge',
+                  { preferSmsLinkBase: true },
+                ),
               };
         await this.notificationService.sendNotification(
           channel,
