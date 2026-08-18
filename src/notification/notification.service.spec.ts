@@ -35,6 +35,7 @@ describe('NotificationService', () => {
           base_url: 'https://api.ng.termii.com/api',
           api_key: 'test-key',
           sender_id: 'Agrofount',
+          dnd_sender_id: 'N-Alert',
         },
         africasTalking: {
           base_url: 'https://api.africastalking.com/version1',
@@ -213,7 +214,7 @@ describe('NotificationService', () => {
       expect(recorded.failureCategory).toBeUndefined();
     });
 
-    it('sends SMS through the Termii sms/send endpoint', async () => {
+    it('sends transactional Termii SMS through the DND route with N-Alert', async () => {
       const { service, httpService } = setup({
         httpService: {
           post: jest.fn().mockReturnValue(
@@ -244,8 +245,47 @@ describe('NotificationService', () => {
         'https://api.ng.termii.com/api/sms/send',
         expect.objectContaining({
           to: '+2348012345678',
-          from: 'Agrofount',
+          from: 'N-Alert',
           sms: expect.stringContaining('Hi Amina'),
+          type: 'plain',
+          channel: 'dnd',
+          api_key: 'test-key',
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+          }),
+        }),
+      );
+    });
+
+    it('keeps promotional campaign Termii SMS on the generic route with Agrofount', async () => {
+      const { service, httpService } = setup({
+        httpService: {
+          post: jest.fn().mockReturnValue(
+            of({
+              data: {
+                code: 'ok',
+                message_id: 'termii-message-id',
+                message: 'Successfully Sent',
+              },
+            }),
+          ),
+        },
+      });
+
+      await service.sendSmsForCampaign(
+        '+2348012345678',
+        'user-1',
+        'Promo message',
+      );
+
+      expect(httpService.post).toHaveBeenCalledWith(
+        'https://api.ng.termii.com/api/sms/send',
+        expect.objectContaining({
+          to: '+2348012345678',
+          from: 'Agrofount',
+          sms: 'Promo message',
           type: 'plain',
           channel: 'generic',
           api_key: 'test-key',
@@ -267,6 +307,7 @@ describe('NotificationService', () => {
               base_url: 'https://api.ng.termii.com/api',
               api_key: 'test-key',
               sender_id: 'Agrofount',
+              dnd_sender_id: 'N-Alert',
             },
             africasTalking: {
               base_url: 'https://api.africastalking.com/version1',

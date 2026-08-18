@@ -11,6 +11,7 @@ export interface SmsConfig {
     base_url: string;
     api_key?: string;
     sender_id?: string;
+    dnd_sender_id?: string;
   };
   africasTalking: {
     base_url: string;
@@ -30,6 +31,7 @@ export const smsConfig: SmsConfig = {
     base_url: process.env.TERMII_BASE_URL || 'https://api.ng.termii.com/api',
     api_key: process.env.TERMII_API_KEY,
     sender_id: process.env.TERMII_SENDER_ID || 'Agrofount',
+    dnd_sender_id: process.env.TERMII_DND_SENDER_ID || 'N-Alert',
   },
   africasTalking: {
     base_url:

@@ -541,7 +541,11 @@ export class NotificationService {
     // Determine the message content based on the message type
     switch (messageType) {
       case MessageTypes.SEND_OTP:
-        const otpRes = await this.sendOTP(recipient, params.otp);
+        const otpRes = await this.sendOTP(
+          recipient,
+          params.otp,
+          messageType,
+        );
         await recordSms(undefined, otpRes);
 
         return otpRes;
@@ -552,7 +556,11 @@ export class NotificationService {
       case MessageTypes.NEW_VOUCHER:
         const voucherMessage = `Your voucher code is ${params.voucher_code}. Amount: ${params.amount}. Valid for 30 days.`;
 
-        const smsRes = await this.sendSmsMessage(voucherMessage, recipient);
+        const smsRes = await this.sendSmsMessage(
+          voucherMessage,
+          recipient,
+          messageType,
+        );
         await recordSms(voucherMessage, smsRes);
 
         return smsRes;
@@ -563,6 +571,7 @@ export class NotificationService {
         const paymentSmsRes = await this.sendSmsMessage(
           paymentMessage,
           recipient,
+          messageType,
         );
         await recordSms(paymentMessage, paymentSmsRes);
 
@@ -573,6 +582,7 @@ export class NotificationService {
         const orderUpdateSmsRes = await this.sendSmsMessage(
           orderUpdateMessage,
           recipient,
+          messageType,
         );
         await recordSms(orderUpdateMessage, orderUpdateSmsRes);
 
@@ -583,6 +593,7 @@ export class NotificationService {
         const pendingOrderSmsRes = await this.sendSmsMessage(
           pendingOrderMessage,
           recipient,
+          messageType,
         );
         await recordSms(pendingOrderMessage, pendingOrderSmsRes);
 
@@ -593,6 +604,7 @@ export class NotificationService {
         const loginInactivitySmsRes = await this.sendSmsMessage(
           loginInactivityMessage,
           recipient,
+          messageType,
         );
         await recordSms(loginInactivityMessage, loginInactivitySmsRes);
 
@@ -603,6 +615,7 @@ export class NotificationService {
         const unverifiedAccountSmsRes = await this.sendSmsMessage(
           unverifiedAccountMessage,
           recipient,
+          messageType,
         );
         await recordSms(unverifiedAccountMessage, unverifiedAccountSmsRes);
 
@@ -617,6 +630,7 @@ export class NotificationService {
         const cronSummarySmsRes = await this.sendSmsMessage(
           cronSummaryMessage,
           recipient,
+          messageType,
         );
         await recordSms(cronSummaryMessage, cronSummarySmsRes);
 
@@ -675,12 +689,13 @@ export class NotificationService {
   private async sendSmsMessage(
     message: string,
     recipient: string,
+    messageType?: MessageTypes,
   ): Promise<any> {
     const smsConfig = this.getSmsConfig();
     if (smsConfig.provider === 'africastalking') {
       return this.sendAfricasTalkingSmsMessage(message, recipient, smsConfig);
     }
-    return this.sendTermiiSmsMessage(message, recipient, smsConfig);
+    return this.sendTermiiSmsMessage(message, recipient, smsConfig, messageType);
   }
 
   private getSmsConfig(): SmsConfig {
@@ -691,15 +706,20 @@ export class NotificationService {
     message: string,
     recipient: string,
     smsConfig: SmsConfig,
+    messageType?: MessageTypes,
   ): Promise<any> {
-    const { base_url, api_key, sender_id } = smsConfig.termii;
+    const { base_url, api_key, sender_id, dnd_sender_id } = smsConfig.termii;
+    const termiiRoute = this.getTermiiRoute(messageType);
     try {
       const payload = {
         to: recipient,
-        from: sender_id || 'Agrofount',
+        from:
+          termiiRoute.channel === 'dnd'
+            ? dnd_sender_id || 'N-Alert'
+            : sender_id || 'Agrofount',
         sms: message,
         type: 'plain',
-        channel: 'generic',
+        channel: termiiRoute.channel,
         api_key,
       };
 
@@ -731,6 +751,23 @@ export class NotificationService {
           [error.message, responseDetail].filter(Boolean).join(' — ') ||
           'Unknown error occurred',
       };
+    }
+  }
+
+  private getTermiiRoute(messageType?: MessageTypes): {
+    channel: 'generic' | 'dnd';
+  } {
+    switch (messageType) {
+      case MessageTypes.SEND_OTP:
+      case MessageTypes.NEW_VOUCHER:
+      case MessageTypes.PAYMENT_RECEIVED_NOTIFICATION:
+      case MessageTypes.ORDER_UPDATED_NOTIFICATION:
+      case MessageTypes.PENDING_ORDER_REMINDER:
+      case MessageTypes.UNVERIFIED_ACCOUNT_REMINDER:
+      case MessageTypes.CRON_JOB_SUMMARY:
+        return { channel: 'dnd' };
+      default:
+        return { channel: 'generic' };
     }
   }
 
@@ -787,7 +824,11 @@ export class NotificationService {
     }
   }
 
-  private async sendOTP(recipient: string, otp: string) {
+  private async sendOTP(
+    recipient: string,
+    otp: string,
+    messageType: MessageTypes,
+  ) {
     if (!otp) {
       return {
         success: false,
@@ -798,6 +839,7 @@ export class NotificationService {
     return this.sendSmsMessage(
       `Agrofount verification code is ${otp}. It expires in 10 minutes.`,
       recipient,
+      messageType,
     );
   }
 
@@ -837,7 +879,11 @@ export class NotificationService {
     message: string,
     options?: { campaignId?: string; jobName?: string },
   ): Promise<any> {
-    const result = await this.sendSmsMessage(message, phone);
+    const result = await this.sendSmsMessage(
+      message,
+      phone,
+      MessageTypes.CAMPAIGN_NOTIFICATION,
+    );
     const failed = result?.success === false;
     await this.recordDelivery({
       messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
