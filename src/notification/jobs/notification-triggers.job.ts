@@ -170,7 +170,9 @@ export class NotificationTriggersJob {
 
   private frontendUrl(path = '', options?: { preferSmsLinkBase?: boolean }) {
     const rawBase =
-      (options?.preferSmsLinkBase ? process.env.SMS_LINK_BASE_URL : undefined) ||
+      (options?.preferSmsLinkBase
+        ? process.env.SMS_LINK_BASE_URL
+        : undefined) ||
       process.env.FRONTEND_URL ||
       '';
     const base = rawBase.replace(/\/+$/, '');

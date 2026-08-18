@@ -541,11 +541,7 @@ export class NotificationService {
     // Determine the message content based on the message type
     switch (messageType) {
       case MessageTypes.SEND_OTP:
-        const otpRes = await this.sendOTP(
-          recipient,
-          params.otp,
-          messageType,
-        );
+        const otpRes = await this.sendOTP(recipient, params.otp, messageType);
         await recordSms(undefined, otpRes);
 
         return otpRes;
@@ -695,7 +691,12 @@ export class NotificationService {
     if (smsConfig.provider === 'africastalking') {
       return this.sendAfricasTalkingSmsMessage(message, recipient, smsConfig);
     }
-    return this.sendTermiiSmsMessage(message, recipient, smsConfig, messageType);
+    return this.sendTermiiSmsMessage(
+      message,
+      recipient,
+      smsConfig,
+      messageType,
+    );
   }
 
   private getSmsConfig(): SmsConfig {
@@ -776,8 +777,7 @@ export class NotificationService {
     recipient: string,
     smsConfig: SmsConfig,
   ): Promise<any> {
-    const { base_url, api_key, username, sender_id } =
-      smsConfig.africasTalking;
+    const { base_url, api_key, username, sender_id } = smsConfig.africasTalking;
     try {
       const payload = new URLSearchParams({
         username,
