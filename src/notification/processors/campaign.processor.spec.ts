@@ -201,7 +201,7 @@ describe('CampaignProcessor', () => {
     expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
       '+2348012345678',
       'lead-1',
-      'You told us you want  in Lagos.',
+      'You told us you want poultry products in Lagos.',
       { campaignId: 'campaign-1' },
     );
   });
