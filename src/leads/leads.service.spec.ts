@@ -27,12 +27,22 @@ describe('LeadsService', () => {
     const dataSource = {
       createQueryBuilder: jest.fn(),
     };
+    const campaignService = {
+      create: jest.fn(),
+    };
     const service = new LeadsService(
       leadRepo as any,
       notificationService as any,
       dataSource as any,
+      campaignService as any,
     );
-    return { service, leadRepo, dataSource };
+    return {
+      service,
+      leadRepo,
+      notificationService,
+      dataSource,
+      campaignService,
+    };
   }
 
   describe('create', () => {
@@ -258,6 +268,7 @@ describe('LeadsService', () => {
         leadRepo as any,
         {} as any,
         dataSource as any,
+        {} as any,
       );
 
       const stats = await service.getStats();
@@ -266,6 +277,67 @@ describe('LeadsService', () => {
       expect(stats.convertedWithAccount).toBe(5);
       expect(stats.avgConversionDays).toBe(2.5);
       expect(stats.registeredNoOrderCount).toBe(7);
+    });
+  });
+
+  describe('notifyLead', () => {
+    it('renders personalization tokens before sending a single-lead SMS', async () => {
+      const lead = {
+        id: 'lead-1',
+        name: 'Uche Osamor',
+        phone: '+234 814 243 4661',
+        state: 'Lagos',
+        sourceLeadId: '7673567506610553109',
+        campaignName: 'Lead generation20260812170937',
+        customFields: {
+          'What do you want?': 'Chicken',
+          'Are you a new farmer?': 'Yes',
+        },
+        status: LeadStatus.Qualified,
+      };
+      const { service, notificationService } = setup([lead]);
+
+      await service.notifyLead(
+        'lead-1',
+        {
+          channel: 'sms',
+          message:
+            'Hi {{name}}, thanks for your interest in {{insights}}. Shop here: https://www.agrofount.com/shop or WhatsApp us: 09019170273.',
+        },
+        'admin-1',
+      );
+
+      expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
+        '+234 814 243 4661',
+        'admin-1',
+        'Hi Uche Osamor, thanks for your interest in Chicken. Shop here: https://www.agrofount.com/shop or WhatsApp us: 09019170273.',
+      );
+    });
+
+    it('uses a readable fallback when lead insights are missing', async () => {
+      const lead = {
+        id: 'lead-1',
+        name: 'Amina Yusuf',
+        phone: '+2348012345678',
+        customFields: null,
+        status: LeadStatus.New,
+      };
+      const { service, notificationService } = setup([lead]);
+
+      await service.notifyLead(
+        'lead-1',
+        {
+          channel: 'sms',
+          message: 'Hi {{name}}, thanks for your interest in {{insights}}.',
+        },
+        'admin-1',
+      );
+
+      expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
+        '+2348012345678',
+        'admin-1',
+        'Hi Amina Yusuf, thanks for your interest in poultry products.',
+      );
     });
   });
 

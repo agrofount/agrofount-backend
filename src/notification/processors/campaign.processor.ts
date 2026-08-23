@@ -11,8 +11,8 @@ import {
 } from '../entities/notification-campaign.entity';
 import { UserEntity } from '../../user/entities/user.entity';
 import { LeadEntity } from '../../leads/entities/lead.entity';
-import { extractLeadInsights } from '../../leads/lead-insights.util';
 import { renderTemplate } from '../utils/render-template.util';
+import { leadTemplateVariables } from '../../leads/lead-template-variables.util';
 
 // Channels only meaningful for a lead: leads have no app account (no push
 // token, no websocket session), so IN_APP/PUSH are structurally
@@ -24,9 +24,16 @@ const LEAD_CAPABLE_CHANNELS = new Set(['EMAIL', 'SMS']);
 // blank substitutions — this is a one-off address, not a real lead record.
 const TEST_SEND_VARIABLES: Record<string, string> = {
   name: 'Test User',
+  phone: '+2348012345678',
   state: 'Lagos',
   statedInterest: 'poultry feed',
+  insights: 'poultry feed',
   isNewFarmer: 'Yes',
+  sourceLeadId: 'test-source-lead',
+  campaignId: 'test-campaign',
+  campaignName: 'Test Lead Campaign',
+  adName: 'Test Ad',
+  formName: 'Test Form',
 };
 
 // Minimal shape a test-send needs — deliberately not the full
@@ -40,21 +47,6 @@ export type CampaignDraftContent = {
   emailContent?: string;
   audienceType?: CampaignAudienceType;
 };
-
-function leadTemplateVariables(lead: LeadEntity): Record<string, string> {
-  const insights = extractLeadInsights(lead.customFields);
-  return {
-    name: lead.name ?? '',
-    state: lead.state ?? '',
-    statedInterest: insights.statedInterest ?? '',
-    isNewFarmer:
-      insights.isNewFarmer === true
-        ? 'Yes'
-        : insights.isNewFarmer === false
-        ? 'No'
-        : '',
-  };
-}
 
 @Processor('notification-campaigns')
 export class CampaignProcessor extends WorkerHost {

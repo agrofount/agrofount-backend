@@ -43,6 +43,8 @@ export interface CampaignAudience {
   // Only used when audienceType is Leads.
   leadStatuses?: string[];
   leadSources?: string[];
+  leadSourceIds?: string[];
+  leadCampaignNames?: string[];
 }
 
 @Entity('notification_campaign')

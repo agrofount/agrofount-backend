@@ -125,6 +125,8 @@ describe('CampaignProcessor', () => {
     const { processor, notificationService, campaignService } = setup();
     campaignService.findOne.mockResolvedValue({
       ...baseCampaign,
+      message:
+        'Hi {{name}}, we will call {{phone}} about {{insights}} from {{campaignName}}/{{sourceLeadId}}.',
       channels: ['SMS'],
       ctaText: 'Get Started',
       ctaLink: 'https://agrofount.com/register',
@@ -136,6 +138,8 @@ describe('CampaignProcessor', () => {
         email: null,
         phone: '+2348012345678',
         state: 'Lagos',
+        sourceLeadId: 'meta-lead-1',
+        campaignName: 'Poultry Starter',
         customFields: { 'What do you want?': 'layer feed' },
       },
     ]);
@@ -145,7 +149,7 @@ describe('CampaignProcessor', () => {
     expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
       '+2348012345678',
       'lead-1',
-      'You told us you want layer feed in Lagos. Get Started: https://agrofount.com/register',
+      'Hi Amina, we will call +2348012345678 about layer feed from Poultry Starter/meta-lead-1. Get Started: https://agrofount.com/register',
       { campaignId: 'campaign-1' },
     );
   });

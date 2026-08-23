@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, ILike, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Workbook } from 'exceljs';
 import { LeadEntity, LeadSource, LeadStatus } from './entities/lead.entity';
 import { CreateLeadDto } from './dto/create-lead.dto';
@@ -14,6 +14,14 @@ import { NotificationService } from '../notification/notification.service';
 import { MessageTypes } from '../notification/types/notification.type';
 import { UserEntity } from '../user/entities/user.entity';
 import { extractLeadInsights, hasPurchaseIntent } from './lead-insights.util';
+import { BulkSmsLeadsDto } from './dto/bulk-sms-leads.dto';
+import { CampaignService } from '../notification/services/campaign.service';
+import {
+  CampaignAudienceType,
+  CampaignCategory,
+} from '../notification/entities/notification-campaign.entity';
+import { renderTemplate } from '../notification/utils/render-template.util';
+import { leadTemplateVariables } from './lead-template-variables.util';
 
 @Injectable()
 export class LeadsService {
@@ -22,6 +30,7 @@ export class LeadsService {
     private readonly leadRepo: Repository<LeadEntity>,
     private readonly notificationService: NotificationService,
     private readonly dataSource: DataSource,
+    private readonly campaignService: CampaignService,
   ) {}
 
   private isXlsxBuffer(buffer: Buffer): boolean {
@@ -265,42 +274,51 @@ export class LeadsService {
     search?: string;
     status?: string;
     source?: string;
+    sourceLeadId?: string;
+    campaignName?: string;
   }) {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(100, Math.max(1, params.limit ?? 20));
     const skip = (page - 1) * limit;
 
-    const where: Record<string, unknown>[] = [];
-    const baseFilter: Record<string, unknown> = {};
+    const query = this.leadRepo.createQueryBuilder('lead');
 
     if (
       params.status &&
       Object.values(LeadStatus).includes(params.status as LeadStatus)
     ) {
-      baseFilter.status = params.status;
+      query.andWhere('lead.status = :status', { status: params.status });
     }
     if (
       params.source &&
       Object.values(LeadSource).includes(params.source as LeadSource)
     ) {
-      baseFilter.source = params.source;
+      query.andWhere('lead.source = :source', { source: params.source });
+    }
+    if (params.sourceLeadId?.trim()) {
+      query.andWhere('lead.sourceLeadId ILIKE :sourceLeadId', {
+        sourceLeadId: `%${params.sourceLeadId.trim()}%`,
+      });
+    }
+    if (params.campaignName?.trim()) {
+      query.andWhere('lead.campaignName ILIKE :campaignName', {
+        campaignName: `%${params.campaignName.trim()}%`,
+      });
     }
 
-    if (params.search) {
+    if (params.search?.trim()) {
       const s = params.search.trim();
-      where.push({ ...baseFilter, name: ILike(`%${s}%`) });
-      where.push({ ...baseFilter, phone: ILike(`%${s}%`) });
-      where.push({ ...baseFilter, state: ILike(`%${s}%`) });
-    } else {
-      where.push(baseFilter);
+      query.andWhere(
+        '(lead.name ILIKE :search OR lead.phone ILIKE :search OR lead.state ILIKE :search OR lead.campaignName ILIKE :search OR lead.sourceLeadId ILIKE :search)',
+        { search: `%${s}%` },
+      );
     }
 
-    const [data, total] = await this.leadRepo.findAndCount({
-      where: where.length === 1 ? where[0] : where,
-      order: { createdAt: 'DESC' },
-      skip,
-      take: limit,
-    });
+    const [data, total] = await query
+      .orderBy('lead.createdAt', 'DESC')
+      .skip(skip)
+      .take(limit)
+      .getManyAndCount();
 
     return {
       data,
@@ -311,6 +329,29 @@ export class LeadsService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  async sendBulkSms(dto: BulkSmsLeadsDto, adminId: string) {
+    const audience = {
+      all: false,
+      states: dto.states,
+      leadStatuses: dto.statuses,
+      leadSources: dto.sources,
+      leadSourceIds: dto.sourceLeadIds ?? dto.sourceIds,
+      leadCampaignNames: dto.campaignNames,
+    };
+
+    return this.campaignService.create(
+      {
+        title: dto.title?.trim() || 'Lead SMS campaign',
+        message: dto.message,
+        category: CampaignCategory.PROMOTIONAL,
+        channels: ['sms'],
+        audience,
+        audienceType: CampaignAudienceType.Leads,
+      },
+      adminId,
+    );
   }
 
   async getStats() {
@@ -407,6 +448,11 @@ export class LeadsService {
     adminId: string,
   ): Promise<{ success: boolean }> {
     const lead = await this.findOne(id);
+    const variables = leadTemplateVariables(lead);
+    const message = renderTemplate(dto.message, variables);
+    const subject = dto.subject
+      ? renderTemplate(dto.subject, variables)
+      : 'Message from Agrofount';
 
     if (dto.channel === 'sms') {
       if (!lead.phone)
@@ -414,16 +460,16 @@ export class LeadsService {
       await this.notificationService.sendSmsForCampaign(
         lead.phone,
         adminId,
-        dto.message,
+        message,
       );
     } else {
       if (!lead.email)
         throw new BadRequestException('Lead has no email address');
       await this.notificationService.sendCustomEmail(
         { userId: adminId, email: lead.email },
-        dto.subject ?? 'Message from Agrofount',
-        `<p>${dto.message.replace(/\n/g, '<br>')}</p>`,
-        dto.message,
+        subject,
+        `<p>${message.replace(/\n/g, '<br>')}</p>`,
+        message,
         MessageTypes.CAMPAIGN_NOTIFICATION,
       );
     }
