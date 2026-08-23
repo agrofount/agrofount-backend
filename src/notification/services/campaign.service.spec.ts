@@ -37,7 +37,7 @@ describe('CampaignService', () => {
       expect(qb.andWhere).not.toHaveBeenCalled();
     });
 
-    it('filters by state, valid lead statuses, and lead sources', async () => {
+    it('filters by state, valid lead statuses, lead sources, source IDs, and campaign names', async () => {
       const qb = chainableQueryBuilder([{ id: 'lead-1' }]);
       const { service } = setup(qb);
 
@@ -45,6 +45,8 @@ describe('CampaignService', () => {
         states: ['Lagos'],
         leadStatuses: [LeadStatus.Qualified, 'not-a-real-status'],
         leadSources: ['website'],
+        leadSourceIds: ['meta-lead-1'],
+        leadCampaignNames: ['Poultry Starter'],
       });
 
       expect(qb.andWhere).toHaveBeenCalledWith('lead.state IN (:...states)', {
@@ -57,6 +59,11 @@ describe('CampaignService', () => {
       expect(qb.andWhere).toHaveBeenCalledWith('lead.source IN (:...sources)', {
         sources: ['website'],
       });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'lead.sourceLeadId IN (:...sourceLeadIds)',
+        { sourceLeadIds: ['meta-lead-1'] },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(expect.any(Object));
     });
   });
 

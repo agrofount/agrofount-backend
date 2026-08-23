@@ -29,6 +29,7 @@ import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
 import { NotifyLeadDto } from './dto/notify-lead.dto';
 import { LeadEntity } from './entities/lead.entity';
 import { extractLeadInsights } from './lead-insights.util';
+import { BulkSmsLeadsDto } from './dto/bulk-sms-leads.dto';
 
 @Controller('leads')
 @ApiTags('Leads')
@@ -96,6 +97,9 @@ export class LeadsController {
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('source') source?: string,
+    @Query('sourceLeadId') sourceLeadId?: string,
+    @Query('sourceId') sourceId?: string,
+    @Query('campaignName') campaignName?: string,
   ) {
     const result = await this.leadsService.findAll({
       page: page ? Number(page) : undefined,
@@ -103,15 +107,29 @@ export class LeadsController {
       search,
       status,
       source,
+      sourceLeadId: sourceLeadId ?? sourceId,
+      campaignName,
     });
     return { ...result, data: result.data.map(withInsights) };
+  }
+
+  @Post('bulk-sms')
+  @ApiOperation({
+    summary:
+      'Send a personalized bulk SMS campaign to filtered leads using template variables',
+  })
+  sendBulkSms(
+    @Body() dto: BulkSmsLeadsDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.leadsService.sendBulkSms(dto, user.id);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a single lead' })
   async findOne(@Param('id') id: string) {
     const lead = await this.leadsService.findOne(id);
-    return withInsights(lead);
+    return withLeadDetails(lead);
   }
 
   @Patch(':id/status')
@@ -143,4 +161,60 @@ export class LeadsController {
 
 function withInsights(lead: LeadEntity) {
   return { ...lead, insights: extractLeadInsights(lead.customFields) };
+}
+
+function withLeadDetails(lead: LeadEntity) {
+  const insights = extractLeadInsights(lead.customFields);
+  return {
+    ...lead,
+    insights,
+    personalizationVariables: {
+      name: lead.name ?? '',
+      phone: lead.phone ?? '',
+      state: lead.state ?? '',
+      statedInterest: insights.statedInterest ?? '',
+      insights: insights.statedInterest ?? '',
+      isNewFarmer:
+        insights.isNewFarmer === true
+          ? 'Yes'
+          : insights.isNewFarmer === false
+          ? 'No'
+          : '',
+      sourceLeadId: lead.sourceLeadId ?? '',
+      campaignId: lead.campaignId ?? '',
+      campaignName: lead.campaignName ?? '',
+      adName: lead.adName ?? '',
+      formName: lead.formName ?? '',
+    },
+    acquisition: {
+      source: lead.source,
+      sourceLeadId: lead.sourceLeadId,
+      sourceCreatedAt: lead.sourceCreatedAt,
+      campaignId: lead.campaignId,
+      campaignName: lead.campaignName,
+      adId: lead.adId,
+      adName: lead.adName,
+      formId: lead.formId,
+      formName: lead.formName,
+    },
+    contact: {
+      name: lead.name,
+      phone: lead.phone,
+      email: lead.email,
+      gender: lead.gender,
+      state: lead.state,
+      hasPhone: Boolean(lead.phone),
+      hasEmail: Boolean(lead.email),
+    },
+    lifecycle: {
+      status: lead.status,
+      notes: lead.notes,
+      managedBy: lead.managedBy,
+      contactedAt: lead.contactedAt,
+      convertedAt: lead.convertedAt,
+      convertedUserId: lead.convertedUserId,
+      createdAt: lead.createdAt,
+      updatedAt: lead.updatedAt,
+    },
+  };
 }

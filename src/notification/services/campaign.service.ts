@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { Brackets, DataSource, Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import {
@@ -13,7 +13,17 @@ import {
 import { CreateCampaignDto } from '../dto/create-campaign.dto';
 import { UserEntity } from '../../user/entities/user.entity';
 import { BusinessType, UserTypes } from '../../auth/enums/role.enum';
-import { LeadEntity, LeadStatus } from '../../leads/entities/lead.entity';
+import {
+  LeadEntity,
+  LeadSource,
+  LeadStatus,
+} from '../../leads/entities/lead.entity';
+
+function cleanStringList(values: string[] | undefined): string[] {
+  return (values ?? [])
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+}
 
 @Injectable()
 export class CampaignService {
@@ -144,10 +154,35 @@ export class CampaignService {
     if (safeStatus.length) {
       query.andWhere('lead.status IN (:...statuses)', { statuses: safeStatus });
     }
-    if (audience?.leadSources?.length) {
+    const validSources = Object.values(LeadSource);
+    const safeSources = cleanStringList(audience.leadSources).filter((source) =>
+      validSources.includes(source as LeadSource),
+    );
+    if (safeSources.length) {
       query.andWhere('lead.source IN (:...sources)', {
-        sources: audience.leadSources,
+        sources: safeSources,
       });
+    }
+    const sourceLeadIds = cleanStringList(audience.leadSourceIds);
+    if (sourceLeadIds.length) {
+      query.andWhere('lead.sourceLeadId IN (:...sourceLeadIds)', {
+        sourceLeadIds,
+      });
+    }
+    const campaignNames = cleanStringList(audience.leadCampaignNames);
+    if (campaignNames.length) {
+      query.andWhere(
+        new Brackets((qb) => {
+          campaignNames.forEach((campaignName, index) => {
+            const clause = `lead.campaignName ILIKE :leadCampaignName${index}`;
+            const params = {
+              [`leadCampaignName${index}`]: `%${campaignName}%`,
+            };
+            if (index === 0) qb.where(clause, params);
+            else qb.orWhere(clause, params);
+          });
+        }),
+      );
     }
     return query;
   }
@@ -180,6 +215,11 @@ export class CampaignService {
         'lead.email',
         'lead.phone',
         'lead.state',
+        'lead.sourceLeadId',
+        'lead.campaignId',
+        'lead.campaignName',
+        'lead.adName',
+        'lead.formName',
         'lead.customFields',
       ])
       .getMany();

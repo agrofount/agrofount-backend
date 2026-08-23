@@ -39,6 +39,14 @@ export class AudienceDto {
   @IsOptional()
   @IsArray()
   leadSources?: string[];
+
+  @IsOptional()
+  @IsArray()
+  leadSourceIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  leadCampaignNames?: string[];
 }
 
 export class CreateCampaignDto {
