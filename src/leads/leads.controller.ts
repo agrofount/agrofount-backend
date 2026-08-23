@@ -118,10 +118,7 @@ export class LeadsController {
     summary:
       'Send a personalized bulk SMS campaign to filtered leads using template variables',
   })
-  sendBulkSms(
-    @Body() dto: BulkSmsLeadsDto,
-    @CurrentUser() user: UserEntity,
-  ) {
+  sendBulkSms(@Body() dto: BulkSmsLeadsDto, @CurrentUser() user: UserEntity) {
     return this.leadsService.sendBulkSms(dto, user.id);
   }
 
