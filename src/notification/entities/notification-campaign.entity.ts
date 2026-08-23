@@ -41,6 +41,7 @@ export interface CampaignAudience {
   isVerified?: boolean;
   userTypes?: string[];
   // Only used when audienceType is Leads.
+  leadSearch?: string;
   leadStatuses?: string[];
   leadSources?: string[];
   leadSourceIds?: string[];

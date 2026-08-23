@@ -341,6 +341,42 @@ describe('LeadsService', () => {
     });
   });
 
+  describe('sendBulkSms', () => {
+    it('passes list filters through to the lead campaign audience', async () => {
+      const { service, campaignService } = setup();
+      campaignService.create.mockResolvedValue({ id: 'campaign-1' });
+
+      await service.sendBulkSms(
+        {
+          title: 'Filtered follow-up',
+          message: 'Hi {{name}}',
+          search: 'Lead generation20260812170937',
+          statuses: [LeadStatus.Qualified],
+          sources: [LeadSource.Meta],
+          sourceIds: ['7673567506610553109'],
+          campaignNames: ['Lead generation20260812170937'],
+        },
+        'admin-1',
+      );
+
+      expect(campaignService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          audienceType: 'leads',
+          audience: {
+            all: false,
+            leadSearch: 'Lead generation20260812170937',
+            states: undefined,
+            leadStatuses: [LeadStatus.Qualified],
+            leadSources: [LeadSource.Meta],
+            leadSourceIds: ['7673567506610553109'],
+            leadCampaignNames: ['Lead generation20260812170937'],
+          },
+        }),
+        'admin-1',
+      );
+    });
+  });
+
   describe('linkConversionByContact', () => {
     it('links an un-converted lead found by email and marks it converted', async () => {
       const lead = {

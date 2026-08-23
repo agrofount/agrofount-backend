@@ -17,6 +17,10 @@ import {
 
 export class AudienceDto {
   @IsOptional()
+  @IsString()
+  leadSearch?: string;
+
+  @IsOptional()
   @IsBoolean()
   all?: boolean;
 

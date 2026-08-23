@@ -298,6 +298,42 @@ describe('NotificationService', () => {
       );
     });
 
+    it('normalizes spaced campaign phone numbers before sending and recording delivery', async () => {
+      const { service, httpService, messageRepo } = setup({
+        httpService: {
+          post: jest.fn().mockReturnValue(
+            of({
+              data: {
+                code: 'ok',
+                message_id: 'termii-message-id',
+                message: 'Successfully Sent',
+              },
+            }),
+          ),
+        },
+      });
+
+      await service.sendSmsForCampaign(
+        '234 806 340 3494',
+        'lead-1',
+        'Promo message',
+      );
+
+      expect(httpService.post).toHaveBeenCalledWith(
+        'https://api.ng.termii.com/api/sms/send',
+        expect.objectContaining({
+          to: '2348063403494',
+        }),
+        expect.any(Object),
+      );
+      expect(messageRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipientPhone: '2348063403494',
+          status: 'SENT',
+        }),
+      );
+    });
+
     it("sends SMS through Africa's Talking when SMS_PROVIDER selects it", async () => {
       const { service, httpService } = setup({
         configService: {

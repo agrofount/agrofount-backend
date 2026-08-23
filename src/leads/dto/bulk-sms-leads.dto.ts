@@ -14,6 +14,14 @@ export class BulkSmsLeadsDto {
   @IsString()
   title?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Matches the lead list search across name, phone, state, campaign name, and source ID.',
+  })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
@@ -46,4 +54,11 @@ export class BulkSmsLeadsDto {
   @IsOptional()
   @IsArray()
   campaignNames?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Alias for a single campaignNames value.',
+  })
+  @IsOptional()
+  @IsString()
+  campaignName?: string;
 }

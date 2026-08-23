@@ -334,11 +334,14 @@ export class LeadsService {
   async sendBulkSms(dto: BulkSmsLeadsDto, adminId: string) {
     const audience = {
       all: false,
+      leadSearch: dto.search?.trim() || undefined,
       states: dto.states,
       leadStatuses: dto.statuses,
       leadSources: dto.sources,
       leadSourceIds: dto.sourceLeadIds ?? dto.sourceIds,
-      leadCampaignNames: dto.campaignNames,
+      leadCampaignNames:
+        dto.campaignNames ??
+        (dto.campaignName ? [dto.campaignName] : undefined),
     };
 
     return this.campaignService.create(

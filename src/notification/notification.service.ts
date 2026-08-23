@@ -515,6 +515,7 @@ export class NotificationService {
         'Recipient is required for SMS notifications',
       );
     }
+    const normalizedRecipient = this.normalizeSmsRecipient(recipient);
 
     const recordSms = (
       message?: string,
@@ -527,7 +528,7 @@ export class NotificationService {
         sender: smsSender,
         message,
         channel: 'SMS',
-        recipientPhone: recipient,
+        recipientPhone: normalizedRecipient,
         campaignId: options?.campaignId,
         jobName: options?.jobName,
         status: failed ? 'FAILED' : 'SENT',
@@ -688,15 +689,42 @@ export class NotificationService {
     messageType?: MessageTypes,
   ): Promise<any> {
     const smsConfig = this.getSmsConfig();
+    const normalizedRecipient = this.normalizeSmsRecipient(recipient);
     if (smsConfig.provider === 'africastalking') {
-      return this.sendAfricasTalkingSmsMessage(message, recipient, smsConfig);
+      return this.sendAfricasTalkingSmsMessage(
+        message,
+        normalizedRecipient,
+        smsConfig,
+      );
     }
     return this.sendTermiiSmsMessage(
       message,
-      recipient,
+      normalizedRecipient,
       smsConfig,
       messageType,
     );
+  }
+
+  private normalizeSmsRecipient(recipient: string): string {
+    const trimmed = recipient.trim();
+    const hasPlus = trimmed.startsWith('+');
+    const digits = trimmed.replace(/\D/g, '');
+
+    if (!digits) return trimmed;
+
+    if (digits.startsWith('234')) {
+      return hasPlus ? `+${digits}` : digits;
+    }
+
+    if (digits.startsWith('0') && digits.length === 11) {
+      return `234${digits.slice(1)}`;
+    }
+
+    if (digits.length === 10) {
+      return `234${digits}`;
+    }
+
+    return hasPlus ? `+${digits}` : digits;
   }
 
   private getSmsConfig(): SmsConfig {
@@ -879,9 +907,10 @@ export class NotificationService {
     message: string,
     options?: { campaignId?: string; jobName?: string },
   ): Promise<any> {
+    const normalizedPhone = this.normalizeSmsRecipient(phone);
     const result = await this.sendSmsMessage(
       message,
-      phone,
+      normalizedPhone,
       MessageTypes.CAMPAIGN_NOTIFICATION,
     );
     const failed = result?.success === false;
@@ -891,7 +920,7 @@ export class NotificationService {
       sender: 'Agrofount',
       message,
       channel: 'SMS',
-      recipientPhone: phone,
+      recipientPhone: normalizedPhone,
       campaignId: options?.campaignId,
       jobName: options?.jobName,
       status: failed ? 'FAILED' : 'SENT',
