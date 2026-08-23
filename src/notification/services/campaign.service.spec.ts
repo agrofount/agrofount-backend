@@ -42,6 +42,7 @@ describe('CampaignService', () => {
       const { service } = setup(qb);
 
       await service.resolveLeadAudience({
+        leadSearch: 'Lead generation20260812170937',
         states: ['Lagos'],
         leadStatuses: [LeadStatus.Qualified, 'not-a-real-status'],
         leadSources: ['website'],
@@ -52,6 +53,10 @@ describe('CampaignService', () => {
       expect(qb.andWhere).toHaveBeenCalledWith('lead.state IN (:...states)', {
         states: ['Lagos'],
       });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        '(lead.name ILIKE :leadSearch OR lead.phone ILIKE :leadSearch OR lead.state ILIKE :leadSearch OR lead.campaignName ILIKE :leadSearch OR lead.sourceLeadId ILIKE :leadSearch)',
+        { leadSearch: '%Lead generation20260812170937%' },
+      );
       expect(qb.andWhere).toHaveBeenCalledWith(
         'lead.status IN (:...statuses)',
         { statuses: [LeadStatus.Qualified] },

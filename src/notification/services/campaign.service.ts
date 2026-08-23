@@ -147,6 +147,13 @@ export class CampaignService {
     if (audience?.states?.length) {
       query.andWhere('lead.state IN (:...states)', { states: audience.states });
     }
+    const leadSearch = audience.leadSearch?.trim();
+    if (leadSearch) {
+      query.andWhere(
+        '(lead.name ILIKE :leadSearch OR lead.phone ILIKE :leadSearch OR lead.state ILIKE :leadSearch OR lead.campaignName ILIKE :leadSearch OR lead.sourceLeadId ILIKE :leadSearch)',
+        { leadSearch: `%${leadSearch}%` },
+      );
+    }
     const validStatus = Object.values(LeadStatus);
     const safeStatus = (audience.leadStatuses ?? []).filter((s) =>
       validStatus.includes(s as LeadStatus),
