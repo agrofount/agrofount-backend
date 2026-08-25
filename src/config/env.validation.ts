@@ -16,8 +16,6 @@ const REQUIRED_PRODUCTION_VARIABLES = [
   'MFA_ENCRYPTION_KEY',
   'PAYSTACK_SECRET_KEY',
   'PAYSTACK_URL',
-  'SEND_IN_BLUE_API_KEY',
-  'SEND_IN_BLUE_FROM_EMAIL',
   'AWS_S3_REGION',
   'AWS_BUCKET_NAME',
   'FRONTEND_URL',
@@ -71,6 +69,31 @@ export function validateEnvironment(
         `Missing production environment variables: ${missingProduction.join(
           ', ',
         )}`,
+      );
+    }
+    const requiredEmailVariables = [
+      ['SEND_IN_BLUE_API_KEY'],
+      ['SEND_IN_BLUE_FROM_EMAIL', 'SENDGRID_FROM_EMAIL'],
+      ['AWS_SES_FROM_EMAIL'],
+      ['AWS_SES_REGION', 'AWS_REGION'],
+    ];
+    const missingEmailVariables = requiredEmailVariables
+      .filter((keys) => !getConfigValue(config, keys))
+      .map((keys) => keys[0]);
+    if (missingEmailVariables.length) {
+      throw new Error(
+        `Missing production environment variables: ${missingEmailVariables.join(
+          ', ',
+        )}`,
+      );
+    }
+    if (
+      !config.AWS_ACCESS_KEY_ID &&
+      !process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI &&
+      !process.env.AWS_WEB_IDENTITY_TOKEN_FILE
+    ) {
+      throw new Error(
+        'AWS credentials (AWS_ACCESS_KEY_ID or an IAM role) are required for scheduled email delivery through SES',
       );
     }
     const smsProviderRaw = String(

@@ -68,6 +68,36 @@ describe('CampaignProcessor', () => {
     );
   });
 
+  it('routes scheduled campaign email through SES', async () => {
+    const { processor, notificationService, campaignService } = setup();
+    campaignService.findOne.mockResolvedValue({
+      ...baseCampaign,
+      scheduledAt: new Date('2026-08-25T08:00:00.000Z'),
+      channels: ['EMAIL'],
+    });
+    campaignService.resolveLeadAudience.mockResolvedValue([
+      {
+        id: 'lead-1',
+        name: 'Amina',
+        email: 'amina@example.com',
+        phone: null,
+        state: 'Lagos',
+        customFields: { 'What do you want?': 'layer feed' },
+      },
+    ]);
+
+    await processor.process({ data: { campaignId: 'campaign-1' } } as any);
+
+    expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+      { userId: 'lead-1', email: 'amina@example.com' },
+      'Hi Amina',
+      expect.any(String),
+      'You told us you want layer feed in Lagos.',
+      MessageTypes.CAMPAIGN_NOTIFICATION,
+      { campaignId: 'campaign-1', channel: 'EMAIL', emailProvider: 'ses' },
+    );
+  });
+
   it('only attempts EMAIL and SMS for a lead audience, never IN_APP/PUSH', async () => {
     const { processor, notificationGateway, campaignService } = setup();
     campaignService.findOne.mockResolvedValue(baseCampaign);

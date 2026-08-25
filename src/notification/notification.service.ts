@@ -371,7 +371,11 @@ export class NotificationService {
     recipient: MessageRecipient,
     messageType: MessageTypes,
     params: Record<string, any>,
-    options?: { campaignId?: string; jobName?: string },
+    options?: {
+      campaignId?: string;
+      jobName?: string;
+      emailProvider?: 'brevo' | 'ses';
+    },
   ): Promise<any> {
     switch (type) {
       case 'EMAIL':
@@ -405,6 +409,7 @@ export class NotificationService {
       campaignId?: string;
       jobName?: string;
       channel?: string;
+      emailProvider?: 'brevo' | 'ses';
     },
   ): Promise<void> {
     if (!recipient.email) {
@@ -420,6 +425,7 @@ export class NotificationService {
         htmlContent,
         textContent,
         options?.replyTo,
+        { provider: this.resolveEmailProvider(messageType, options) },
       );
     } catch (error) {
       const errorMessage = error?.message || String(error);
@@ -454,7 +460,11 @@ export class NotificationService {
     recipient: MessageRecipient,
     params: Record<string, any>,
     messageType: MessageTypes,
-    options?: { campaignId?: string; jobName?: string },
+    options?: {
+      campaignId?: string;
+      jobName?: string;
+      emailProvider?: 'brevo' | 'ses';
+    },
   ): Promise<void> {
     if (!recipient.email) {
       throw new BadGatewayException(
@@ -465,7 +475,9 @@ export class NotificationService {
     const templateId = EmailTemplateIds[messageType];
 
     try {
-      await this.sendInBlue.sendEmail(recipient.email, templateId, params);
+      await this.sendInBlue.sendEmail(recipient.email, templateId, params, {
+        provider: this.resolveEmailProvider(messageType, options),
+      });
     } catch (error) {
       const errorMessage = error?.message || String(error);
       await this.recordDelivery({
@@ -495,6 +507,20 @@ export class NotificationService {
       jobName: options?.jobName,
       status: 'SENT',
     });
+  }
+
+  private resolveEmailProvider(
+    messageType: MessageTypes,
+    options?: {
+      jobName?: string;
+      campaignId?: string;
+      emailProvider?: 'brevo' | 'ses';
+    },
+  ): 'brevo' | 'ses' {
+    if (options?.emailProvider) return options.emailProvider;
+    if (options?.jobName) return 'ses';
+    if (messageType === MessageTypes.CRON_JOB_SUMMARY) return 'ses';
+    return 'brevo';
   }
 
   private async sendSms(

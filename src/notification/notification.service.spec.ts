@@ -152,6 +152,67 @@ describe('NotificationService', () => {
     });
   });
 
+  describe('email provider routing', () => {
+    it('uses Brevo by default for operational template email', async () => {
+      const { service, sendInBlue } = setup();
+
+      await service.sendNotification(
+        'EMAIL',
+        { userId: 'user-1', email: 'a@example.com' },
+        MessageTypes.VERIFY_EMAIL,
+        { name: 'Amina' },
+      );
+
+      expect(sendInBlue.sendEmail).toHaveBeenCalledWith(
+        'a@example.com',
+        1,
+        { name: 'Amina' },
+        { provider: 'brevo' },
+      );
+    });
+
+    it('uses SES for cron template email', async () => {
+      const { service, sendInBlue } = setup();
+
+      await service.sendNotification(
+        'EMAIL',
+        { userId: 'user-1', email: 'a@example.com' },
+        MessageTypes.UNVERIFIED_ACCOUNT_REMINDER,
+        { customer_name: 'Amina' },
+        { jobName: 'unverified_account_reminders' },
+      );
+
+      expect(sendInBlue.sendEmail).toHaveBeenCalledWith(
+        'a@example.com',
+        25,
+        { customer_name: 'Amina' },
+        { provider: 'ses' },
+      );
+    });
+
+    it('uses SES for explicitly scheduled custom email', async () => {
+      const { service, sendInBlue } = setup();
+
+      await service.sendCustomEmail(
+        { userId: 'user-1', email: 'a@example.com' },
+        'Scheduled campaign',
+        '<p>Hello</p>',
+        'Hello',
+        MessageTypes.CAMPAIGN_NOTIFICATION,
+        { campaignId: 'campaign-1', emailProvider: 'ses' },
+      );
+
+      expect(sendInBlue.sendCustomEmail).toHaveBeenCalledWith(
+        'a@example.com',
+        'Scheduled campaign',
+        '<p>Hello</p>',
+        'Hello',
+        undefined,
+        { provider: 'ses' },
+      );
+    });
+  });
+
   describe('sendNotification SMS delivery tracking', () => {
     it('records a failed Termii send as FAILED with an errorMessage and failureCategory', async () => {
       const { service, messageRepo } = setup({

@@ -27,11 +27,13 @@
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/config/database/data-source.ts",
     "migration:run:prod": "typeorm migration:run -d dist/config/database/data-source.js",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/config/database/data-source.ts",
-    "migration:show": "typeorm-ts-node-commonjs migration:show -d src/config/database/data-source.ts"
+    "migration:show": "typeorm-ts-node-commonjs migration:show -d src/config/database/data-source.ts",
+    "email:migrate:brevo-to-ses": "ts-node scripts/copy-brevo-templates-to-ses.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.864.0",
     "@aws-sdk/client-s3": "^3.1068.0",
+    "@aws-sdk/client-ses": "^3.1068.0",
     "@aws-sdk/lib-storage": "^3.1068.0",
     "@aws-sdk/s3-request-presigner": "^3.1068.0",
     "@keyv/redis": "^5.1.6",
