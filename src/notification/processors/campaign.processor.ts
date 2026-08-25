@@ -260,7 +260,11 @@ export class CampaignProcessor extends WorkerHost {
           }),
           message,
           MessageTypes.CAMPAIGN_NOTIFICATION,
-          { campaignId: campaign.id, channel: upperChannel },
+          {
+            campaignId: campaign.id,
+            channel: upperChannel,
+            ...this.getCampaignEmailProviderOption(campaign),
+          },
         );
         break;
 
@@ -340,7 +344,11 @@ export class CampaignProcessor extends WorkerHost {
           this.buildEmailHtml(campaign),
           campaign.message,
           MessageTypes.CAMPAIGN_NOTIFICATION,
-          { campaignId: campaign.id, channel: upperChannel },
+          {
+            campaignId: campaign.id,
+            channel: upperChannel,
+            ...this.getCampaignEmailProviderOption(campaign),
+          },
         );
         break;
 
@@ -477,6 +485,12 @@ export class CampaignProcessor extends WorkerHost {
       default:
         this.logger.warn(`Unknown channel: ${channel}`);
     }
+  }
+
+  private getCampaignEmailProviderOption(
+    campaign: NotificationCampaignEntity,
+  ): { emailProvider?: 'ses' } {
+    return campaign.scheduledAt ? { emailProvider: 'ses' } : {};
   }
 
   // Guards against a BullMQ job retry re-sending to recipients who already

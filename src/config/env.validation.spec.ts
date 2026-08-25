@@ -29,6 +29,9 @@ describe('validateEnvironment', () => {
     TERMII_SENDER_ID: 'Agrofount',
     AWS_S3_REGION: 'eu-west-2',
     AWS_BUCKET_NAME: 'agrofount',
+    AWS_ACCESS_KEY_ID: 'aws-access-key',
+    AWS_SES_REGION: 'eu-west-2',
+    AWS_SES_FROM_EMAIL: 'scheduled@example.com',
     FRONTEND_URL: 'https://agrofount.com',
     ADMIN_FRONTEND_URL: 'https://admin.agrofount.com',
     DB_SSL: 'true',
@@ -106,6 +109,40 @@ describe('validateEnvironment', () => {
     void TERMII_API_KEY;
 
     expect(() => validateEnvironment(config)).toThrow('TERMII_API_KEY');
+  });
+
+  it('requires Brevo config for production operational email', () => {
+    const { SEND_IN_BLUE_API_KEY, ...config } = validProduction;
+    void SEND_IN_BLUE_API_KEY;
+
+    expect(() =>
+      validateEnvironment({
+        ...config,
+      }),
+    ).toThrow('SEND_IN_BLUE_API_KEY');
+  });
+
+  it('requires SES sender config for production scheduled email', () => {
+    const { AWS_SES_FROM_EMAIL, ...config } = validProduction;
+    void AWS_SES_FROM_EMAIL;
+
+    expect(() => validateEnvironment(config)).toThrow('AWS_SES_FROM_EMAIL');
+  });
+
+  it('requires AWS credentials for production scheduled email', () => {
+    const { AWS_ACCESS_KEY_ID, ...config } = validProduction;
+    void AWS_ACCESS_KEY_ID;
+
+    expect(() => validateEnvironment(config)).toThrow(
+      'scheduled email delivery through SES',
+    );
+  });
+
+  it('accepts production hybrid email delivery with Brevo and SES configured', () => {
+    expect(validateEnvironment(validProduction)).toMatchObject({
+      SEND_IN_BLUE_API_KEY: 'sendinblue',
+      AWS_SES_FROM_EMAIL: 'scheduled@example.com',
+    });
   });
 
   it('rejects unknown SMS providers in production', () => {
