@@ -26,6 +26,7 @@ import {
   paginate,
   PaginateConfig,
   Paginated,
+  PaginationLimit,
   PaginateQuery,
 } from 'nestjs-paginate';
 import { AdminEntity } from '../admins/entities/admin.entity';
@@ -460,7 +461,7 @@ export class OrderService {
           : { user: { id: user.id } },
         relations: ['user'],
         defaultLimit: 25,
-        maxLimit: 100,
+        maxLimit: isAdmin ? PaginationLimit.NO_PAGINATION : 100,
       };
 
       const target = this.buildFindAllTarget(state, isAdmin, user);
