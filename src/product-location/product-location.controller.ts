@@ -12,6 +12,7 @@ import {
   UseInterceptors,
   BadRequestException,
   ParseUUIDPipe,
+  Query,
 } from '@nestjs/common';
 import { ProductLocationService } from './product-location.service';
 import {
@@ -24,6 +25,7 @@ import {
   ApiBody,
   ApiConsumes,
   ApiOperation,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -180,6 +182,21 @@ export class ProductLocationController {
     @Body() dto: UpdateSellerInterestNotesDto,
   ) {
     return this.sellerInterestService.updateNotes(id, dto.notes);
+  }
+
+  @Get(':slug/price-history')
+  @ApiOperation({ summary: 'Get product location price history for charting' })
+  @ApiQuery({
+    name: 'range',
+    required: false,
+    enum: ['1M', '3M', '6M', '1Y'],
+    example: '3M',
+  })
+  getPriceHistory(
+    @Param('slug') slug: string,
+    @Query('range') range: '1M' | '3M' | '6M' | '1Y' = '3M',
+  ) {
+    return this.productLocationService.getPriceHistory(slug, range);
   }
 
   @Get(':slug')

@@ -18,6 +18,7 @@ import { StateService } from '../state/state.service';
 import { paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { PRODUCT_LOCATION_PAGINATION_CONFIG } from './config/pagination.config';
 import { ProductLocationNotificationEntity } from './entities/product-location-notification.entity';
+import { PriceHistoryEntity } from './entities/product-location-price-history';
 import {
   MessageTypes,
   NotificationChannels,
@@ -32,6 +33,12 @@ import { InventoryService } from '../inventory/inventory.service';
 @Injectable()
 export class ProductLocationService {
   private readonly logger = new Logger(ProductLocationService.name);
+  private readonly priceHistoryRangeMonths = {
+    '1M': 1,
+    '3M': 3,
+    '6M': 6,
+    '1Y': 12,
+  };
 
   constructor(
     @InjectRepository(ProductLocationEntity)
@@ -40,6 +47,8 @@ export class ProductLocationService {
     private readonly seoRepo: Repository<SEOEntity>,
     @InjectRepository(ProductLocationNotificationEntity)
     private readonly productLocationNotificationRepo: Repository<ProductLocationNotificationEntity>,
+    @InjectRepository(PriceHistoryEntity)
+    private readonly priceHistoryRepo: Repository<PriceHistoryEntity>,
     private readonly productService: ProductService,
     private readonly countryService: CountryService,
     private readonly stateService: StateService,
@@ -152,6 +161,78 @@ export class ProductLocationService {
       throw new NotFoundException(`Product location ${id} not found`);
     }
     return productLocation;
+  }
+
+  async getPriceHistory(slug: string, range: '1M' | '3M' | '6M' | '1Y' = '3M') {
+    const productLocation = await this.productLocationRepo.findOne({
+      where: { productSlug: slug },
+      relations: ['product'],
+    });
+    if (!productLocation) {
+      throw new NotFoundException(`Product location ${slug} not found`);
+    }
+
+    const selectedRange = this.priceHistoryRangeMonths[range] ? range : '3M';
+    const to = new Date();
+    const from = new Date(to);
+    from.setMonth(
+      from.getMonth() - this.priceHistoryRangeMonths[selectedRange],
+    );
+
+    const changes = await this.priceHistoryRepo
+      .createQueryBuilder('history')
+      .where('history.productLocationId = :productLocationId', {
+        productLocationId: productLocation.id,
+      })
+      .andWhere('history.changedAt >= :from', { from })
+      .andWhere('history.changedAt <= :to', { to })
+      .orderBy('history.changedAt', 'ASC')
+      .getMany();
+
+    const previousChange = await this.priceHistoryRepo
+      .createQueryBuilder('history')
+      .where('history.productLocationId = :productLocationId', {
+        productLocationId: productLocation.id,
+      })
+      .andWhere('history.changedAt < :from', { from })
+      .orderBy('history.changedAt', 'DESC')
+      .getOne();
+
+    const currentPrice = Number(productLocation.price);
+    const priceAtRangeStart = previousChange
+      ? Number(previousChange.newPrice)
+      : changes[0]
+      ? Number(changes[0].oldPrice)
+      : currentPrice;
+
+    return {
+      productLocationId: productLocation.id,
+      slug: productLocation.productSlug,
+      productName: productLocation.product?.name,
+      currency: 'NGN',
+      range: selectedRange,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      currentPrice,
+      points: this.buildPriceHistoryPoints(
+        selectedRange,
+        from,
+        to,
+        priceAtRangeStart,
+        currentPrice,
+        changes,
+      ),
+      changes: changes.map((change) => ({
+        id: change.id,
+        oldPrice: Number(change.oldPrice),
+        newPrice: Number(change.newPrice),
+        changedAt: change.changedAt,
+        percentageChange: this.calculatePriceChangePercentage(
+          Number(change.oldPrice),
+          Number(change.newPrice),
+        ),
+      })),
+    };
   }
 
   async checkExistByCategory(category: AnimalCategory) {
@@ -465,6 +546,90 @@ export class ProductLocationService {
       .take(limit);
 
     return query.getMany();
+  }
+
+  private buildPriceHistoryPoints(
+    range: '1M' | '3M' | '6M' | '1Y',
+    from: Date,
+    to: Date,
+    priceAtRangeStart: number,
+    currentPrice: number,
+    changes: PriceHistoryEntity[],
+  ) {
+    const buckets =
+      range === '1M'
+        ? this.buildWeeklyBuckets(from, to)
+        : this.buildMonthlyBuckets(from, to);
+
+    let price = priceAtRangeStart;
+    let changeIndex = 0;
+
+    return buckets.map((bucket, index) => {
+      while (
+        changeIndex < changes.length &&
+        changes[changeIndex].changedAt <= bucket.end
+      ) {
+        price = Number(changes[changeIndex].newPrice);
+        changeIndex += 1;
+      }
+
+      const isLastPoint = index === buckets.length - 1;
+      return {
+        label: bucket.label,
+        date: bucket.date.toISOString(),
+        price: isLastPoint ? currentPrice : price,
+      };
+    });
+  }
+
+  private buildMonthlyBuckets(from: Date, to: Date) {
+    const buckets = [];
+    const cursor = new Date(from.getFullYear(), from.getMonth(), 1);
+
+    while (cursor <= to) {
+      const start = new Date(cursor);
+      const end = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+      end.setHours(23, 59, 59, 999);
+      buckets.push({
+        label: start.toLocaleString('en-US', { month: 'short' }),
+        date: start,
+        end: end > to ? to : end,
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    return buckets;
+  }
+
+  private buildWeeklyBuckets(from: Date, to: Date) {
+    const buckets = [];
+    const cursor = new Date(from);
+
+    while (cursor <= to) {
+      const start = new Date(cursor);
+      const end = new Date(cursor);
+      end.setDate(end.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+      buckets.push({
+        label: start.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        }),
+        date: start,
+        end: end > to ? to : end,
+      });
+      cursor.setDate(cursor.getDate() + 7);
+    }
+
+    return buckets;
+  }
+
+  private calculatePriceChangePercentage(
+    oldPrice: number,
+    newPrice: number,
+  ): number {
+    if (!oldPrice) return 0;
+    return Number((((newPrice - oldPrice) / oldPrice) * 100).toFixed(2));
   }
 
   // In ProductLocationService
