@@ -42,6 +42,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { CartService } from '../cart/cart.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { ConfigService } from '@nestjs/config';
+import { LogisticsPricingService } from '../logistics-pricing/logistics-pricing.service';
 
 export type BankAccount = {
   bankName: string;
@@ -64,6 +65,7 @@ export class OrderService {
     private readonly cartService: CartService,
     private readonly outboxService: OutboxService,
     private readonly configService: ConfigService,
+    private readonly logisticsPricingService: LogisticsPricingService,
   ) {}
 
   private getBankAccounts(): BankAccount[] {
@@ -119,6 +121,7 @@ export class OrderService {
       const unadjustedSummary = await this.calculateOrderSummary(
         cartData,
         isPickup,
+        { deliveryState: address?.state },
       );
       const discountAmount = await this.validateVoucher(
         voucherCode,
@@ -126,15 +129,10 @@ export class OrderService {
         unadjustedSummary.subTotal,
       );
 
-      const {
-        subTotal,
-        totalPrice,
-        vat,
-        deliveryFee,
-        volumeDiscountSavings,
-        volumeDiscountApplied,
-        originalSubTotal,
-      } = await this.calculateOrderSummary(cartData, isPickup, discountAmount);
+      const summary = await this.calculateOrderSummary(cartData, isPickup, {
+        deliveryState: address?.state,
+        discountAmount,
+      });
       const pickupSchedule = this.normalizePickupSchedule(
         isPickup,
         pickupDate,
@@ -145,27 +143,31 @@ export class OrderService {
         user,
         userId: user.id,
         items: this.buildOrderItems(cartData),
-        totalPrice,
+        totalPrice: summary.totalPrice,
         paymentMethod,
         paymentChannel,
         address: address || ({} as any),
-        subTotal,
+        subTotal: summary.subTotal,
         phoneNumber,
         fullName,
         isPickup,
         pickupDate: pickupSchedule.pickupDate,
         pickupTime: pickupSchedule.pickupTime,
-        vat,
-        deliveryFee,
+        vat: summary.vat,
+        deliveryFee: summary.deliveryFee,
         code: this.generateOrderCode(),
         voucherCode,
         idempotencyKey: idempotencyKey || null,
         discountAmount,
-        volumeDiscountSavings,
-        volumeDiscountApplied,
-        originalSubTotal,
+        volumeDiscountSavings: summary.volumeDiscountSavings,
+        volumeDiscountApplied: summary.volumeDiscountApplied,
+        originalSubTotal: summary.originalSubTotal,
         metadata: {
           vtpDetails: this.extractVtpDetails(cartData), // Store VTP metadata
+          logistics: {
+            state: summary.logisticsState,
+            lines: summary.logisticsLines,
+          },
         },
       };
 
@@ -244,7 +246,7 @@ export class OrderService {
           paymentChannel,
           paymentMethod,
           {
-            amount: totalPrice,
+            amount: summary.totalPrice,
             email: user.email,
             phone: user.phone,
             orderId: createdOrder.id,
@@ -309,6 +311,32 @@ export class OrderService {
       pickupDate: parsedPickupDate,
       pickupTime: pickupTime.length === 5 ? `${pickupTime}:00` : pickupTime,
     };
+  }
+
+  async getCheckoutSummary(
+    user: UserEntity,
+    options: {
+      isPickup: boolean;
+      deliveryState?: string;
+      voucherCode?: string;
+    },
+  ) {
+    const cartData = await this.cartService.getCartData(user.id);
+    await this.validateItemAvailability(cartData);
+    const unadjustedSummary = await this.calculateOrderSummary(
+      cartData,
+      options.isPickup,
+      { deliveryState: options.deliveryState },
+    );
+    const discountAmount = await this.validateVoucher(
+      options.voucherCode,
+      user,
+      unadjustedSummary.subTotal,
+    );
+    return this.calculateOrderSummary(cartData, options.isPickup, {
+      deliveryState: options.deliveryState,
+      discountAmount,
+    });
   }
 
   async addItems(id: string, dto: OrderItemDto[], admin: AdminEntity) {
@@ -659,10 +687,14 @@ export class OrderService {
   }
 
   async calculateOrderSummary(
-    cartData: object,
+    cartData: Record<string, Record<string, any>>,
     isPickup: boolean,
-    discountAmount = 0,
+    options: number | { deliveryState?: string; discountAmount?: number } = {},
   ) {
+    const deliveryState =
+      typeof options === 'number' ? undefined : options.deliveryState;
+    const discountAmount =
+      typeof options === 'number' ? options : options.discountAmount || 0;
     let subTotal = 0;
     let totalSavings = 0; // Track total savings from volume discounts
     let itemsCount = 0;
@@ -695,7 +727,13 @@ export class OrderService {
     }
 
     const { vat_charge } = OrderSettings;
-    const deliveryFee = 0; // isPickup ? 0 : (subTotal * delivery_charge) / 100;
+    const logisticsQuote = isPickup
+      ? { deliveryFee: 0, lines: [], state: undefined }
+      : await this.logisticsPricingService.calculateForCart(
+          cartData,
+          deliveryState,
+        );
+    const deliveryFee = logisticsQuote.deliveryFee;
     const vat = (subTotal * vat_charge) / 100;
     if (discountAmount < 0 || discountAmount >= subTotal + deliveryFee + vat) {
       throw new BadRequestException(
@@ -710,6 +748,8 @@ export class OrderService {
       totalPrice,
       vat: parseFloat(vat.toFixed(2)),
       deliveryFee: parseFloat(deliveryFee.toFixed(2)),
+      logisticsLines: logisticsQuote.lines,
+      logisticsState: logisticsQuote.state,
       discountAmount: parseFloat(discountAmount.toFixed(2)),
       volumeDiscountSavings: parseFloat(totalSavings.toFixed(2)),
       volumeDiscountApplied,

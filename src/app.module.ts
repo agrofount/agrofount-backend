@@ -51,6 +51,7 @@ import { LeadsModule } from './leads/leads.module';
 import { AiFarmAssistantModule } from './ai-farm-assistant/ai-farm-assistant.module';
 import { AiPlatformModule } from './ai-platform/ai-platform.module';
 import { BullModule } from '@nestjs/bullmq';
+import { LogisticsPricingModule } from './logistics-pricing/logistics-pricing.module';
 
 @Module({
   imports: [
@@ -139,6 +140,7 @@ import { BullModule } from '@nestjs/bullmq';
     VoucherModule,
     CareersModule,
     LeadsModule,
+    LogisticsPricingModule,
     // AiChatModule,
     DisbursementModule,
   ],

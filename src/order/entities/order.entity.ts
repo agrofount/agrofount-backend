@@ -138,6 +138,14 @@ export class OrderEntity {
   @Column('json', { nullable: true })
   metadata: {
     vtpDetails: any; // Store VTP metadata
+    logistics?: {
+      state?: {
+        id: string;
+        name: string;
+        code: string;
+      };
+      lines: any[];
+    };
   };
 
   @Column({ nullable: true })

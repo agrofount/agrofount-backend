@@ -3,6 +3,13 @@ import { OrderService } from './order.service';
 
 describe('OrderService pricing invariants', () => {
   const service = Object.create(OrderService.prototype) as OrderService;
+  (service as any).logisticsPricingService = {
+    calculateForCart: jest.fn().mockResolvedValue({
+      deliveryFee: 4000,
+      lines: [{ pricingId: 'default', amount: 4000 }],
+      state: { id: 'state-1', name: 'Lagos', code: 'LA' },
+    }),
+  };
 
   it('calculates totals exclusively from server-priced cart data', async () => {
     const summary = await service.calculateOrderSummary(
@@ -16,7 +23,7 @@ describe('OrderService pricing invariants', () => {
           },
         },
       },
-      false,
+      true,
       10,
     );
     expect(summary.subTotal).toBe(240);
@@ -28,10 +35,33 @@ describe('OrderService pricing invariants', () => {
     await expect(
       service.calculateOrderSummary(
         { product: { kg: { quantity: 1, platformPrice: 100 } } },
-        false,
+        true,
         100,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('adds logistics pricing when delivery is selected', async () => {
+    const summary = await service.calculateOrderSummary(
+      {
+        product: {
+          carton: {
+            quantity: 2,
+            platformPrice: 100,
+          },
+        },
+      },
+      false,
+      { deliveryState: 'Lagos' },
+    );
+
+    expect(summary.deliveryFee).toBe(4000);
+    expect(summary.totalPrice).toBe(4200);
+    expect(summary.logisticsState).toEqual({
+      id: 'state-1',
+      name: 'Lagos',
+      code: 'LA',
+    });
   });
 
   it('keeps pickup time as a database time string', () => {
