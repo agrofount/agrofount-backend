@@ -217,7 +217,7 @@ jobs:
           wait-for-service-stability: true
 
       - name: Diagnose failed ECS deployment
-        if: failure()
+        if: failure() && steps.task-def.outcome == 'success'
         run: |
           DIAG_FILE="ecs-deployment-diagnostics.txt"
           exec > >(tee -a "$DIAG_FILE") 2>&1
