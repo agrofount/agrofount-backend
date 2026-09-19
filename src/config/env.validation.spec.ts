@@ -41,6 +41,18 @@ describe('validateEnvironment', () => {
     expect(validateEnvironment(valid)).toBe(valid);
   });
 
+  it.each(['true', 'false'])('accepts DELIVERY_FEE_ENABLED=%s', (value) => {
+    expect(() =>
+      validateEnvironment({ ...valid, DELIVERY_FEE_ENABLED: value }),
+    ).not.toThrow();
+  });
+
+  it('rejects an invalid delivery fee flag', () => {
+    expect(() =>
+      validateEnvironment({ ...valid, DELIVERY_FEE_ENABLED: 'off' }),
+    ).toThrow('DELIVERY_FEE_ENABLED must be true or false');
+  });
+
   it('rejects production Redis without TLS', () => {
     expect(() =>
       validateEnvironment({

@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
+import { isUUID } from 'class-validator';
 import { ILike, Repository } from 'typeorm';
 import {
   LogisticsPricingEntity,
@@ -43,6 +45,7 @@ export class LogisticsPricingService {
     @InjectRepository(StateEntity)
     private readonly stateRepo: Repository<StateEntity>,
     private readonly stateService: StateService,
+    private readonly configService: ConfigService,
   ) {}
 
   async create(dto: CreateLogisticsPricingDto) {
@@ -132,6 +135,13 @@ export class LogisticsPricingService {
     }
 
     const state = await this.resolveState(stateIdentifier);
+    if (this.configService.get<string>('DELIVERY_FEE_ENABLED') === 'false') {
+      return {
+        deliveryFee: 0,
+        lines: [],
+        state: { id: state.id, name: state.name, code: state.code },
+      };
+    }
     const pricingRules = await this.logisticsPricingRepo.find({
       where: { state: { id: state.id }, isActive: true },
       relations: ['state'],
@@ -204,11 +214,19 @@ export class LogisticsPricingService {
 
   private async resolveState(identifier: string) {
     const trimmed = identifier.trim();
+    const legacyNames: Record<string, string> = {
+      abuja: 'Federal Capital Territory',
+      fct: 'Federal Capital Territory',
+      ibadan: 'Oyo',
+    };
     const state = await this.stateRepo.findOne({
       where: [
-        { id: trimmed },
+        ...(isUUID(trimmed) ? [{ id: trimmed }] : []),
         { name: ILike(trimmed) },
         { code: ILike(trimmed) },
+        ...(legacyNames[trimmed.toLowerCase()]
+          ? [{ name: ILike(legacyNames[trimmed.toLowerCase()]) }]
+          : []),
       ],
     });
 

@@ -121,7 +121,7 @@ export class OrderService {
       const unadjustedSummary = await this.calculateOrderSummary(
         cartData,
         isPickup,
-        { deliveryState: address?.state },
+        { deliveryState: address?.stateId || address?.state },
       );
       const discountAmount = await this.validateVoucher(
         voucherCode,
@@ -130,7 +130,7 @@ export class OrderService {
       );
 
       const summary = await this.calculateOrderSummary(cartData, isPickup, {
-        deliveryState: address?.state,
+        deliveryState: address?.stateId || address?.state,
         discountAmount,
       });
       const pickupSchedule = this.normalizePickupSchedule(

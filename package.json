@@ -14,6 +14,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main.js",
     "seed:careers": "node dist/seed/careers.seed.js",
+    "seed:states": "ts-node src/seed/states.seed.ts",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "lint:fix": "npm run lint -- --fix",
     "test": "jest",

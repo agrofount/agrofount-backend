@@ -1,4 +1,5 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ILike } from 'typeorm';
 import { LogisticsPricingService } from './logistics-pricing.service';
 import { LogisticsPricingMode } from './entities/logistics-pricing.entity';
 import {
@@ -7,7 +8,7 @@ import {
 } from '../product/types/product.enum';
 
 describe('LogisticsPricingService', () => {
-  function setup(rules: any[] = []) {
+  function setup(rules: any[] = [], deliveryFeeEnabled?: string) {
     const state = { id: 'state-1', name: 'Lagos', code: 'LA' };
     const logisticsPricingRepo = {
       find: jest.fn().mockResolvedValue(rules),
@@ -19,6 +20,7 @@ describe('LogisticsPricingService', () => {
       logisticsPricingRepo as any,
       stateRepo as any,
       {} as any,
+      { get: jest.fn().mockReturnValue(deliveryFeeEnabled) } as any,
     );
     return { service, logisticsPricingRepo, stateRepo };
   }
@@ -99,5 +101,67 @@ describe('LogisticsPricingService', () => {
     await expect(service.calculateForCart(cartData)).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  it('waives delivery fees when disabled without loading pricing rules', async () => {
+    const { service, logisticsPricingRepo } = setup([], 'false');
+    const quote = await service.calculateForCart(cartData, 'Lagos');
+    expect(quote).toEqual({
+      deliveryFee: 0,
+      lines: [],
+      state: { id: 'state-1', name: 'Lagos', code: 'LA' },
+    });
+    expect(logisticsPricingRepo.find).not.toHaveBeenCalled();
+  });
+
+  it('charges delivery fees when explicitly enabled', async () => {
+    const { service } = setup([], 'true');
+    expect(
+      (await service.calculateForCart(cartData, 'Lagos')).deliveryFee,
+    ).toBe(12000);
+  });
+
+  it('still requires a valid delivery state when fees are disabled', async () => {
+    const { service, stateRepo } = setup([], 'false');
+    await expect(service.calculateForCart(cartData)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    stateRepo.findOne.mockResolvedValue(null);
+    await expect(
+      service.calculateForCart(cartData, 'Unknown'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it.each(['Federal Capital Territory', 'FC', 'not-a-uuid'])(
+    'does not query the UUID column for textual state identifier %s',
+    async (identifier) => {
+      const { service, stateRepo } = setup();
+
+      await service.calculateForCart(cartData, ` ${identifier} `);
+
+      expect(stateRepo.findOne).toHaveBeenCalledWith({
+        where: [{ name: ILike(identifier) }, { code: ILike(identifier) }],
+      });
+    },
+  );
+
+  it('still resolves states by UUID', async () => {
+    const { service, stateRepo } = setup();
+    const id = 'c3b2d8b0-1b7e-41af-bdb1-e1a1019b3a4d';
+
+    await service.calculateForCart(cartData, id);
+
+    expect(stateRepo.findOne).toHaveBeenCalledWith({
+      where: [{ id }, { name: ILike(id) }, { code: ILike(id) }],
+    });
+  });
+
+  it('returns not found for an unknown delivery state', async () => {
+    const { service, stateRepo } = setup();
+    stateRepo.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.calculateForCart(cartData, 'Unknown State'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
