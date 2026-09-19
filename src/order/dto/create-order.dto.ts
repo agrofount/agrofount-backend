@@ -56,6 +56,11 @@ class AddressDto {
   @IsNotEmpty()
   state: string;
 
+  @ApiPropertyOptional({ description: 'Backend state ID for delivery pricing' })
+  @IsOptional()
+  @IsUUID()
+  stateId?: string;
+
   @ApiPropertyOptional({ description: 'State', example: 'CA' })
   @IsString()
   @IsOptional()

@@ -39,6 +39,12 @@ export function validateEnvironment(
   }
 
   const port = Number(config.DB_PORT);
+  if (
+    config.DELIVERY_FEE_ENABLED !== undefined &&
+    !['true', 'false'].includes(String(config.DELIVERY_FEE_ENABLED))
+  ) {
+    throw new Error('DELIVERY_FEE_ENABLED must be true or false');
+  }
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('DB_PORT must be a valid TCP port');
   }

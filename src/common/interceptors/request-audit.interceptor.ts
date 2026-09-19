@@ -1,6 +1,7 @@
 import {
   CallHandler,
   ExecutionContext,
+  HttpException,
   Injectable,
   Logger,
   NestInterceptor,
@@ -90,7 +91,11 @@ export class RequestAuditInterceptor implements NestInterceptor {
     shouldAudit: boolean,
     error?: any,
   ): Promise<void> {
-    const statusCode = error?.status || response.statusCode || 500;
+    const statusCode = error
+      ? error instanceof HttpException
+        ? error.getStatus()
+        : 500
+      : response.statusCode;
     const log = {
       requestId,
       method: request.method,

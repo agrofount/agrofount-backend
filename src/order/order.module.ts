@@ -10,6 +10,7 @@ import { ProductLocationModule } from '../product-location/product-location.modu
 import { InventoryModule } from '../inventory/inventory.module';
 import { CartModule } from '../cart/cart.module';
 import { OutboxModule } from '../outbox/outbox.module';
+import { LogisticsPricingModule } from '../logistics-pricing/logistics-pricing.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { OutboxModule } from '../outbox/outbox.module';
     InventoryModule,
     CartModule,
     OutboxModule,
+    LogisticsPricingModule,
   ],
   controllers: [OrderController],
   providers: [OrderService],

@@ -89,6 +89,24 @@ export class OrderController {
     return this.orderService.getMonthlyTarget();
   }
 
+  @Get('checkout-summary')
+  @UseGuards(UserAuthGuard)
+  @ApiOperation({
+    summary: 'Get checkout totals including delivery logistics fee',
+  })
+  getCheckoutSummary(
+    @CurrentUser() user: UserEntity,
+    @Query('isPickup') isPickup = 'false',
+    @Query('state') state?: string,
+    @Query('voucherCode') voucherCode?: string,
+  ) {
+    return this.orderService.getCheckoutSummary(user, {
+      isPickup: isPickup === 'true',
+      deliveryState: state,
+      voucherCode,
+    });
+  }
+
   @Get(':id')
   @UseGuards(UserAuthGuard)
   @ApiOperation({ summary: 'Get order by ID' })
