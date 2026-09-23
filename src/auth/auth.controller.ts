@@ -171,21 +171,34 @@ export class AuthController extends BaseController {
   async verifyEmailPost(
     @Query('token') queryToken: string,
     @Body('token') bodyToken: string,
+    @Request() req,
   ) {
-    await this.authService.verifyEmail(queryToken || bodyToken);
+    const user = await this.authService.verifyEmail(queryToken || bodyToken);
+    const { accessToken, refreshToken } = await this.authService.login(user, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
     return {
       success: true,
       message: 'Email verified successfully',
+      token: accessToken,
+      refreshToken,
     };
   }
 
   @Post('verify-phone')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async verifyPhone(@Body() payload: VerifyPhoneDto) {
-    await this.authService.verifyPhone(payload);
+  async verifyPhone(@Body() payload: VerifyPhoneDto, @Request() req) {
+    const user = await this.authService.verifyPhone(payload);
+    const { accessToken, refreshToken } = await this.authService.login(user, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
     return {
       success: true,
       message: 'Phone verified successfully',
+      token: accessToken,
+      refreshToken,
     };
   }
 
