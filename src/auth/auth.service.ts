@@ -385,8 +385,7 @@ export class AuthService {
       voucher,
     );
 
-    const payload = { email: user.email, id: user.id };
-    return payload;
+    return user;
   }
 
   async verifyPhone(dto: VerifyPhoneDto): Promise<any> {
