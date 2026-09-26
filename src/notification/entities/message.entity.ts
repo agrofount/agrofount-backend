@@ -57,6 +57,9 @@ export class MessageEntity {
   @Column({ nullable: true })
   recipientPhone: string;
 
+  @Column({ select: false, insert: false, update: false, nullable: true })
+  normalizedPhone: string;
+
   @CreateDateColumn()
   createdAt: Date;
 
