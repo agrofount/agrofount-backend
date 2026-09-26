@@ -350,22 +350,30 @@ export class LeadsService {
 
     // Include existing campaign logs and older individual sends, which were
     // recorded against the administrator rather than the lead.
+    // Matches are split into two indexed joins (userId, normalizedPhone) and
+    // combined with UNION ALL instead of a single OR'd regexp comparison,
+    // which forced an unindexed scan of the message table per lead and timed
+    // out once the requested page size grew (e.g. limit=1000).
     const smsHistory: { id: string; lastSmsSentAt: Date | null }[] = data.length
       ? await this.dataSource.query(
-          `SELECT lead.id, MAX(message."createdAt") AS "lastSmsSentAt"
-           FROM leads lead
-           INNER JOIN message ON (
-             message."userId" = lead.id::text
-             OR (
-               message."recipientPhone" IS NOT NULL AND lead.phone <> ''
-               AND regexp_replace(regexp_replace(message."recipientPhone", '[^0-9]', '', 'g'), '^0', '234')
-                 = regexp_replace(regexp_replace(lead.phone, '[^0-9]', '', 'g'), '^0', '234')
-             )
-           )
-           WHERE lead.id = ANY($1::uuid[])
-             AND message.channel = 'SMS' AND message.status = 'SENT'
-             AND message."messageType" = $2
-           GROUP BY lead.id`,
+          `SELECT id, MAX("createdAt") AS "lastSmsSentAt" FROM (
+             SELECT lead.id AS id, message."createdAt" AS "createdAt"
+             FROM leads lead
+             INNER JOIN message ON message."userId" = lead.id::text
+             WHERE lead.id = ANY($1::uuid[])
+               AND message.channel = 'SMS' AND message.status = 'SENT'
+               AND message."messageType" = $2
+
+             UNION ALL
+
+             SELECT lead.id AS id, message."createdAt" AS "createdAt"
+             FROM leads lead
+             INNER JOIN message ON message."normalizedPhone" = lead."normalizedPhone"
+             WHERE lead.id = ANY($1::uuid[])
+               AND message.channel = 'SMS' AND message.status = 'SENT'
+               AND message."messageType" = $2
+           ) combined
+           GROUP BY id`,
           [data.map((lead) => lead.id), MessageTypes.CAMPAIGN_NOTIFICATION],
         )
       : [];

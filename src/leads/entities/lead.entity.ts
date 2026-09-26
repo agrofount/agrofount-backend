@@ -36,6 +36,9 @@ export class LeadEntity {
   @Column()
   phone: string;
 
+  @Column({ select: false, insert: false, update: false, nullable: true })
+  normalizedPhone: string;
+
   @Column({ nullable: true })
   email: string;
 
