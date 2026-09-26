@@ -80,3 +80,73 @@ describe('AuthService security primitives', () => {
     );
   });
 });
+
+describe('Registration lead conversion', () => {
+  function setupRegistration() {
+    const service = Object.create(AuthService.prototype) as AuthService;
+    const userRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((user) => user),
+      save: jest.fn(async (user) => ({ ...user, id: 'registered-user' })),
+    };
+    const leadsService = {
+      linkConversionByContact: jest.fn().mockResolvedValue(undefined),
+    };
+    Object.assign(service, {
+      userRepository,
+      leadsService,
+      configService: { get: () => 'https://example.com' },
+      notificationService: {
+        sendNotification: jest.fn().mockResolvedValue(undefined),
+      },
+      issueOtpChallenge: jest.fn().mockResolvedValue('challenge'),
+    });
+    return { service, userRepository, leadsService };
+  }
+
+  it.each([
+    ['amina@example.com', { email: 'amina@example.com', phone: undefined }],
+    ['07061294970', { email: undefined, phone: '07061294970' }],
+  ])(
+    'links the saved account before completing registration for %s',
+    async (identifier, contact) => {
+      const { service, leadsService } = setupRegistration();
+      let finishLink: () => void;
+      let startedLink: () => void;
+      const started = new Promise<void>((resolve) => {
+        startedLink = resolve;
+      });
+      leadsService.linkConversionByContact.mockImplementation(() => {
+        startedLink();
+        return new Promise<void>((resolve) => {
+          finishLink = resolve;
+        });
+      });
+      let completed = false;
+      const registration = service
+        .register({ identifier, password: 'test-password' } as any)
+        .then((value) => {
+          completed = true;
+          return value;
+        });
+      await started;
+      expect(leadsService.linkConversionByContact).toHaveBeenCalledWith(
+        'registered-user',
+        contact,
+      );
+      expect(completed).toBe(false);
+      finishLink!();
+      await registration;
+      expect(completed).toBe(true);
+    },
+  );
+
+  it('does not convert a lead when account creation fails', async () => {
+    const { service, userRepository, leadsService } = setupRegistration();
+    userRepository.save.mockResolvedValue(null);
+    await expect(
+      service.register({ identifier: 'amina@example.com' } as any),
+    ).rejects.toThrow('User not created');
+    expect(leadsService.linkConversionByContact).not.toHaveBeenCalled();
+  });
+});

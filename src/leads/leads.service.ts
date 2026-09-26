@@ -112,21 +112,43 @@ export class LeadsService {
     userId: string,
     contact: { email?: string | null; phone?: string | null },
   ): Promise<void> {
-    if (!contact.email && !contact.phone) return;
+    const email = contact.email?.trim().toLowerCase();
+    let phone = contact.phone?.replace(/\D/g, '') || '';
+    if (/^0\d{10}$/.test(phone)) phone = `234${phone.slice(1)}`;
+    else if (/^\d{10}$/.test(phone)) phone = `234${phone}`;
 
-    const where: Record<string, unknown>[] = [];
-    if (contact.email) where.push({ email: contact.email });
-    if (contact.phone) where.push({ phone: contact.phone });
-
-    const lead = await this.leadRepo.findOne({ where });
-    if (!lead || lead.convertedUserId) return;
-
-    lead.convertedUserId = userId;
-    lead.convertedAt = new Date();
-    if (lead.status !== LeadStatus.Rejected) {
-      lead.status = LeadStatus.Converted;
+    const matches: string[] = [];
+    const parameters: Record<string, unknown> = {};
+    if (email) {
+      matches.push('LOWER(TRIM(email)) = :email');
+      parameters.email = email;
     }
-    await this.leadRepo.save(lead);
+    if (phone) {
+      const phoneVariants = [phone];
+      if (/^234\d{10}$/.test(phone)) {
+        phoneVariants.push(`0${phone.slice(3)}`, phone.slice(3));
+      }
+      matches.push(
+        "regexp_replace(phone, '[^0-9]', '', 'g') IN (:...phoneVariants)",
+      );
+      parameters.phoneVariants = phoneVariants;
+    }
+    if (!matches.length) return;
+
+    // One atomic update handles duplicate imports without overwriting an
+    // existing account link or resetting its conversion timestamp on retries.
+    await this.leadRepo
+      .createQueryBuilder()
+      .update(LeadEntity)
+      .set({
+        convertedUserId: userId,
+        convertedAt: () => 'CURRENT_TIMESTAMP',
+        status: LeadStatus.Converted,
+      })
+      .where('"convertedUserId" IS NULL')
+      .andWhere('"deletedAt" IS NULL')
+      .andWhere(`(${matches.join(' OR ')})`, parameters)
+      .execute();
   }
 
   // Fixed Meta/TikTok lead-gen fields the importer already maps onto real
@@ -279,7 +301,7 @@ export class LeadsService {
     campaignId?: string;
   }) {
     const page = Math.max(1, params.page ?? 1);
-    const limit = Math.min(100, Math.max(1, params.limit ?? 20));
+    const limit = Math.min(1000, Math.max(1, params.limit ?? 20));
     const skip = (page - 1) * limit;
 
     const query = this.leadRepo.createQueryBuilder('lead');
@@ -412,9 +434,7 @@ export class LeadsService {
     const conversionRate =
       total > 0 ? Math.round((converted / total) * 100 * 10) / 10 : 0;
 
-    // Distinct from the status-based `converted` count above: a lead can be
-    // linked to a registered account (convertedUserId set) even if its status
-    // stayed Rejected (see LeadsService.linkConversionByContact).
+    // Count account-linked conversions separately from manually marked leads.
     const { convertedWithAccount, avgConversionDays } = await this.leadRepo
       .createQueryBuilder('l')
       .select(
