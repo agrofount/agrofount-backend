@@ -931,31 +931,82 @@ export class NotificationService {
     phone: string,
     userId: string,
     message: string,
-    options?: { campaignId?: string; jobName?: string },
+    options?: {
+      campaignId?: string;
+      jobName?: string;
+      skipPreviouslySent?: boolean;
+    },
   ): Promise<any> {
     const normalizedPhone = this.normalizeSmsRecipient(phone);
-    const result = await this.sendSmsMessage(
-      message,
-      normalizedPhone,
-      MessageTypes.CAMPAIGN_NOTIFICATION,
-    );
-    const failed = result?.success === false;
-    await this.recordDelivery({
-      messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
-      userId,
-      sender: 'Agrofount',
-      message,
-      channel: 'SMS',
-      recipientPhone: normalizedPhone,
-      campaignId: options?.campaignId,
-      jobName: options?.jobName,
-      status: failed ? 'FAILED' : 'SENT',
-      errorMessage: failed ? result.error : undefined,
-      failureCategory: failed
-        ? classifyProviderError(result.error ?? '')
-        : undefined,
+    const send = async (
+      persist: (record: CreateNotificationDto) => Promise<unknown>,
+    ) => {
+      const result = await this.sendSmsMessage(
+        message,
+        normalizedPhone,
+        MessageTypes.CAMPAIGN_NOTIFICATION,
+      );
+      const failed = result?.success === false;
+      await persist({
+        messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+        userId,
+        sender: 'Agrofount',
+        message,
+        channel: 'SMS',
+        recipientPhone: normalizedPhone,
+        campaignId: options?.campaignId,
+        jobName: options?.jobName,
+        status: failed ? 'FAILED' : 'SENT',
+        errorMessage: failed ? result.error : undefined,
+        failureCategory: failed
+          ? classifyProviderError(result.error ?? '')
+          : undefined,
+      });
+      return result;
+    };
+
+    if (!options?.skipPreviouslySent) {
+      return send((record) => this.recordDelivery(record));
+    }
+
+    // Serialize history checks and sends for the same phone across campaign
+    // workers, including duplicate lead records with differently formatted phones.
+    const digits = normalizedPhone.replace(/\D/g, '');
+    const phoneVariants = [digits];
+    if (digits.startsWith('234') && digits.length === 13) {
+      phoneVariants.push(`0${digits.slice(3)}`, digits.slice(3));
+    }
+    return this.messageRepo.manager.transaction(async (manager) => {
+      await manager.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [`lead-sms:${digits}`],
+      );
+      const history = await manager.query(
+        `SELECT id FROM message
+         WHERE channel = 'SMS' AND status = 'SENT' AND "messageType" = $1
+           AND ("userId" = $2 OR regexp_replace("recipientPhone", '[^0-9]', '', 'g') = ANY($3::text[]))
+         LIMIT 1`,
+        [MessageTypes.CAMPAIGN_NOTIFICATION, userId, phoneVariants],
+      );
+      const repository = manager.getRepository(MessageEntity);
+      const persist = (record: CreateNotificationDto) =>
+        repository.save(repository.create(record));
+      if (history.length) {
+        await persist({
+          messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
+          userId,
+          sender: 'Agrofount',
+          message,
+          channel: 'SMS',
+          recipientPhone: normalizedPhone,
+          campaignId: options.campaignId,
+          status: 'SKIPPED',
+          errorMessage: 'Lead has already received an SMS',
+        });
+        return { skipped: true };
+      }
+      return send(persist);
     });
-    return result;
   }
 
   private async sendPushNotification(recipient: string, message: MessageTypes) {

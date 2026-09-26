@@ -50,6 +50,15 @@ export class BulkSmsLeadsDto {
   @IsArray()
   sourceIds?: string[];
 
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Exact source campaign IDs from the leads table.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  campaignIds?: string[];
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()

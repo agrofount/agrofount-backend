@@ -100,6 +100,8 @@ export class CampaignProcessor extends WorkerHost {
       const results = await Promise.allSettled(tasks);
 
       for (const result of results) {
+        if (result.status === 'fulfilled' && result.value === 'skipped')
+          continue;
         totalSent++;
         if (result.status === 'fulfilled') {
           totalDelivered++;
@@ -240,12 +242,12 @@ export class CampaignProcessor extends WorkerHost {
             status: 'SKIPPED',
             errorMessage: 'Lead has no email address on file',
           });
-          return;
+          return 'skipped' as const;
         }
         if (
           await this.isDuplicateDelivery(campaign, lead.id, upperChannel, title)
         ) {
-          return;
+          return 'skipped' as const;
         }
         await this.notificationService.sendCustomEmail(
           { userId: lead.id, email: lead.email },
@@ -280,19 +282,25 @@ export class CampaignProcessor extends WorkerHost {
             status: 'SKIPPED',
             errorMessage: 'Lead has no phone number on file',
           });
-          return;
+          return 'skipped' as const;
         }
         if (
           await this.isDuplicateDelivery(campaign, lead.id, upperChannel, title)
         ) {
-          return;
+          return 'skipped' as const;
         }
-        await this.notificationService.sendSmsForCampaign(
+        const smsResult = await this.notificationService.sendSmsForCampaign(
           lead.phone,
           lead.id,
           this.appendCtaToSmsMessage(message, campaign),
-          { campaignId: campaign.id },
+          { campaignId: campaign.id, skipPreviouslySent: true },
         );
+        if (smsResult?.skipped) return 'skipped' as const;
+        if (smsResult?.success === false) {
+          throw new Error(
+            smsResult.error || 'SMS provider rejected the message',
+          );
+        }
         break;
 
       default:

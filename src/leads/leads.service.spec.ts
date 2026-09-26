@@ -45,6 +45,65 @@ describe('LeadsService', () => {
     };
   }
 
+  describe('findAll SMS history', () => {
+    it('adds successful send history without relying on lead status', async () => {
+      const { service, leadRepo, dataSource } = setup();
+      const leads = [
+        { id: 'lead-1', status: LeadStatus.New },
+        { id: 'lead-2', status: LeadStatus.Contacted },
+      ];
+      const query = {
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([leads, 2]),
+      };
+      Object.assign(leadRepo, { createQueryBuilder: () => query });
+      const lastSmsSentAt = new Date('2026-09-26T10:00:00Z');
+      const historyQuery = jest
+        .fn()
+        .mockResolvedValue([{ id: 'lead-1', lastSmsSentAt }]);
+      Object.assign(dataSource, { query: historyQuery });
+
+      const result = await service.findAll({
+        campaignId: ' source-campaign-42 ',
+      });
+      expect(query.andWhere).toHaveBeenCalledWith(
+        'lead.campaignId = :campaignId',
+        { campaignId: 'source-campaign-42' },
+      );
+
+      expect(result.data).toEqual([
+        { ...leads[0], smsStatus: 'sent', lastSmsSentAt },
+        { ...leads[1], smsStatus: 'not_sent', lastSmsSentAt: null },
+      ]);
+      expect(historyQuery).toHaveBeenCalledWith(
+        expect.stringContaining("message.status = 'SENT'"),
+        [['lead-1', 'lead-2'], expect.any(String)],
+      );
+      expect(historyQuery.mock.calls[0][0]).toContain(
+        "message.channel = 'SMS'",
+      );
+      expect(result.meta.totalItems).toBe(2);
+    });
+
+    it('does not query SMS history for an empty page', async () => {
+      const { service, leadRepo, dataSource } = setup();
+      const query = {
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      };
+      Object.assign(leadRepo, { createQueryBuilder: () => query });
+      const historyQuery = jest.fn();
+      Object.assign(dataSource, { query: historyQuery });
+      expect((await service.findAll({})).data).toEqual([]);
+      expect(historyQuery).not.toHaveBeenCalled();
+    });
+  });
+
   describe('create', () => {
     it('creates a new website lead when the phone number is not already known', async () => {
       const { service, leadRepo } = setup();
@@ -309,7 +368,7 @@ describe('LeadsService', () => {
 
       expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
         '+234 814 243 4661',
-        'admin-1',
+        'lead-1',
         'Hi Uche Osamor, thanks for your interest in Chicken. Shop here: https://www.agrofount.com/shop or WhatsApp us: 09019170273.',
       );
     });
@@ -335,7 +394,7 @@ describe('LeadsService', () => {
 
       expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
         '+2348012345678',
-        'admin-1',
+        'lead-1',
         'Hi Amina Yusuf, thanks for your interest in poultry products.',
       );
     });
@@ -355,6 +414,7 @@ describe('LeadsService', () => {
           sources: [LeadSource.Meta],
           sourceIds: ['7673567506610553109'],
           campaignNames: ['Lead generation20260812170937'],
+          campaignIds: ['source-campaign-42'],
         },
         'admin-1',
       );
@@ -370,6 +430,7 @@ describe('LeadsService', () => {
             leadSources: [LeadSource.Meta],
             leadSourceIds: ['7673567506610553109'],
             leadCampaignNames: ['Lead generation20260812170937'],
+            leadCampaignIds: ['source-campaign-42'],
           },
         }),
         'admin-1',

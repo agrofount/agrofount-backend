@@ -61,6 +61,103 @@ describe('NotificationService', () => {
     return { service, sendInBlue, messageRepo, httpService };
   }
 
+  describe('bulk lead SMS history guard', () => {
+    function guardedSetup(history: any[]) {
+      const repository = {
+        create: jest.fn((record) => record),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      const manager = {
+        query: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce(history),
+        getRepository: jest.fn().mockReturnValue(repository),
+      };
+      const { service } = setup({
+        messageRepo: { manager: { transaction: (work) => work(manager) } },
+      });
+      const send = jest
+        .spyOn(service as any, 'sendSmsMessage')
+        .mockResolvedValue({ success: true });
+      return { service, manager, repository, send };
+    }
+
+    it.each(['+234 801 234 5678', '08012345678', '8012345678'])(
+      'skips historical sends for %s, including older admin-owned logs',
+      async (phone) => {
+        const { service, manager, repository, send } = guardedSetup([
+          { id: 'old-message' },
+        ]);
+        const result = await service.sendSmsForCampaign(
+          phone,
+          'lead-1',
+          'Hello',
+          {
+            campaignId: 'new-campaign',
+            skipPreviouslySent: true,
+          },
+        );
+        expect(result).toEqual({ skipped: true });
+        expect(send).not.toHaveBeenCalled();
+        expect(manager.query).toHaveBeenNthCalledWith(
+          1,
+          expect.stringContaining('pg_advisory_xact_lock'),
+          ['lead-sms:2348012345678'],
+        );
+        expect(manager.query).toHaveBeenNthCalledWith(
+          2,
+          expect.stringContaining("status = 'SENT'"),
+          [
+            MessageTypes.CAMPAIGN_NOTIFICATION,
+            'lead-1',
+            ['2348012345678', '08012345678', '8012345678'],
+          ],
+        );
+        expect(repository.save).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status: 'SKIPPED',
+            campaignId: 'new-campaign',
+          }),
+        );
+      },
+    );
+
+    it('sends and persists a successful result when no successful SMS exists', async () => {
+      const { service, repository, send } = guardedSetup([]);
+      await service.sendSmsForCampaign('08012345678', 'lead-1', 'Hello', {
+        campaignId: 'new-campaign',
+        skipPreviouslySent: true,
+      });
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(repository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'SENT',
+          userId: 'lead-1',
+          recipientPhone: '2348012345678',
+        }),
+      );
+    });
+
+    it('records rejected sends as failed so they remain eligible for retries', async () => {
+      const { service, repository, send } = guardedSetup([]);
+      send.mockResolvedValue({ success: false, error: 'Provider unavailable' });
+      const result = await service.sendSmsForCampaign(
+        '08012345678',
+        'lead-1',
+        'Hello',
+        {
+          campaignId: 'new-campaign',
+          skipPreviouslySent: true,
+        },
+      );
+      expect(result.success).toBe(false);
+      expect(repository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'FAILED' }),
+      );
+    });
+  });
+
   describe('renderEmailTemplatePreview', () => {
     it('fetches the Brevo template and substitutes the given params locally', async () => {
       const { service, sendInBlue } = setup({
