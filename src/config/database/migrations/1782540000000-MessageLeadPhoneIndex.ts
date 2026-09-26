@@ -51,7 +51,9 @@ export class MessageLeadPhoneIndex1782540000000 implements MigrationInterface {
     await queryRunner.query(
       `DROP INDEX IF EXISTS "IDX_message_channel_status_type"`,
     );
-    await queryRunner.query(`DROP INDEX IF EXISTS "IDX_leads_normalized_phone"`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "IDX_leads_normalized_phone"`,
+    );
     await queryRunner.query(`DROP INDEX IF EXISTS "IDX_message_user_id"`);
     await queryRunner.query(
       `DROP INDEX IF EXISTS "IDX_message_normalized_phone"`,
