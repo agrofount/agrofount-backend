@@ -176,6 +176,10 @@ export class CampaignService {
         sourceLeadIds,
       });
     }
+    const campaignIds = cleanStringList(audience.leadCampaignIds);
+    if (campaignIds.length) {
+      query.andWhere('lead.campaignId IN (:...campaignIds)', { campaignIds });
+    }
     const campaignNames = cleanStringList(audience.leadCampaignNames);
     if (campaignNames.length) {
       query.andWhere(

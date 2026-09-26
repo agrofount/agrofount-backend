@@ -100,6 +100,7 @@ export class LeadsController {
     @Query('sourceLeadId') sourceLeadId?: string,
     @Query('sourceId') sourceId?: string,
     @Query('campaignName') campaignName?: string,
+    @Query('campaignId') campaignId?: string,
   ) {
     const result = await this.leadsService.findAll({
       page: page ? Number(page) : undefined,
@@ -109,6 +110,7 @@ export class LeadsController {
       source,
       sourceLeadId: sourceLeadId ?? sourceId,
       campaignName,
+      campaignId,
     });
     return { ...result, data: result.data.map(withInsights) };
   }

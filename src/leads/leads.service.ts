@@ -276,6 +276,7 @@ export class LeadsService {
     source?: string;
     sourceLeadId?: string;
     campaignName?: string;
+    campaignId?: string;
   }) {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(100, Math.max(1, params.limit ?? 20));
@@ -300,6 +301,11 @@ export class LeadsService {
         sourceLeadId: `%${params.sourceLeadId.trim()}%`,
       });
     }
+    if (params.campaignId?.trim()) {
+      query.andWhere('lead.campaignId = :campaignId', {
+        campaignId: params.campaignId.trim(),
+      });
+    }
     if (params.campaignName?.trim()) {
       query.andWhere('lead.campaignName ILIKE :campaignName', {
         campaignName: `%${params.campaignName.trim()}%`,
@@ -320,8 +326,40 @@ export class LeadsService {
       .take(limit)
       .getManyAndCount();
 
+    // Include existing campaign logs and older individual sends, which were
+    // recorded against the administrator rather than the lead.
+    const smsHistory: { id: string; lastSmsSentAt: Date | null }[] = data.length
+      ? await this.dataSource.query(
+          `SELECT lead.id, MAX(message."createdAt") AS "lastSmsSentAt"
+           FROM leads lead
+           INNER JOIN message ON (
+             message."userId" = lead.id::text
+             OR (
+               message."recipientPhone" IS NOT NULL AND lead.phone <> ''
+               AND regexp_replace(regexp_replace(message."recipientPhone", '[^0-9]', '', 'g'), '^0', '234')
+                 = regexp_replace(regexp_replace(lead.phone, '[^0-9]', '', 'g'), '^0', '234')
+             )
+           )
+           WHERE lead.id = ANY($1::uuid[])
+             AND message.channel = 'SMS' AND message.status = 'SENT'
+             AND message."messageType" = $2
+           GROUP BY lead.id`,
+          [data.map((lead) => lead.id), MessageTypes.CAMPAIGN_NOTIFICATION],
+        )
+      : [];
+    const smsByLead = new Map(
+      smsHistory.map((row) => [row.id, row.lastSmsSentAt]),
+    );
+
     return {
-      data,
+      data: data.map((lead) => {
+        const lastSmsSentAt = smsByLead.get(lead.id) ?? null;
+        return {
+          ...lead,
+          smsStatus: lastSmsSentAt ? 'sent' : 'not_sent',
+          lastSmsSentAt,
+        };
+      }),
       meta: {
         totalItems: total,
         currentPage: page,
@@ -339,6 +377,7 @@ export class LeadsService {
       leadStatuses: dto.statuses,
       leadSources: dto.sources,
       leadSourceIds: dto.sourceLeadIds ?? dto.sourceIds,
+      leadCampaignIds: dto.campaignIds,
       leadCampaignNames:
         dto.campaignNames ??
         (dto.campaignName ? [dto.campaignName] : undefined),
@@ -462,7 +501,7 @@ export class LeadsService {
         throw new BadRequestException('Lead has no phone number');
       await this.notificationService.sendSmsForCampaign(
         lead.phone,
-        adminId,
+        lead.id,
         message,
       );
     } else {

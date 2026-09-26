@@ -180,7 +180,7 @@ describe('CampaignProcessor', () => {
       '+2348012345678',
       'lead-1',
       'Hi Amina, we will call +2348012345678 about layer feed from Poultry Starter/meta-lead-1. Get Started: https://agrofount.com/register',
-      { campaignId: 'campaign-1' },
+      { campaignId: 'campaign-1', skipPreviouslySent: true },
     );
   });
 
@@ -232,8 +232,33 @@ describe('CampaignProcessor', () => {
       '+2348012345678',
       'lead-1',
       'You told us you want poultry products in Lagos.',
-      { campaignId: 'campaign-1' },
+      { campaignId: 'campaign-1', skipPreviouslySent: true },
     );
+  });
+
+  it('does not count a previously contacted lead as a new send', async () => {
+    const { processor, notificationService, campaignService } = setup();
+    campaignService.findOne.mockResolvedValue({
+      ...baseCampaign,
+      channels: ['SMS'],
+    });
+    campaignService.resolveLeadAudience.mockResolvedValue([
+      { id: 'lead-1', phone: '+2348012345678', name: 'Amina' },
+    ]);
+    notificationService.sendSmsForCampaign.mockResolvedValue({ skipped: true });
+    await processor.process({ data: { campaignId: 'campaign-1' } } as any);
+    expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
+      '+2348012345678',
+      'lead-1',
+      expect.any(String),
+      { campaignId: 'campaign-1', skipPreviouslySent: true },
+    );
+    expect(campaignService.markSent).toHaveBeenCalledWith('campaign-1', {
+      totalRecipients: 1,
+      totalSent: 0,
+      totalDelivered: 0,
+      totalFailed: 0,
+    });
   });
 
   describe('duplicate-delivery guard', () => {

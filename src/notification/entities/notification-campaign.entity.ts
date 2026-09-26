@@ -46,6 +46,7 @@ export interface CampaignAudience {
   leadSources?: string[];
   leadSourceIds?: string[];
   leadCampaignNames?: string[];
+  leadCampaignIds?: string[];
 }
 
 @Entity('notification_campaign')

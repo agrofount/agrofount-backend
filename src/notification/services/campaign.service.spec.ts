@@ -48,6 +48,7 @@ describe('CampaignService', () => {
         leadSources: ['website'],
         leadSourceIds: ['meta-lead-1'],
         leadCampaignNames: ['Poultry Starter'],
+        leadCampaignIds: [' campaign-42 ', 'campaign-43'],
       });
 
       expect(qb.andWhere).toHaveBeenCalledWith('lead.state IN (:...states)', {
@@ -67,6 +68,10 @@ describe('CampaignService', () => {
       expect(qb.andWhere).toHaveBeenCalledWith(
         'lead.sourceLeadId IN (:...sourceLeadIds)',
         { sourceLeadIds: ['meta-lead-1'] },
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'lead.campaignId IN (:...campaignIds)',
+        { campaignIds: ['campaign-42', 'campaign-43'] },
       );
       expect(qb.andWhere).toHaveBeenCalledWith(expect.any(Object));
     });
