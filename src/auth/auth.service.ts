@@ -280,7 +280,7 @@ export class AuthService {
         throw new BadRequestException('User not created');
       }
 
-      void this.leadsService
+      await this.leadsService
         .linkConversionByContact(savedUser.id, { email, phone })
         .catch((error) =>
           Logger.error('Failed to link lead conversion on registration', error),

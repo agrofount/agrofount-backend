@@ -45,6 +45,47 @@ describe('LeadsService', () => {
     };
   }
 
+  describe('pagination', () => {
+    it.each([20, 50, 100, 250, 500, 1000])(
+      'supports a page size of %i',
+      async (limit) => {
+        const { service, leadRepo } = setup();
+        const query = {
+          orderBy: jest.fn().mockReturnThis(),
+          skip: jest.fn().mockReturnThis(),
+          take: jest.fn().mockReturnThis(),
+          getManyAndCount: jest.fn().mockResolvedValue([[], 2501]),
+        };
+        Object.assign(leadRepo, { createQueryBuilder: () => query });
+        const result = await service.findAll({ page: 3, limit });
+        expect(query.skip).toHaveBeenCalledWith(2 * limit);
+        expect(query.take).toHaveBeenCalledWith(limit);
+        expect(result.meta).toEqual({
+          totalItems: 2501,
+          currentPage: 3,
+          itemsPerPage: limit,
+          totalPages: Math.ceil(2501 / limit),
+        });
+      },
+    );
+
+    it('caps requests above 1000 leads per page', async () => {
+      const { service, leadRepo } = setup();
+      const query = {
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 2501]),
+      };
+      Object.assign(leadRepo, { createQueryBuilder: () => query });
+      const result = await service.findAll({ page: 2, limit: 5000 });
+      expect(query.take).toHaveBeenCalledWith(1000);
+      expect(query.skip).toHaveBeenCalledWith(1000);
+      expect(result.meta.itemsPerPage).toBe(1000);
+      expect(result.meta.totalPages).toBe(3);
+    });
+  });
+
   describe('findAll SMS history', () => {
     it('adds successful send history without relying on lead status', async () => {
       const { service, leadRepo, dataSource } = setup();
@@ -439,92 +480,87 @@ describe('LeadsService', () => {
   });
 
   describe('linkConversionByContact', () => {
-    it('links an un-converted lead found by email and marks it converted', async () => {
-      const lead = {
-        id: 'lead-1',
-        email: 'amina@example.com',
-        status: LeadStatus.New,
-        convertedUserId: null,
+    function conversionSetup() {
+      const result = setup();
+      const query = {
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue({ affected: 2 }),
       };
-      const { service, leadRepo } = setup([lead]);
+      const createQueryBuilder = jest.fn().mockReturnValue(query);
+      Object.assign(result.leadRepo, { createQueryBuilder });
+      return { ...result, query, createQueryBuilder };
+    }
 
-      await service.linkConversionByContact('user-1', {
-        email: 'amina@example.com',
-      });
-
-      expect(lead.convertedUserId).toBe('user-1');
-      expect((lead as any).convertedAt).toBeInstanceOf(Date);
-      expect(lead.status).toBe(LeadStatus.Converted);
-      expect(leadRepo.save).toHaveBeenCalledWith(lead);
-    });
-
-    it('links by phone when no email is provided', async () => {
-      const lead = {
-        id: 'lead-1',
-        phone: '+2348012345678',
-        status: LeadStatus.New,
-        convertedUserId: null,
-      };
-      const { service, leadRepo } = setup([lead]);
-
-      await service.linkConversionByContact('user-1', {
-        phone: '+2348012345678',
-      });
-
-      expect(lead.convertedUserId).toBe('user-1');
-      expect(leadRepo.save).toHaveBeenCalled();
-    });
-
-    it('links the user id but keeps Rejected status as-is', async () => {
-      const lead = {
-        id: 'lead-1',
-        email: 'amina@example.com',
-        status: LeadStatus.Rejected,
-        convertedUserId: null,
-      };
-      const { service } = setup([lead]);
-
-      await service.linkConversionByContact('user-1', {
-        email: 'amina@example.com',
-      });
-
-      expect(lead.convertedUserId).toBe('user-1');
-      expect(lead.status).toBe(LeadStatus.Rejected);
-    });
-
-    it('does nothing when no matching lead exists', async () => {
-      const { service, leadRepo } = setup([]);
-
-      await service.linkConversionByContact('user-1', {
-        email: 'nobody@example.com',
-      });
-
-      expect(leadRepo.save).not.toHaveBeenCalled();
-    });
-
-    it('does nothing when no email or phone is provided', async () => {
-      const { service, leadRepo } = setup([]);
-
-      await service.linkConversionByContact('user-1', {});
-
-      expect(leadRepo.findOne).not.toHaveBeenCalled();
-    });
-
-    it('does not re-link a lead that was already converted', async () => {
-      const lead = {
-        id: 'lead-1',
-        email: 'amina@example.com',
+    it.each([
+      '+234 706 129 4970',
+      '07061294970',
+      '7061294970',
+      '2347061294970',
+    ])('matches equivalent Nigerian phone formats for %s', async (phone) => {
+      const { service, query } = conversionSetup();
+      await service.linkConversionByContact('user-1', { phone });
+      expect(query.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining("regexp_replace(phone, '[^0-9]', '', 'g')"),
+        { phoneVariants: ['2347061294970', '07061294970', '7061294970'] },
+      );
+      expect(query.set).toHaveBeenCalledWith({
+        convertedUserId: 'user-1',
+        convertedAt: expect.any(Function),
         status: LeadStatus.Converted,
-        convertedUserId: 'user-original',
-      };
-      const { service, leadRepo } = setup([lead]);
-
-      await service.linkConversionByContact('user-2', {
-        email: 'amina@example.com',
       });
+      expect(query.execute).toHaveBeenCalledTimes(1);
+    });
 
-      expect(lead.convertedUserId).toBe('user-original');
-      expect(leadRepo.save).not.toHaveBeenCalled();
+    it('normalizes email and updates all matching unlinked, active leads atomically', async () => {
+      const { service, query } = conversionSetup();
+      await service.linkConversionByContact('user-1', {
+        email: ' Amina@Example.com ',
+      });
+      expect(query.andWhere).toHaveBeenCalledWith(
+        '(LOWER(TRIM(email)) = :email)',
+        { email: 'amina@example.com' },
+      );
+      expect(query.where).toHaveBeenCalledWith('"convertedUserId" IS NULL');
+      expect(query.andWhere).toHaveBeenCalledWith('"deletedAt" IS NULL');
+      expect(query.set.mock.calls[0][0].convertedAt()).toBe(
+        'CURRENT_TIMESTAMP',
+      );
+      expect(query.set.mock.calls[0][0].status).toBe(LeadStatus.Converted);
+    });
+
+    it('matches either supplied contact without discarding an international country code', async () => {
+      const { service, query } = conversionSetup();
+      await service.linkConversionByContact('user-1', {
+        email: 'a@example.com',
+        phone: '+44 7911 123456',
+      });
+      expect(query.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining(' OR '),
+        {
+          email: 'a@example.com',
+          phoneVariants: ['447911123456'],
+        },
+      );
+    });
+
+    it.each([{}, { email: '  ', phone: ' + () ' }])(
+      'does not update without a usable contact',
+      async (contact) => {
+        const { service, createQueryBuilder } = conversionSetup();
+        await service.linkConversionByContact('user-1', contact);
+        expect(createQueryBuilder).not.toHaveBeenCalled();
+      },
+    );
+
+    it('succeeds when no unconverted lead matches', async () => {
+      const { service, query } = conversionSetup();
+      query.execute.mockResolvedValue({ affected: 0 });
+      await expect(
+        service.linkConversionByContact('user-1', { email: 'new@example.com' }),
+      ).resolves.toBeUndefined();
     });
   });
 });
