@@ -40,6 +40,29 @@ export class ReportsController {
     return this.reportsService.overview(admin.id);
   }
 
+  @Get('sales-dashboard')
+  @ApiOperation({ summary: 'Get live sales dashboard metrics and breakdowns' })
+  salesDashboard(@Query('days') days?: string) {
+    return this.reportsService.salesDashboard(Number(days) || 30);
+  }
+
+  @Get('customer-dashboard')
+  @ApiOperation({
+    summary: 'Get live customer dashboard metrics and breakdowns',
+  })
+  customerDashboard(
+    @Query('days') days?: string,
+    @Query('state') state?: string,
+    @Query('status') status?: string,
+    @Query('activity') activity?: string,
+  ) {
+    return this.reportsService.customerDashboard(Number(days) || 30, {
+      state,
+      status,
+      activity,
+    });
+  }
+
   @Post('generate')
   @ApiOperation({
     summary: 'Generate and persist a report from live business data',
