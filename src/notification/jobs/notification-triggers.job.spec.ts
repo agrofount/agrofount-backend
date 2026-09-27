@@ -175,8 +175,13 @@ describe('NotificationTriggersJob', () => {
       );
     });
 
-    it('skips users with no email', async () => {
-      const user = { id: 'user-1', email: null, phone: '2348012345678' };
+    it('sends SMS to a verified phone-only user', async () => {
+      const user = {
+        id: 'user-1',
+        email: null,
+        phone: '2348012345678',
+        firstname: 'Amina',
+      };
       const userQb = chainableQueryBuilder([user]);
       const emptyQb = chainableQueryBuilder([]);
       let call = 0;
@@ -185,13 +190,25 @@ describe('NotificationTriggersJob', () => {
           call++;
           return call === 1 ? userQb : emptyQb;
         }),
-        getRepository: jest.fn(),
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue(null),
+        }),
       };
       const { job, notificationService } = setup({ dataSource });
 
       await job.sendRegisteredNoOrderNudges();
 
       expect(notificationService.sendCustomEmail).not.toHaveBeenCalled();
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'SMS',
+        { userId: 'user-1', phoneNumber: '2348012345678' },
+        MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+        expect.objectContaining({
+          userId: 'user-1',
+          customer_name: 'Amina',
+        }),
+        { jobName: CronJobName.REGISTERED_NO_ORDER_NUDGE },
+      );
     });
   });
 

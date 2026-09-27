@@ -196,6 +196,35 @@ describe('NotificationService', () => {
   });
 
   describe('buildSmsPreviewText', () => {
+    it('builds the phone-registration welcome message', () => {
+      const { service } = setup();
+      const text = service.buildSmsPreviewText(
+        MessageTypes.REGISTRATION_SUCCESSFUL,
+        {
+          customer_name: 'Amina',
+          shop_link: 'https://agrofount.com',
+        },
+      );
+      expect(text).toBe(
+        'Welcome to Agrofount, Amina! Your account is ready. Shop trusted farm supplies and get support from Ayo: https://agrofount.com',
+      );
+    });
+
+    it('builds a registered-user no-order SMS from personalized copy', () => {
+      const { service } = setup();
+      const text = service.buildSmsPreviewText(
+        MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+        {
+          customer_name: 'Amina',
+          body: 'Your welcome voucher is waiting.',
+          shop_link: 'https://agrofount.com',
+        },
+      );
+      expect(text).toBe(
+        'Hi Amina, Your welcome voucher is waiting. Shop now: https://agrofount.com',
+      );
+    });
+
     it('matches the exact text the real PENDING_ORDER_REMINDER SMS send builds', () => {
       const { service } = setup();
 

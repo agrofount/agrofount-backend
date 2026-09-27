@@ -1,6 +1,10 @@
 import { AuthService } from './auth.service';
 import { authenticator } from 'otplib';
 import { AuthPrincipalType } from './entities/auth-session.entity';
+import {
+  MessageTypes,
+  NotificationChannels,
+} from '../notification/types/notification.type';
 
 describe('AuthService security primitives', () => {
   const service = Object.create(AuthService.prototype) as AuthService;
@@ -77,6 +81,75 @@ describe('AuthService security primitives', () => {
     expect((mfaService as any).loadPrincipal).toHaveBeenCalledWith(
       AuthPrincipalType.Admin,
       adminId,
+    );
+  });
+});
+
+describe('Phone verification onboarding', () => {
+  it('welcomes the user and sends the generated voucher code by SMS', async () => {
+    const service = Object.create(AuthService.prototype) as AuthService;
+    const user = {
+      id: 'user-1',
+      phone: '08012345678',
+      firstname: 'Amina',
+      username: 'amina',
+      isVerified: false,
+    };
+    const sendNotification = jest.fn().mockResolvedValue(undefined);
+
+    Object.assign(service, {
+      configService: {
+        get: jest.fn((key: string) => {
+          if (key === 'app') {
+            return {
+              registrationPromotion: true,
+              registrationPromotionAmount: 5000,
+            };
+          }
+          if (key === 'app.frontend_url') return 'https://agrofount.com';
+          return undefined;
+        }),
+      },
+      userRepository: {
+        findOne: jest.fn().mockResolvedValue(user),
+        save: jest.fn().mockImplementation(async (value) => value),
+      },
+      walletService: { createWallet: jest.fn().mockResolvedValue(undefined) },
+      voucherService: {
+        generateVoucher: jest
+          .fn()
+          .mockResolvedValue({ code: 'WELCOME5000', amount: 5000 }),
+      },
+      notificationService: { sendNotification },
+      verifyOtpChallenge: jest.fn().mockResolvedValue({
+        userId: 'user-1',
+        phone: '08012345678',
+      }),
+    });
+
+    await service.verifyPhone({ challengeId: 'challenge-1', otp: '123456' });
+
+    expect(sendNotification).toHaveBeenNthCalledWith(
+      1,
+      NotificationChannels.SMS,
+      { userId: 'user-1', phoneNumber: '08012345678' },
+      MessageTypes.REGISTRATION_SUCCESSFUL,
+      expect.objectContaining({
+        userId: 'user-1',
+        customer_name: 'Amina',
+        shop_link: 'https://agrofount.com',
+      }),
+    );
+    expect(sendNotification).toHaveBeenNthCalledWith(
+      2,
+      NotificationChannels.SMS,
+      { userId: 'user-1', phoneNumber: '08012345678' },
+      MessageTypes.NEW_VOUCHER,
+      expect.objectContaining({
+        userId: 'user-1',
+        voucher_code: 'WELCOME5000',
+        amount: 5000,
+      }),
     );
   });
 });
