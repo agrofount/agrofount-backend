@@ -206,7 +206,7 @@ describe('NotificationService', () => {
         },
       );
       expect(text).toBe(
-        'Welcome to Agrofount, Amina! Your account is ready. Shop trusted farm supplies and get support from Ayo: https://agrofount.com',
+        'Welcome to Agrofount, Amina! Your account is ready. Shop trusted farm supplies: https://agrofount.com. Need help placing your first order? WhatsApp 09019170273.',
       );
     });
 

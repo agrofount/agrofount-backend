@@ -684,7 +684,7 @@ export class NotificationService {
   ): string {
     switch (messageType) {
       case MessageTypes.REGISTRATION_SUCCESSFUL:
-        return `Welcome to Agrofount, ${params.customer_name}! Your account is ready. Shop trusted farm supplies and get support from Ayo: ${params.shop_link}`;
+        return `Welcome to Agrofount, ${params.customer_name}! Your account is ready. Shop trusted farm supplies: ${params.shop_link}. Need help placing your first order? WhatsApp 09019170273.`;
       case MessageTypes.REGISTERED_NO_ORDER_NUDGE:
       case MessageTypes.AYO_INTENT_FOLLOW_UP:
         return `Hi ${params.customer_name}, ${params.body} Shop now: ${params.shop_link}`;
