@@ -39,5 +39,5 @@ export const PRODUCT_LOCATION_PAGINATION_CONFIG: PaginateConfig<ProductLocationE
     },
     relations: ['product', 'state', 'country'],
     defaultLimit: 25,
-    maxLimit: 100,
+    maxLimit: 500,
   };

@@ -181,6 +181,35 @@ describe('ReportsService', () => {
     expect(result.filterOptions.states).toEqual(['Lagos', 'Oyo']);
   });
 
+  it('returns every ranked customer in the customer dashboard', async () => {
+    const { service, dataSource } = setup();
+    const createdAt = new Date();
+    createdAt.setDate(createdAt.getDate() - 2);
+    dataSource.query.mockResolvedValue(
+      Array.from({ length: 7 }, (_, index) => ({
+        id: `user-${index + 1}`,
+        firstname: `Customer ${index + 1}`,
+        lastname: '',
+        state: 'Lagos',
+        gender: 'male',
+        createdAt,
+        orderCount: 1,
+        previousOrderCount: 0,
+        totalSpent: (index + 1) * 1000,
+        previousTotalSpent: 0,
+        lastOrder: createdAt,
+        previousLastOrder: null,
+      })),
+    );
+
+    const result = await service.customerDashboard(7);
+
+    expect(result.topCustomers).toHaveLength(7);
+    expect(result.topCustomers[0]).toEqual(
+      expect.objectContaining({ id: 'user-7', totalSpent: 7000 }),
+    );
+  });
+
   it('rejects access to a report owned by another administrator', async () => {
     const { service, reportRepo } = setup();
     reportRepo.findOne.mockResolvedValue(null);
