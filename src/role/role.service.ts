@@ -38,7 +38,7 @@ export class RoleService {
         star: [FilterOperator.EQ],
       },
       defaultLimit: 25,
-      maxLimit: 100,
+      maxLimit: 500,
     });
   }
 

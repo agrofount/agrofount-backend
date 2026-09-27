@@ -285,7 +285,7 @@ export class CreditFacilityService {
             : { user: { id: user.id } },
         relations: ['user', 'approvedBy'],
         defaultLimit: 25,
-        maxLimit: 100,
+        maxLimit: 500,
       });
 
       // Transform the data array so @Exclude takes effect

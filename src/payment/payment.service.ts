@@ -98,7 +98,7 @@ export class PaymentService {
           status: [FilterOperator.EQ],
         },
         defaultLimit: 25,
-        maxLimit: 100,
+        maxLimit: 500,
       });
 
       // Transform the data array so @Exclude takes effect

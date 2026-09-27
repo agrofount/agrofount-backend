@@ -55,7 +55,7 @@ export class AdminsService {
       },
       relations: ['roles'],
       defaultLimit: 25,
-      maxLimit: 100,
+      maxLimit: 500,
     });
 
     // Transform items so @Exclude takes effect

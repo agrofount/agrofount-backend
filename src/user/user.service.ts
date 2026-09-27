@@ -183,7 +183,7 @@ export class UserService {
         createdAt: [FilterOperator.GTE, FilterOperator.LTE],
       },
       defaultLimit: 25,
-      maxLimit: 100,
+      maxLimit: 500,
     };
 
     const result = await paginate(query, this.userRepo, paginationOptions);
