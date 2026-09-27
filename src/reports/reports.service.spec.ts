@@ -63,6 +63,124 @@ describe('ReportsService', () => {
     );
   });
 
+  it('builds the sales dashboard from current and previous order periods', async () => {
+    const { service, dataSource } = setup();
+    const currentDate = new Date();
+    const previousDate = new Date();
+    previousDate.setDate(previousDate.getDate() - 8);
+    dataSource.query.mockResolvedValue([
+      {
+        code: 'AGF-1',
+        customer: 'Amina Bello',
+        status: 'delivered',
+        paymentStatus: 'completed',
+        total: '1200',
+        items: [
+          {
+            name: 'Layer Feed',
+            category: 'Poultry Feed',
+            quantity: 2,
+            price: 600,
+          },
+        ],
+        address: { state: 'Lagos' },
+        createdAt: currentDate,
+      },
+      {
+        code: 'AGF-0',
+        customer: 'Bola Musa',
+        status: 'pending',
+        paymentStatus: 'completed',
+        total: '600',
+        items: [
+          {
+            name: 'Layer Feed',
+            category: 'Poultry Feed',
+            quantity: 1,
+            price: 600,
+          },
+        ],
+        address: { state: 'Oyo' },
+        createdAt: previousDate,
+      },
+    ]);
+
+    const result = await service.salesDashboard(7);
+
+    expect(result.metrics.totalSales).toEqual(
+      expect.objectContaining({ value: 1200, change: 100 }),
+    );
+    expect(result.topProducts[0]).toEqual(
+      expect.objectContaining({ name: 'Layer Feed', unitsSold: 2 }),
+    );
+    expect(result.categories[0]).toEqual(
+      expect.objectContaining({ name: 'Poultry Feed', percentage: 100 }),
+    );
+    expect(result.locations[0]).toEqual(
+      expect.objectContaining({ state: 'Lagos' }),
+    );
+    expect(result.orderStatus[0]).toEqual(
+      expect.objectContaining({ status: 'Delivered' }),
+    );
+    expect(result.recentSales[0].orderId).toBe('AGF-1');
+  });
+
+  it('builds customer dashboard metrics, segments, and filter options', async () => {
+    const { service, dataSource } = setup();
+    const currentDate = new Date();
+    const recentOrder = new Date();
+    recentOrder.setDate(recentOrder.getDate() - 2);
+    const previousDate = new Date();
+    previousDate.setDate(previousDate.getDate() - 10);
+    dataSource.query.mockResolvedValue([
+      {
+        id: 'user-1',
+        firstname: 'Amina',
+        lastname: 'Bello',
+        state: 'Lagos',
+        gender: 'female',
+        createdAt: currentDate,
+        orderCount: 3,
+        previousOrderCount: 0,
+        totalSpent: 150000,
+        previousTotalSpent: 0,
+        lastOrder: recentOrder,
+        previousLastOrder: null,
+      },
+      {
+        id: 'user-2',
+        firstname: 'Bola',
+        lastname: 'Musa',
+        state: 'Oyo',
+        gender: 'male',
+        createdAt: previousDate,
+        orderCount: 1,
+        previousOrderCount: 1,
+        totalSpent: 20000,
+        previousTotalSpent: 20000,
+        lastOrder: previousDate,
+        previousLastOrder: previousDate,
+      },
+    ]);
+
+    const result = await service.customerDashboard(7);
+
+    expect(result.metrics.totalCustomers).toEqual(
+      expect.objectContaining({ value: 2, change: 100 }),
+    );
+    expect(result.metrics.newCustomers.value).toBe(1);
+    expect(result.topCustomers[0]).toEqual(
+      expect.objectContaining({ name: 'Amina Bello', totalSpent: 150000 }),
+    );
+    expect(result.segments).toContainEqual(
+      expect.objectContaining({ name: 'High Value Customers', count: 1 }),
+    );
+    expect(result.gender).toContainEqual(
+      expect.objectContaining({ name: 'Female', count: 1 }),
+    );
+    expect(result.filterOptions.states).toEqual(['Lagos', 'Oyo']);
+  });
+
   it('rejects access to a report owned by another administrator', async () => {
     const { service, reportRepo } = setup();
     reportRepo.findOne.mockResolvedValue(null);
