@@ -104,7 +104,7 @@ export class CartService implements OnModuleDestroy {
   }
 
   async getAllCarts(cursor = '0', limit = 25) {
-    const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
+    const safeLimit = Math.min(500, Math.max(1, Math.trunc(limit)));
     const [nextCursor, keys] = await this.redis.scan(
       cursor,
       'MATCH',

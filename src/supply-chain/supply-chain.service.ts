@@ -69,7 +69,7 @@ export class SupplyChainService {
         mainLocation: [FilterOperator.IN],
       },
       defaultLimit: 25,
-      maxLimit: 100,
+      maxLimit: 500,
     };
     const result = await paginate(query, this.driverRepo, paginationOptions);
 
@@ -168,7 +168,7 @@ export class SupplyChainService {
         route: [FilterOperator.ILIKE],
       },
       defaultLimit: 25,
-      maxLimit: 100,
+      maxLimit: 500,
       relations: ['order', 'order.user', 'driver'],
     };
 

@@ -11,5 +11,5 @@ export const STATE_PAGINATION_CONFIG: PaginateConfig<StateEntity> = {
     'country.id': [FilterOperator.EQ],
   },
   defaultLimit: 25,
-  maxLimit: 100,
+  maxLimit: 500,
 };

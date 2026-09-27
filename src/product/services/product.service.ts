@@ -57,7 +57,7 @@ export class ProductService {
         price: [FilterOperator.BTW],
       },
       defaultLimit: 25,
-      maxLimit: 100,
+      maxLimit: 500,
     });
   }
 
