@@ -32,7 +32,7 @@ export class ReportScheduleEntity {
   @Column({ type: 'int', default: 1 })
   dayOfMonth: number;
 
-  @Column({ type: 'time', default: '08:00' })
+  @Column({ type: 'time', default: '08:00:00' })
   time: string;
 
   @Column({ type: 'text', array: true, default: () => "'{}'" })
