@@ -518,7 +518,6 @@ export class ReportsService {
       orderTypes,
       topCustomers: [...current]
         .sort((a, b) => Number(b.totalSpent) - Number(a.totalSpent))
-        .slice(0, 5)
         .map((customer) => ({
           id: customer.id,
           name:
