@@ -1391,7 +1391,7 @@ export class NotificationTriggersJob {
       total += users.length;
 
       for (const user of users) {
-        if (!user.email) continue;
+        if (!user.email && !user.phone) continue;
         try {
           const voucher = await this.dataSource
             .getRepository(VoucherEntity)
@@ -1412,22 +1412,33 @@ export class NotificationTriggersJob {
             ? `${personalizedBody} Use code ${voucher.code} for ₦${voucher.amount} off.`
             : personalizedBody;
 
-          await this.notificationService.sendCustomEmail(
-            { userId: user.id, email: user.email },
-            heading,
-            this.buildSimpleEmail(
+          const shopLink = process.env.FRONTEND_URL ?? '';
+          if (user.email) {
+            await this.notificationService.sendCustomEmail(
+              { userId: user.id, email: user.email },
               heading,
+              this.buildSimpleEmail(heading, body, 'Shop Now', shopLink),
               body,
-              'Shop Now',
-              process.env.FRONTEND_URL ?? '',
-            ),
-            body,
-            MessageTypes.REGISTERED_NO_ORDER_NUDGE,
-            {
-              jobName: CronJobName.REGISTERED_NO_ORDER_NUDGE,
-              channel: 'EMAIL',
-            },
-          );
+              MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+              {
+                jobName: CronJobName.REGISTERED_NO_ORDER_NUDGE,
+                channel: 'EMAIL',
+              },
+            );
+          } else {
+            await this.notificationService.sendNotification(
+              'SMS',
+              { userId: user.id, phoneNumber: user.phone },
+              MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+              {
+                userId: user.id,
+                customer_name: user.firstname || 'there',
+                body,
+                shop_link: shopLink,
+              },
+              { jobName: CronJobName.REGISTERED_NO_ORDER_NUDGE },
+            );
+          }
           sent++;
         } catch (err) {
           this.logger.warn(
@@ -1472,7 +1483,7 @@ export class NotificationTriggersJob {
         touchpoint,
       );
       for (const user of users) {
-        if (!user.email) continue;
+        if (!user.email && !user.phone) continue;
         targets.push({
           id: user.id,
           name: user.firstname || 'Unnamed user',
@@ -1491,7 +1502,7 @@ export class NotificationTriggersJob {
 
     for (const tp of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
       const users = await this.getRegisteredNoOrderCandidatesForTouchpoint(tp);
-      const match = users.find((user) => user.email);
+      const match = users.find((user) => user.email || user.phone);
       if (match) {
         real = match;
         touchpoint = tp;
@@ -1523,16 +1534,26 @@ export class NotificationTriggersJob {
         : personalized.body;
     }
 
+    const shopLink = process.env.FRONTEND_URL ?? '';
+    const channel = sample.email ? 'EMAIL' : 'SMS';
     return {
-      channel: 'EMAIL',
-      subject: heading,
-      html: this.buildSimpleEmail(
-        heading,
-        body,
-        'Shop Now',
-        process.env.FRONTEND_URL ?? '',
-      ),
-      text: body,
+      channel,
+      subject: channel === 'EMAIL' ? heading : undefined,
+      html:
+        channel === 'EMAIL'
+          ? this.buildSimpleEmail(heading, body, 'Shop Now', shopLink)
+          : undefined,
+      text:
+        channel === 'EMAIL'
+          ? body
+          : this.notificationService.buildSmsPreviewText(
+              MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+              {
+                customer_name: sample.firstname || 'there',
+                body,
+                shop_link: shopLink,
+              },
+            ),
       sampleTarget: {
         name: sample.firstname || 'Unnamed user',
         email: sample.email,
@@ -1604,22 +1625,33 @@ export class NotificationTriggersJob {
           ? `You asked Ayo about "${searchedQuery}" recently — it's still available. Want help placing an order?`
           : "You checked something out with Ayo recently — we're here if you're ready to order or need help getting started.";
 
-        await this.notificationService.sendCustomEmail(
-          { userId, email: user.email },
-          heading,
-          this.buildSimpleEmail(
+        const shopLink = process.env.FRONTEND_URL ?? '';
+        if (user.email) {
+          await this.notificationService.sendCustomEmail(
+            { userId, email: user.email },
             heading,
+            this.buildSimpleEmail(heading, body, 'Shop Now', shopLink),
             body,
-            'Shop Now',
-            process.env.FRONTEND_URL ?? '',
-          ),
-          body,
-          MessageTypes.AYO_INTENT_FOLLOW_UP,
-          {
-            jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
-            channel: 'EMAIL',
-          },
-        );
+            MessageTypes.AYO_INTENT_FOLLOW_UP,
+            {
+              jobName: CronJobName.AYO_INTENT_FOLLOW_UP,
+              channel: 'EMAIL',
+            },
+          );
+        } else {
+          await this.notificationService.sendNotification(
+            'SMS',
+            { userId, phoneNumber: user.phone },
+            MessageTypes.AYO_INTENT_FOLLOW_UP,
+            {
+              userId,
+              customer_name: user.firstname || 'there',
+              body,
+              shop_link: shopLink,
+            },
+            { jobName: CronJobName.AYO_INTENT_FOLLOW_UP },
+          );
+        }
         sent++;
       } catch (err) {
         this.logger.warn(
@@ -1679,7 +1711,7 @@ export class NotificationTriggersJob {
       .getRepository(UserEntity)
       .findOne({ where: { id: userId } });
     if (!user || user.deletedAt || !user.isVerified) return null;
-    if (!user.email) return null;
+    if (!user.email && !user.phone) return null;
 
     const lastProductSearch = await this.dataSource
       .getRepository(AiToolInvocationEntity)
@@ -1736,16 +1768,26 @@ export class NotificationTriggersJob {
       ? `You asked Ayo about "${searchedQuery}" recently — it's still available. Want help placing an order?`
       : "You checked something out with Ayo recently — we're here if you're ready to order or need help getting started.";
 
+    const shopLink = process.env.FRONTEND_URL ?? '';
+    const channel = user.email ? 'EMAIL' : 'SMS';
     return {
-      channel: 'EMAIL',
-      subject: heading,
-      html: this.buildSimpleEmail(
-        heading,
-        body,
-        'Shop Now',
-        process.env.FRONTEND_URL ?? '',
-      ),
-      text: body,
+      channel,
+      subject: channel === 'EMAIL' ? heading : undefined,
+      html:
+        channel === 'EMAIL'
+          ? this.buildSimpleEmail(heading, body, 'Shop Now', shopLink)
+          : undefined,
+      text:
+        channel === 'EMAIL'
+          ? body
+          : this.notificationService.buildSmsPreviewText(
+              MessageTypes.AYO_INTENT_FOLLOW_UP,
+              {
+                customer_name: user.firstname || 'there',
+                body,
+                shop_link: shopLink,
+              },
+            ),
       sampleTarget: {
         name: user.firstname || 'Unnamed user',
         email: user.email,
@@ -1947,9 +1989,22 @@ export class NotificationTriggersJob {
       }
 
       case CronJobName.REGISTERED_NO_ORDER_NUDGE: {
-        this.assertEmailTestChannel(jobName, channel);
         const touchpoint =
           NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS[0];
+        if (channel === 'SMS') {
+          await this.notificationService.sendNotification(
+            'SMS',
+            recipient,
+            MessageTypes.REGISTERED_NO_ORDER_NUDGE,
+            {
+              customer_name: name,
+              body: touchpoint.body,
+              shop_link: process.env.FRONTEND_URL ?? '',
+            },
+            { jobName },
+          );
+          return { sent: 1, total: 1, channel, jobName };
+        }
         await this.notificationService.sendCustomEmail(
           recipient,
           touchpoint.heading,
@@ -1967,10 +2022,23 @@ export class NotificationTriggersJob {
       }
 
       case CronJobName.AYO_INTENT_FOLLOW_UP: {
-        this.assertEmailTestChannel(jobName, channel);
         const heading = 'Still looking for layer feed?';
         const body =
           'You asked Ayo about "layer feed" recently — it is still available. Want help placing an order?';
+        if (channel === 'SMS') {
+          await this.notificationService.sendNotification(
+            'SMS',
+            recipient,
+            MessageTypes.AYO_INTENT_FOLLOW_UP,
+            {
+              customer_name: name,
+              body,
+              shop_link: process.env.FRONTEND_URL ?? '',
+            },
+            { jobName },
+          );
+          return { sent: 1, total: 1, channel, jobName };
+        }
         await this.notificationService.sendCustomEmail(
           recipient,
           heading,

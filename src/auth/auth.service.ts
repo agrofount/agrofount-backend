@@ -419,13 +419,33 @@ export class AuthService {
       );
     }
 
+    if (user.phone) {
+      const frontendUrl =
+        this.configService.get<string>('app.frontend_url') ?? '';
+      await this.notificationService.sendNotification(
+        NotificationChannels.SMS,
+        { userId: user.id, phoneNumber: user.phone },
+        MessageTypes.REGISTRATION_SUCCESSFUL,
+        {
+          userId: user.id,
+          customer_name: user.firstname || user.username || 'there',
+          shop_link: frontendUrl,
+        },
+      );
+    }
+
     // Send voucher via SMS if user registered with phone
     if (voucher && user.phone) {
       await this.notificationService.sendNotification(
         NotificationChannels.SMS,
-        { phoneNumber: user.phone },
+        { userId: user.id, phoneNumber: user.phone },
         MessageTypes.NEW_VOUCHER,
-        { code: voucher.code, amount: voucher.amount, username: user.username },
+        {
+          userId: user.id,
+          voucher_code: voucher.code,
+          amount: voucher.amount,
+          username: user.username,
+        },
       );
     }
 

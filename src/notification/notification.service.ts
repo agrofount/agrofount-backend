@@ -588,6 +588,20 @@ export class NotificationService {
 
         return smsRes;
 
+      case MessageTypes.REGISTRATION_SUCCESSFUL:
+      case MessageTypes.REGISTERED_NO_ORDER_NUDGE:
+      case MessageTypes.AYO_INTENT_FOLLOW_UP: {
+        const onboardingMessage = this.buildSmsText(messageType, params);
+        const onboardingSmsRes = await this.sendSmsMessage(
+          onboardingMessage,
+          recipient,
+          messageType,
+        );
+        await recordSms(onboardingMessage, onboardingSmsRes);
+
+        return onboardingSmsRes;
+      }
+
       case MessageTypes.PAYMENT_RECEIVED_NOTIFICATION:
         const paymentMessage = `Your payment of ${params.amount} has been received successfully.`;
 
@@ -669,6 +683,11 @@ export class NotificationService {
     params: Record<string, any>,
   ): string {
     switch (messageType) {
+      case MessageTypes.REGISTRATION_SUCCESSFUL:
+        return `Welcome to Agrofount, ${params.customer_name}! Your account is ready. Shop trusted farm supplies and get support from Ayo: ${params.shop_link}`;
+      case MessageTypes.REGISTERED_NO_ORDER_NUDGE:
+      case MessageTypes.AYO_INTENT_FOLLOW_UP:
+        return `Hi ${params.customer_name}, ${params.body} Shop now: ${params.shop_link}`;
       case MessageTypes.PENDING_ORDER_REMINDER:
         return `Hi ${params.customer_name}, your Agrofount order ${params.order_id} is still pending. Complete payment by ${params.due_date} to secure your items: ${params.order_link}`;
       case MessageTypes.LOGIN_INACTIVITY_REMINDER:
@@ -815,6 +834,7 @@ export class NotificationService {
     switch (messageType) {
       case MessageTypes.SEND_OTP:
       case MessageTypes.NEW_VOUCHER:
+      case MessageTypes.REGISTRATION_SUCCESSFUL:
       case MessageTypes.PAYMENT_RECEIVED_NOTIFICATION:
       case MessageTypes.ORDER_UPDATED_NOTIFICATION:
       case MessageTypes.PENDING_ORDER_REMINDER:
