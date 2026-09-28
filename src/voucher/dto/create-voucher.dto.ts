@@ -20,10 +20,13 @@ export class CreateVoucherDto {
   @IsUUID()
   userId: string;
 
-  @ApiProperty({ description: 'Discount amount in whole naira', example: 1000 })
+  @ApiProperty({
+    description: 'Discount percentage of the order subtotal (1-50)',
+    example: 10,
+  })
   @IsInt()
   @Min(1)
-  @Max(2147483647)
+  @Max(50)
   amount: number;
 
   @ApiPropertyOptional({ description: 'Generated automatically when omitted' })

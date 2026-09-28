@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { UserEntity } from '../user/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { VoucherEntity, VoucherStatus } from './entities/voucher.entity';
+import {
+  VoucherDiscountType,
+  VoucherEntity,
+  VoucherStatus,
+} from './entities/voucher.entity';
 import { Repository } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
 import {
@@ -97,10 +101,9 @@ export class VoucherService {
 
     const voucher = this.voucherRepo.create({
       user,
-      code:
-        dto.code?.trim().toUpperCase() ||
-        randomBytes(9).toString('base64url').toUpperCase(),
+      code: dto.code?.trim().toUpperCase() || this.generateVoucherCode(),
       amount: dto.amount,
+      discountType: VoucherDiscountType.Percentage,
       minimumSpend: dto.minimumSpend ?? 0,
       currency: 'NGN',
       campaign: dto.campaign?.trim() || null,
@@ -154,7 +157,15 @@ export class VoucherService {
           'Set a future expiry before reactivating this voucher',
         );
       }
-      if (dto.amount !== undefined) voucher.amount = dto.amount;
+      if (dto.amount !== undefined) {
+        if (
+          voucher.discountType === VoucherDiscountType.Percentage &&
+          dto.amount > 50
+        ) {
+          throw new BadRequestException('Percentage discount cannot exceed 50');
+        }
+        voucher.amount = dto.amount;
+      }
       if (dto.minimumSpend !== undefined)
         voucher.minimumSpend = dto.minimumSpend;
       if (dto.campaign !== undefined)
@@ -162,6 +173,12 @@ export class VoucherService {
       if (dto.status !== undefined) voucher.status = dto.status;
       return repository.save(voucher);
     });
+  }
+
+  // Uppercase hex only - no hyphen/underscore/other special characters, so
+  // generated codes are easy to read aloud and safe to paste anywhere.
+  private generateVoucherCode(): string {
+    return randomBytes(9).toString('hex').toUpperCase();
   }
 
   private futureExpiry(value: string): Date {
@@ -180,7 +197,12 @@ export class VoucherService {
     amount: number = 1000,
     sourceKey?: string,
     manager?: EntityManager,
-    options?: { minimumSpend?: number; campaign?: string; expiresAt?: Date },
+    options?: {
+      minimumSpend?: number;
+      campaign?: string;
+      expiresAt?: Date;
+      discountType?: VoucherDiscountType;
+    },
   ): Promise<VoucherEntity> {
     const repository = manager
       ? manager.getRepository(VoucherEntity)
@@ -191,7 +213,7 @@ export class VoucherService {
       if (existing) return existing;
     }
 
-    const voucherCode = randomBytes(9).toString('base64url').toUpperCase();
+    const voucherCode = this.generateVoucherCode();
 
     const voucherEntity = repository.create({
       user,
@@ -200,6 +222,7 @@ export class VoucherService {
       used: false,
       status: VoucherStatus.Active,
       currency: 'NGN',
+      discountType: options?.discountType ?? VoucherDiscountType.Fixed,
       minimumSpend: options?.minimumSpend ?? 0,
       campaign: options?.campaign ?? null,
       expiresAt:
@@ -258,6 +281,7 @@ export class VoucherService {
           minimumSpend: dto.minimumSpend,
           campaign: dto.campaign,
           expiresAt,
+          discountType: VoucherDiscountType.Percentage,
         },
       );
       created.push({ userId: match.id, code: voucher.code });

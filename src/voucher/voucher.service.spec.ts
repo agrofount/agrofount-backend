@@ -47,12 +47,12 @@ describe('Admin vouchers', () => {
       expired: VoucherStatus.Expired,
     });
   });
-  it('creates an NGN voucher for an existing customer with normalized code', async () => {
+  it('creates a percentage-discount voucher for an existing customer with normalized code', async () => {
     const { service } = setup();
     const expiresAt = future();
     const voucher = await service.createForAdmin({
       userId: 'customer-1',
-      amount: 2000,
+      amount: 20,
       expiresAt,
       code: ' welcome-20 ',
       minimumSpend: 10000,
@@ -60,7 +60,8 @@ describe('Admin vouchers', () => {
     });
     expect(voucher).toMatchObject({
       code: 'WELCOME-20',
-      amount: 2000,
+      amount: 20,
+      discountType: 'percentage',
       currency: 'NGN',
       minimumSpend: 10000,
       campaign: 'Winback',
@@ -70,17 +71,17 @@ describe('Admin vouchers', () => {
       expiresAt: new Date(expiresAt),
     });
   });
-  it('generates a code when omitted', async () => {
+  it('generates an alphanumeric code with no special characters when omitted', async () => {
     const { service } = setup();
-    expect(
-      (
-        await service.createForAdmin({
-          userId: 'customer-1',
-          amount: 1000,
-          expiresAt: future(),
-        })
-      ).code,
-    ).toMatch(/^[A-Z0-9_-]{12}$/);
+    const code = (
+      await service.createForAdmin({
+        userId: 'customer-1',
+        amount: 1000,
+        expiresAt: future(),
+      })
+    ).code;
+    expect(code).toMatch(/^[A-F0-9]{18}$/);
+    expect(code).not.toMatch(/[-_]/);
   });
   it('rejects unknown customers', async () => {
     const { service, customerRepo, repo } = setup();
@@ -159,6 +160,35 @@ describe('Admin vouchers', () => {
       lock: { mode: 'pessimistic_write' },
     });
   });
+  it('rejects raising a percentage voucher above 50', async () => {
+    const { service, repo } = setup({
+      code: 'PCT20',
+      used: false,
+      status: VoucherStatus.Active,
+      discountType: 'percentage',
+      amount: 20,
+      expiresAt: new Date(future()),
+    });
+    await expect(
+      service.updateForAdmin('PCT20', { amount: 60 }),
+    ).rejects.toThrow('Percentage discount cannot exceed 50');
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('allows editing a legacy fixed voucher to a naira amount above 50', async () => {
+    const { service } = setup({
+      code: 'LEGACY',
+      used: false,
+      status: VoucherStatus.Active,
+      discountType: 'fixed',
+      amount: 1000,
+      expiresAt: new Date(future()),
+    });
+    expect(
+      await service.updateForAdmin('LEGACY', { amount: 2000 }),
+    ).toMatchObject({ amount: 2000 });
+  });
+
   it('requires an expiry extension before reactivating an expired voucher', async () => {
     const { service, repo } = setup({
       used: false,
@@ -229,6 +259,21 @@ describe('Bulk voucher generation', () => {
       ],
     });
     expect(repo.manager.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates bulk-generated vouchers as percentage discounts', async () => {
+    const { service, repo } = setupBulk(['user-1']);
+
+    await service.bulkGenerateForSegment({
+      segment: VoucherSegment.LapsedRegular,
+      amount: 15,
+      expiresAt: future(),
+      campaign: 'Winback-Sept',
+    } as any);
+
+    expect(repo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 15, discountType: 'percentage' }),
+    );
   });
 
   it('passes segment-specific thresholds and a fixed safety ceiling to the query', async () => {
@@ -380,5 +425,33 @@ describe('Segment preview', () => {
 
     expect(result.matched).toBe(120);
     expect(result.customers).toHaveLength(50);
+  });
+});
+
+describe('generateVoucher discount type defaults', () => {
+  it('defaults to a fixed naira amount when no discountType is given (referral/registration bonuses)', async () => {
+    const { service, repo } = setup();
+
+    await service.generateVoucher({ id: 'user-1' } as any, 1000);
+
+    expect(repo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 1000, discountType: 'fixed' }),
+    );
+  });
+
+  it('uses percentage when explicitly requested', async () => {
+    const { service, repo } = setup();
+
+    await service.generateVoucher(
+      { id: 'user-1' } as any,
+      20,
+      undefined,
+      undefined,
+      { discountType: 'percentage' as any },
+    );
+
+    expect(repo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 20, discountType: 'percentage' }),
+    );
   });
 });

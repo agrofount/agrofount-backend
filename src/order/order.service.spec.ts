@@ -148,3 +148,76 @@ describe('OrderService.buildFindAllTarget', () => {
     );
   });
 });
+
+describe('OrderService.validateVoucher', () => {
+  const service = Object.create(OrderService.prototype) as OrderService;
+
+  function withVoucher(voucher: Record<string, unknown>) {
+    (service as any).voucherService = {
+      findOne: jest.fn().mockResolvedValue(voucher),
+    };
+    return service;
+  }
+
+  it('returns 0 when no voucher code is supplied', async () => {
+    withVoucher({});
+    await expect(service.validateVoucher('', {} as any, 10000)).resolves.toBe(
+      0,
+    );
+  });
+
+  it('computes a percentage discount as a share of the order subtotal', async () => {
+    withVoucher({
+      currency: 'NGN',
+      minimumSpend: 0,
+      discountType: 'percentage',
+      amount: 15,
+    });
+    await expect(
+      service.validateVoucher('SAVE15', {} as any, 20000),
+    ).resolves.toBe(3000);
+  });
+
+  it('rounds a percentage discount to 2 decimal places', async () => {
+    withVoucher({
+      currency: 'NGN',
+      minimumSpend: 0,
+      discountType: 'percentage',
+      amount: 15,
+    });
+    await expect(
+      service.validateVoucher('SAVE15', {} as any, 9999),
+    ).resolves.toBe(1499.85);
+  });
+
+  it('returns the flat naira amount for a legacy fixed voucher', async () => {
+    withVoucher({
+      currency: 'NGN',
+      minimumSpend: 0,
+      discountType: 'fixed',
+      amount: 1000,
+    });
+    await expect(
+      service.validateVoucher('LEGACY1000', {} as any, 20000),
+    ).resolves.toBe(1000);
+  });
+
+  it('rejects a voucher below its minimum spend', async () => {
+    withVoucher({
+      currency: 'NGN',
+      minimumSpend: 15000,
+      discountType: 'percentage',
+      amount: 10,
+    });
+    await expect(
+      service.validateVoucher('SAVE10', {} as any, 5000),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects a non-NGN voucher currency', async () => {
+    withVoucher({ currency: 'USD', minimumSpend: 0 });
+    await expect(
+      service.validateVoucher('FOREIGN', {} as any, 20000),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});

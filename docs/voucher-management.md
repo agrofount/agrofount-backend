@@ -3,9 +3,11 @@
 All routes require an authenticated administrator. Roles need `create_vouchers`,
 `read_vouchers`, or `update_vouchers` as appropriate; super admins have access.
 
-Vouchers are single-use, assigned to one existing customer, and denominated in
-NGN. The amount is a positive whole-naira discount. No schema migration is needed.
-Creating a voucher does not send an SMS or email automatically.
+Vouchers are single-use and assigned to one existing customer. New vouchers
+are a percentage discount off the order subtotal - `amount` is a whole
+number from 1 to 50 (e.g. `10` = 10% off). Vouchers created before this
+change keep working as flat naira amounts (see "Legacy fixed vouchers"
+below). Creating a voucher does not send an SMS or email automatically.
 
 ## Create
 
@@ -15,7 +17,7 @@ Creating a voucher does not send an SMS or email automatically.
 {
   "userId": "00000000-0000-4000-8000-000000000001",
   "code": "WELCOME-BACK-2026",
-  "amount": 2000,
+  "amount": 10,
   "minimumSpend": 15000,
   "campaign": "September reactivation",
   "expiresAt": "2026-10-31T23:59:59+01:00"
@@ -25,6 +27,7 @@ Creating a voucher does not send an SMS or email automatically.
 Replace userId with the actual customer's UUID. Omit code to generate one.
 Custom codes are trimmed and uppercased and must contain 3–40 letters, digits,
 underscores, or hyphens. Expiry must be a future ISO timestamp with a timezone.
+`amount` must be an integer from 1 to 50 (percent).
 
 ## List and inspect
 
@@ -45,19 +48,30 @@ filter.expiresAt with `$lt:ISO_TIMESTAMP` to find vouchers past their expiry.
 
 ```json
 {
-  "amount": 2500,
+  "amount": 15,
   "minimumSpend": 20000,
   "expiresAt": "2026-11-30T23:59:59+01:00"
 }
 ```
 
 Disable with `{"status":"disabled"}`. Reactivate with `{"status":"active"}`;
-include a future expiresAt if the voucher has expired. Code and customer cannot
-be reassigned. Used/redeemed vouchers cannot be edited or reactivated.
-Vouchers are disabled rather than deleted to preserve redemption history.
+include a future expiresAt if the voucher has expired. Code, customer, and
+discount type cannot be reassigned. Used/redeemed vouchers cannot be edited
+or reactivated. Vouchers are disabled rather than deleted to preserve
+redemption history.
 
-Existing checkout rules still enforce ownership, expiry, status, minimum spend,
-and single redemption. No public/shared coupon or percentage discount is added.
+Existing checkout rules still enforce ownership, expiry, status, minimum
+spend, and single redemption (a customer can only apply one voucher per
+order). No public/shared coupon codes are supported.
+
+### Legacy fixed vouchers
+
+`discountType` (`fixed` or `percentage`) is set once at creation and never
+changes. Vouchers created before percentage discounts shipped are
+`discountType: "fixed"` and keep working exactly as before - `amount` for
+those is still a flat naira value, unaffected by the 1-50 percentage
+validation, which only applies when creating a new voucher (new vouchers are
+always `percentage`).
 
 ## Bulk generation by segment
 

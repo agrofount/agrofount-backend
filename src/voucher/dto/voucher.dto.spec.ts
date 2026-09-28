@@ -5,7 +5,7 @@ import { UpdateVoucherDto } from './update-voucher.dto';
 
 const valid = {
   userId: '00000000-0000-4000-8000-000000000001',
-  amount: 2000,
+  amount: 20,
   expiresAt: '2099-12-31T23:59:59Z',
 };
 
@@ -21,6 +21,7 @@ describe('Voucher input validation', () => {
   it.each([
     { amount: -1 },
     { amount: 1.5 },
+    { amount: 51 },
     { minimumSpend: -1 },
     { minimumSpend: 1.234 },
     { userId: 'not-a-uuid' },
