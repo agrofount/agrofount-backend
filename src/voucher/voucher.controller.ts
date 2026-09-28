@@ -1,4 +1,17 @@
-import { Controller, Get, Param, UseGuards, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  UseGuards,
+  Query,
+  Post,
+  Patch,
+  Body,
+} from '@nestjs/common';
+import { CreateVoucherDto } from './dto/create-voucher.dto';
+import { UpdateVoucherDto } from './dto/update-voucher.dto';
+import { BulkGenerateVoucherDto } from './dto/bulk-generate-voucher.dto';
+import { PreviewSegmentDto } from './dto/preview-segment.dto';
 import { VoucherService } from './voucher.service';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -28,6 +41,46 @@ export class VoucherController {
     return this.voucherService.findAll(query, user);
   }
 
+  @Post('admin')
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('create_vouchers')
+  @ApiOperation({ summary: 'Create a single-use NGN voucher for a customer' })
+  createForAdmin(@Body() dto: CreateVoucherDto) {
+    return this.voucherService.createForAdmin(dto);
+  }
+
+  @Patch('admin/:code')
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_vouchers')
+  @ApiOperation({
+    summary: 'Edit, disable, or reactivate an unredeemed voucher',
+  })
+  updateForAdmin(@Param('code') code: string, @Body() dto: UpdateVoucherDto) {
+    return this.voucherService.updateForAdmin(code, dto);
+  }
+
+  @Post('admin/bulk')
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('create_vouchers')
+  @ApiOperation({
+    summary:
+      'Generate vouchers for every customer in a segment (e.g. lapsed regulars, high-value churned)',
+  })
+  bulkGenerateForSegment(@Body() dto: BulkGenerateVoucherDto) {
+    return this.voucherService.bulkGenerateForSegment(dto);
+  }
+
+  @Post('admin/bulk/preview')
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_vouchers')
+  @ApiOperation({
+    summary:
+      'Preview which customers match a segment before generating vouchers',
+  })
+  previewSegment(@Body() dto: PreviewSegmentDto) {
+    return this.voucherService.previewSegment(dto);
+  }
+
   @Get('admin/all')
   @UseGuards(AdminAuthGuard, RolesGuard)
   @RequiredPermissions('read_vouchers')
@@ -36,6 +89,14 @@ export class VoucherController {
     @CurrentUser() admin: AdminEntity,
   ): Promise<Paginated<VoucherEntity>> {
     return this.voucherService.findAll(query, admin);
+  }
+
+  @Get('admin/stats')
+  @UseGuards(AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_vouchers')
+  @ApiOperation({ summary: 'Get voucher totals for the admin dashboard' })
+  getAdminStats() {
+    return this.voucherService.getAdminStats();
   }
 
   @Get(':code')
@@ -48,10 +109,7 @@ export class VoucherController {
   @Get('admin/:code')
   @UseGuards(AdminAuthGuard, RolesGuard)
   @RequiredPermissions('read_vouchers')
-  findOneForAdmin(
-    @Param('code') code: string,
-    @CurrentUser() admin: AdminEntity,
-  ) {
-    return this.voucherService.findOne(code, admin);
+  findOneForAdmin(@Param('code') code: string) {
+    return this.voucherService.findOneForAdmin(code);
   }
 }
