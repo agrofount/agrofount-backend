@@ -36,7 +36,15 @@ export class LeadEntity {
   @Column()
   phone: string;
 
-  @Column({ select: false, insert: false, update: false, nullable: true })
+  @Column({
+    type: 'varchar',
+    select: false,
+    insert: false,
+    update: false,
+    nullable: true,
+    generatedType: 'STORED',
+    asExpression: `CASE WHEN "phone" IS NULL OR "phone" = '' THEN NULL ELSE regexp_replace(regexp_replace("phone", '[^0-9]', '', 'g'), '^0', '234') END`,
+  })
   normalizedPhone: string;
 
   @Column({ nullable: true })
