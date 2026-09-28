@@ -17,6 +17,15 @@ export enum VoucherStatus {
   Disabled = 'disabled',
 }
 
+export enum VoucherDiscountType {
+  // Legacy vouchers (created before percentage discounts) store a flat
+  // naira amount in `amount`. New vouchers created through the admin API
+  // use Percentage, where `amount` is a whole percentage of the order
+  // subtotal.
+  Fixed = 'fixed',
+  Percentage = 'percentage',
+}
+
 @Entity('voucher')
 export class VoucherEntity {
   @PrimaryGeneratedColumn()
@@ -25,8 +34,15 @@ export class VoucherEntity {
   @Column({ unique: true })
   code: string;
 
-  @Column({ default: 1000 }) // ₦1000 by default
+  @Column({ default: 1000 }) // ₦1000 flat, or a whole percentage - see discountType
   amount: number;
+
+  @Column({
+    type: 'varchar',
+    length: 10,
+    default: VoucherDiscountType.Fixed,
+  })
+  discountType: VoucherDiscountType;
 
   @ManyToOne(() => UserEntity)
   @JoinColumn()

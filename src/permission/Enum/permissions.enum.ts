@@ -51,6 +51,7 @@ export const RESOURCES = {
   SMS_TEMPLATES: 'smsTemplates',
   SUBSCRIBERS: 'subscribers',
   CONTACT_SUBMISSIONS: 'contactSubmissions',
+  COMPLAINTS: 'complaints',
 
   // Analytics & Reports
   DASHBOARD: 'dashboard',
@@ -362,6 +363,10 @@ export const PERMISSION_SETS = {
     {
       resource: RESOURCES.CONTACT_SUBMISSIONS,
       actions: [ACTIONS.READ, ACTIONS.UPDATE, ACTIONS.DELETE],
+    },
+    {
+      resource: RESOURCES.COMPLAINTS,
+      actions: [ACTIONS.READ, ACTIONS.UPDATE],
     },
   ],
 

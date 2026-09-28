@@ -57,7 +57,15 @@ export class MessageEntity {
   @Column({ nullable: true })
   recipientPhone: string;
 
-  @Column({ select: false, insert: false, update: false, nullable: true })
+  @Column({
+    type: 'varchar',
+    select: false,
+    insert: false,
+    update: false,
+    nullable: true,
+    generatedType: 'STORED',
+    asExpression: `CASE WHEN "recipientPhone" IS NULL OR "recipientPhone" = '' THEN NULL ELSE regexp_replace(regexp_replace("recipientPhone", '[^0-9]', '', 'g'), '^0', '234') END`,
+  })
   normalizedPhone: string;
 
   @CreateDateColumn()

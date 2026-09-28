@@ -35,6 +35,7 @@ import { plainToInstance } from 'class-transformer';
 import { PaymentEntity } from '../payment/entities/payment.entity';
 import { OrderSettings, OrderStatus } from './enums/order.enum';
 import { VoucherService } from '../voucher/voucher.service';
+import { VoucherDiscountType } from '../voucher/entities/voucher.entity';
 import { ProductLocationService } from '../product-location/product-location.service';
 import { UpdateOrderItemDto } from './dto/update-order-item.dto';
 import { randomUUID } from 'crypto';
@@ -779,6 +780,11 @@ export class OrderService {
       );
     }
 
+    if (voucher.discountType === VoucherDiscountType.Percentage) {
+      return (
+        Math.round(((subTotal * Number(voucher.amount)) / 100) * 100) / 100
+      );
+    }
     return Number(voucher.amount);
   }
 
