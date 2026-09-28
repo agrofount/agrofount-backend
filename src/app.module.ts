@@ -53,6 +53,7 @@ import { AiPlatformModule } from './ai-platform/ai-platform.module';
 import { BullModule } from '@nestjs/bullmq';
 import { LogisticsPricingModule } from './logistics-pricing/logistics-pricing.module';
 import { ReportsModule } from './reports/reports.module';
+import { ComplaintsModule } from './complaints/complaints.module';
 
 @Module({
   imports: [
@@ -143,6 +144,7 @@ import { ReportsModule } from './reports/reports.module';
     LeadsModule,
     LogisticsPricingModule,
     ReportsModule,
+    ComplaintsModule,
     // AiChatModule,
     DisbursementModule,
   ],
