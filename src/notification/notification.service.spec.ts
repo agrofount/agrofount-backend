@@ -61,6 +61,32 @@ describe('NotificationService', () => {
     return { service, sendInBlue, messageRepo, httpService };
   }
 
+  it.each([
+    [true, 29],
+    [false, 27],
+  ])(
+    'selects inactivity email template by voucher presence (%s)',
+    async (hasVoucher, templateId) => {
+      const { service, sendInBlue } = setup();
+      const params = {
+        customer_name: 'Amina',
+        ...(hasVoucher ? { voucher_code: 'SAVE10' } : {}),
+      };
+      await service.sendNotification(
+        'EMAIL',
+        { email: 'amina@example.com', userId: 'u1' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        params,
+      );
+      expect(sendInBlue.sendEmail).toHaveBeenCalledWith(
+        'amina@example.com',
+        templateId,
+        params,
+        expect.any(Object),
+      );
+    },
+  );
+
   describe('bulk lead SMS history guard', () => {
     function guardedSetup(history: any[]) {
       const repository = {
@@ -243,6 +269,19 @@ describe('NotificationService', () => {
       );
     });
 
+    it('includes voucher details in the inactivity SMS preview and send text', () => {
+      const { service } = setup();
+      expect(
+        service.buildSmsPreviewText(MessageTypes.LOGIN_INACTIVITY_REMINDER, {
+          customer_name: 'Amina',
+          voucher_message: 'Welcome back! Use SAVE10 for 10% off. 3 days left.',
+          login_link: 'https://agrofount.com/login',
+        }),
+      ).toBe(
+        'Hi Amina, Welcome back! Use SAVE10 for 10% off. 3 days left. Shop now: https://agrofount.com/login Need help? WhatsApp +2349019170273.',
+      );
+    });
+
     it('matches the exact text the real LOGIN_INACTIVITY_REMINDER SMS send builds', () => {
       const { service } = setup();
 
@@ -255,7 +294,7 @@ describe('NotificationService', () => {
       );
 
       expect(text).toBe(
-        "Hi Amina, it's been a while since you visited Agrofount. Check out what's new: https://agrofount.com/login",
+        "Hi Amina, it's been a while since you visited Agrofount. Check out what's new: https://agrofount.com/login Need help? WhatsApp +2349019170273.",
       );
     });
 

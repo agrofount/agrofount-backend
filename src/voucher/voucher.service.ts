@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -461,7 +462,7 @@ export class VoucherService {
       return result;
     } catch (error) {
       this.logger.error(`Failed to fetch vouchers: ${error.message}`);
-      throw new NotFoundException('Vouchers not found');
+      throw new InternalServerErrorException('Unable to load vouchers');
     }
   }
 

@@ -19,6 +19,7 @@ import { EmailTemplateIds, MessageTypes } from '../types/notification.type';
 import { FarmFlockService } from '../../ai-platform/services/farm-flock.service';
 import {
   VoucherEntity,
+  VoucherDiscountType,
   VoucherStatus,
 } from '../../voucher/entities/voucher.entity';
 import {
@@ -361,7 +362,7 @@ export class NotificationTriggersJob {
 
     for (const user of users) {
       try {
-        const name = user.firstname ?? 'there';
+        const name = this.loginInactivityName(user, 'there');
         this.notificationGateway.emitToUser(user.id, 'notification', {
           title: 'We miss you!',
           message: "It's been a while. Check out what's new on Agrofount.",
@@ -377,26 +378,33 @@ export class NotificationTriggersJob {
           status: 'SENT',
         });
 
-        const params = this.buildLoginInactivityParams(name);
-        if (user.email) {
-          await this.notificationService.sendNotification(
-            'EMAIL',
-            { userId: user.id, email: user.email },
-            MessageTypes.LOGIN_INACTIVITY_REMINDER,
-            params,
-            { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
-          );
-          sent++;
-        } else if (user.phone) {
-          await this.notificationService.sendNotification(
-            'SMS',
-            { userId: user.id, phoneNumber: user.phone },
-            MessageTypes.LOGIN_INACTIVITY_REMINDER,
-            params,
-            { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
-          );
-          sent++;
+        const params = await this.buildLoginInactivityParams(name, user.id);
+        const channels: ('EMAIL' | 'SMS')[] = [];
+        if (user.email?.trim()) channels.push('EMAIL');
+        if (user.phone?.trim()) channels.push('SMS');
+        let reached = false;
+        for (const channel of channels) {
+          try {
+            await this.notificationService.sendNotification(
+              channel,
+              channel === 'EMAIL'
+                ? { userId: user.id, email: user.email }
+                : { userId: user.id, phoneNumber: user.phone },
+              MessageTypes.LOGIN_INACTIVITY_REMINDER,
+              params,
+              { jobName: CronJobName.LOGIN_INACTIVITY_REMINDERS },
+            );
+            reached = true;
+          } catch (err) {
+            this.logger.warn(
+              `Inactivity ${channel} reminder failed for user ${user.id}: ${
+                (err as Error).message
+              }`,
+            );
+          }
         }
+        // Run totals count users reached, not individual channel deliveries.
+        if (reached) sent++;
       } catch (err) {
         this.logger.warn(
           `Inactivity reminder failed for user ${user.id}: ${
@@ -409,30 +417,111 @@ export class NotificationTriggersJob {
     return { sent, total };
   }
 
+  private loginInactivityName(
+    user: { firstname?: string; profile?: { businessName?: string } },
+    fallback: string,
+  ): string {
+    return (
+      user.firstname?.trim() || user.profile?.businessName?.trim() || fallback
+    );
+  }
+
   private async getLoginInactivityCandidates(): Promise<UserEntity[]> {
     const inactiveSince = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     return this.dataSource
       .createQueryBuilder(UserEntity, 'user')
+      .leftJoinAndSelect('user.profile', 'profile')
       .where('user.deletedAt IS NULL')
       .andWhere('user.isVerified = true')
       .andWhere('user.updatedAt < :since', { since: inactiveSince })
-      .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
+      .select([
+        'user.id',
+        'user.email',
+        'user.phone',
+        'user.firstname',
+        'profile.id',
+        'profile.businessName',
+      ])
       .limit(1000)
       .getMany();
   }
 
-  private buildLoginInactivityParams(name: string): Record<string, string> {
-    return {
-      customer_name: name,
+  private async buildLoginInactivityParams(
+    name: string,
+    userId?: string,
+  ): Promise<Record<string, string>> {
+    const params: Record<string, string> = {
+      customer_name: name?.trim() || 'there',
       login_link: `${process.env.FRONTEND_URL ?? ''}/login`,
     };
+    if (!userId) return params;
+    const now = new Date();
+    const voucher = await this.dataSource.getRepository(VoucherEntity).findOne({
+      where: {
+        user: { id: userId },
+        status: VoucherStatus.Active,
+        used: false,
+        expiresAt: MoreThan(now),
+      },
+      order: { expiresAt: 'ASC', id: 'ASC' },
+    });
+    if (!voucher) return params;
+    const expiresAt = new Date(voucher.expiresAt);
+    const remaining = expiresAt.getTime() - now.getTime();
+    if (
+      voucher.used ||
+      voucher.status !== VoucherStatus.Active ||
+      !(remaining > 0)
+    )
+      return params;
+    const hours = Math.floor(remaining / 3600000);
+    const days = Math.floor(hours / 24);
+    const timeLeft =
+      days >= 1
+        ? `${days} day${days === 1 ? '' : 's'} left`
+        : hours >= 1
+        ? `${hours} hour${hours === 1 ? '' : 's'} left`
+        : 'less than an hour left';
+    const money = (amount: number) =>
+      `${voucher.currency || 'NGN'} ${Number(amount).toLocaleString('en-NG', {
+        maximumFractionDigits: 2,
+      })}`;
+    const discount =
+      voucher.discountType === VoucherDiscountType.Percentage
+        ? `${voucher.amount}%`
+        : money(voucher.amount);
+    const expiry = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Lagos',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(expiresAt);
+    params.voucher_code = voucher.code;
+    params.voucher_discount = discount;
+    params.voucher_time_left = timeLeft.replace(/ left$/, '');
+    params.voucher_expires_at = `${expiry} WAT`;
+    params.voucher_minimum_spend_text =
+      Number(voucher.minimumSpend) > 0
+        ? `Minimum order: ${money(voucher.minimumSpend)}.`
+        : 'No minimum order required.';
+    params.voucher_message = `We'd love to welcome you back to Agrofount! Use ${
+      voucher.code
+    } at checkout for ${discount} off.${
+      Number(voucher.minimumSpend) > 0
+        ? ` Minimum order: ${money(voucher.minimumSpend)}.`
+        : ''
+    } You have ${timeLeft}; expires ${expiry} WAT.`;
+    return params;
   }
 
   private async getLoginInactivityTargets(): Promise<CronJobTarget[]> {
     const users = await this.getLoginInactivityCandidates();
     return users.map((user) => ({
       id: user.id,
-      name: user.firstname || 'Unnamed user',
+      name: this.loginInactivityName(user, 'Unnamed user'),
       email: user.email,
       phone: user.phone,
       reason: 'Inactive for 14+ days',
@@ -444,22 +533,28 @@ export class NotificationTriggersJob {
     const real = users.find((user) => user.email || user.phone);
     const usedFallbackSample = !real;
     const sample = real ?? PLACEHOLDER_USER;
-    const params = this.buildLoginInactivityParams(sample.firstname ?? 'there');
+    const params = await this.buildLoginInactivityParams(
+      this.loginInactivityName(sample, 'there'),
+      real?.id,
+    );
     const sampleTarget = {
-      name: sample.firstname || 'Unnamed user',
+      name: this.loginInactivityName(sample, 'Unnamed user'),
       email: sample.email,
       phone: sample.phone,
     };
 
     if (sample.email) {
+      const templateId = params.voucher_code
+        ? EmailTemplateIds.LOGIN_INACTIVITY_VOUCHER_REMINDER
+        : EmailTemplateIds.LOGIN_INACTIVITY_REMINDER;
       const rendered =
         await this.notificationService.renderEmailTemplatePreview(
-          EmailTemplateIds.LOGIN_INACTIVITY_REMINDER,
+          templateId,
           params,
         );
       return {
         channel: 'EMAIL',
-        templateId: EmailTemplateIds.LOGIN_INACTIVITY_REMINDER,
+        templateId,
         params,
         subject: rendered.subject,
         html: rendered.html,
@@ -1920,7 +2015,7 @@ export class NotificationTriggersJob {
       }
 
       case CronJobName.LOGIN_INACTIVITY_REMINDERS: {
-        const params = this.buildLoginInactivityParams(name);
+        const params = await this.buildLoginInactivityParams(name);
         await this.notificationService.sendNotification(
           channel,
           recipient,

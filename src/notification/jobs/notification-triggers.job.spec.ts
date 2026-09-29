@@ -61,7 +61,9 @@ describe('NotificationTriggersJob', () => {
     };
     const dataSource = {
       createQueryBuilder: jest.fn(),
-      getRepository: jest.fn(),
+      getRepository: jest
+        .fn()
+        .mockReturnValue({ findOne: jest.fn().mockResolvedValue(null) }),
       ...overrides.dataSource,
     };
     const cacheManager = {
@@ -212,7 +214,221 @@ describe('NotificationTriggersJob', () => {
     });
   });
 
+  describe('inactivity voucher SMS', () => {
+    const now = new Date('2026-09-29T08:00:00Z');
+    const voucher = {
+      code: 'WELCOME10',
+      amount: 10,
+      discountType: 'percentage',
+      currency: 'NGN',
+      minimumSpend: '20000',
+      status: 'active',
+      used: false,
+      expiresAt: new Date('2026-10-02T08:00:00Z'),
+    };
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.setSystemTime(now);
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it('includes an owned active voucher in the real SMS dispatch', async () => {
+      const findOne = jest.fn().mockResolvedValue(voucher);
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest
+            .fn()
+            .mockReturnValue(
+              chainableQueryBuilder([
+                { id: 'u1', firstname: 'Amina', phone: '+2348012345678' },
+              ]),
+            ),
+          getRepository: jest.fn().mockReturnValue({ findOne }),
+        },
+      });
+      await job.sendLoginInactivityReminders();
+      expect(findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            user: { id: 'u1' },
+            status: 'active',
+            used: false,
+            expiresAt: expect.any(Object),
+          }),
+          order: { expiresAt: 'ASC', id: 'ASC' },
+        }),
+      );
+      const params = notificationService.sendNotification.mock.calls[0][3];
+      expect(params.voucher_message).toContain(
+        'WELCOME10 at checkout for 10% off',
+      );
+      expect(params.voucher_message).toContain('Minimum order: NGN 20,000');
+      expect(params.voucher_message).toContain('3 days left');
+      expect(params.voucher_message).toContain('2 Oct 2026, 09:00 WAT');
+    });
+
+    it('uses template 29 and matching voucher parameters in the email preview and send', async () => {
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest
+            .fn()
+            .mockReturnValue(
+              chainableQueryBuilder([
+                { id: 'u1', firstname: '   ', email: 'amina@example.com' },
+              ]),
+            ),
+          getRepository: jest
+            .fn()
+            .mockReturnValue({ findOne: jest.fn().mockResolvedValue(voucher) }),
+        },
+      });
+      await job.sendLoginInactivityReminders();
+      const params = notificationService.sendNotification.mock.calls[0][3];
+      expect(params).toEqual(
+        expect.objectContaining({
+          customer_name: 'there',
+          voucher_code: 'WELCOME10',
+          voucher_discount: '10%',
+          voucher_time_left: '3 days',
+          voucher_expires_at: '2 Oct 2026, 09:00 WAT',
+          voucher_minimum_spend_text: 'Minimum order: NGN 20,000.',
+        }),
+      );
+      const preview = await job.getPreviewForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+      expect(preview.templateId).toBe(29);
+      expect(preview.params).toEqual(params);
+      expect(
+        notificationService.renderEmailTemplatePreview,
+      ).toHaveBeenCalledWith(29, params);
+    });
+
+    it('formats fixed discounts and less than an hour remaining accurately', async () => {
+      const { job } = setup({
+        dataSource: {
+          getRepository: jest.fn().mockReturnValue({
+            findOne: jest.fn().mockResolvedValue({
+              ...voucher,
+              amount: 1000,
+              discountType: 'fixed',
+              minimumSpend: 0,
+              expiresAt: new Date(now.getTime() + 1800000),
+            }),
+          }),
+        },
+      });
+      const params = await (job as any).buildLoginInactivityParams(
+        'Amina',
+        'u1',
+      );
+      expect(params.voucher_message).toContain('NGN 1,000 off');
+      expect(params.voucher_message).toContain('less than an hour left');
+      expect(params.voucher_message).not.toContain('Minimum order');
+    });
+
+    it.each([
+      null,
+      { ...voucher, used: true },
+      { ...voucher, status: 'disabled' },
+      { ...voucher, expiresAt: now },
+    ])('does not advertise an ineligible voucher', async (result) => {
+      const { job } = setup({
+        dataSource: {
+          getRepository: jest
+            .fn()
+            .mockReturnValue({ findOne: jest.fn().mockResolvedValue(result) }),
+        },
+      });
+      expect(
+        await (job as any).buildLoginInactivityParams('Amina', 'u1'),
+      ).not.toHaveProperty('voucher_message');
+    });
+  });
+
   describe('sendLoginInactivityReminders', () => {
+    it.each([
+      ['Amina', 'Green Farms', 'Amina', 'Amina'],
+      ['  ', ' Green Farms ', 'Green Farms', 'Green Farms'],
+      [null, 'Green Farms', 'Green Farms', 'Green Farms'],
+      [null, '  ', 'there', 'Unnamed user'],
+    ])(
+      'uses the same name fallback for sending and previews',
+      async (firstname, businessName, greeting, displayName) => {
+        const qb = chainableQueryBuilder([
+          {
+            id: 'u1',
+            firstname,
+            profile: { businessName },
+            email: 'a@example.com',
+          },
+        ]);
+        const { job, notificationService } = setup({
+          dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+        });
+        await job.sendLoginInactivityReminders();
+        expect(
+          notificationService.sendNotification.mock.calls[0][3].customer_name,
+        ).toBe(greeting);
+        const targets = await job.getTargetsForJob(
+          CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        );
+        expect(targets[0].name).toBe(displayName);
+        const preview = await job.getPreviewForJob(
+          CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        );
+        expect(preview.params.customer_name).toBe(greeting);
+        expect(preview.sampleTarget.name).toBe(displayName);
+        expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
+          'user.profile',
+          'profile',
+        );
+      },
+    );
+
+    it.each([undefined, 'EMAIL', 'SMS'])(
+      'attempts both channels independently (failure: %s)',
+      async (failedChannel) => {
+        const sendNotification = jest
+          .fn()
+          .mockImplementation(async (channel) => {
+            if (channel === failedChannel)
+              throw new Error('Provider unavailable');
+          });
+        const { job, cronMonitor } = setup({
+          dataSource: {
+            createQueryBuilder: jest.fn().mockReturnValue(
+              chainableQueryBuilder([
+                {
+                  id: 'u1',
+                  firstname: 'Amina',
+                  email: 'amina@example.com',
+                  phone: '+2348012345678',
+                },
+              ]),
+            ),
+          },
+          notificationService: { sendNotification },
+        });
+        await job.sendLoginInactivityReminders();
+        expect(sendNotification).toHaveBeenCalledTimes(2);
+        expect(sendNotification.mock.calls.map(([channel]) => channel)).toEqual(
+          ['EMAIL', 'SMS'],
+        );
+        expect(sendNotification.mock.calls[0][3]).toEqual(
+          sendNotification.mock.calls[1][3],
+        );
+        expect(sendNotification.mock.calls[1][1]).toEqual({
+          userId: 'u1',
+          phoneNumber: '+2348012345678',
+        });
+        expect(cronMonitor.finishRun).toHaveBeenCalledWith(
+          { id: 'run-1' },
+          { sent: 1, total: 1 },
+        );
+      },
+    );
+
     it('emails an inactive user who has an email', async () => {
       const qb = chainableQueryBuilder([
         {

@@ -1,3 +1,4 @@
+import { VoucherSegment } from '../../voucher/dto/segment-filter.dto';
 import { CampaignService } from './campaign.service';
 import { CampaignAudienceType } from '../entities/notification-campaign.entity';
 import { LeadStatus } from '../../leads/entities/lead.entity';
@@ -26,6 +27,89 @@ describe('CampaignService', () => {
     );
     return { service, dataSource };
   }
+
+  describe('customer groups', () => {
+    it.each(Object.values(VoucherSegment))(
+      'uses identical filters for estimates and sends: %s',
+      async (segment) => {
+        const qb = chainableQueryBuilder([{ id: 'customer' }]);
+        const { service } = setup(qb);
+        const audience = {
+          customerSegment: {
+            segment,
+            inactivityDays: 120,
+            minOrders: 4,
+            minLifetimeSpend: 200000,
+          },
+          states: ['Lagos'],
+        };
+        await service.estimateAudience(audience);
+        const estimateFilters = [...qb.andWhere.mock.calls];
+        qb.andWhere.mockClear();
+        await service.resolveAudience(audience);
+        expect(qb.andWhere.mock.calls).toEqual(estimateFilters);
+        expect(estimateFilters[0][0]).toContain('complaints');
+        expect(estimateFilters[1][0]).toContain(
+          segment === VoucherSegment.NeverOrdered ? 'NOT EXISTS' : 'completed',
+        );
+        expect(JSON.stringify(estimateFilters)).not.toContain('FROM voucher');
+        if (segment !== VoucherSegment.NeverOrdered) {
+          expect(estimateFilters[1][1]).toEqual({
+            segmentDays: 120,
+            segmentMinOrders: 4,
+            segmentMinSpend: 200000,
+          });
+        }
+      },
+    );
+
+    it.each([
+      { customerSegment: { segment: 'unknown' } },
+      { all: true, customerSegment: { segment: VoucherSegment.NeverOrdered } },
+      {
+        customerSegment: {
+          segment: VoucherSegment.OneTimeBuyer,
+          inactivityDays: -1,
+        },
+      },
+      {
+        customerSegment: {
+          segment: VoucherSegment.LapsedRegular,
+          minOrders: 1,
+        },
+      },
+      {
+        customerSegment: {
+          segment: VoucherSegment.HighValueChurned,
+          minLifetimeSpend: -1,
+        },
+      },
+      { customerSegment: null },
+    ])(
+      'rejects invalid targeting instead of broadening the audience',
+      async (audience) => {
+        const qb = chainableQueryBuilder([]);
+        const { service } = setup(qb);
+        await expect(service.estimateAudience(audience as any)).rejects.toThrow(
+          'valid customer group',
+        );
+        await expect(service.create({ audience } as any)).rejects.toThrow(
+          'valid customer group',
+        );
+        expect(qb.getCount).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects customer groups for leads', async () => {
+      const { service } = setup(chainableQueryBuilder([]));
+      await expect(
+        service.estimateAudience(
+          { customerSegment: { segment: VoucherSegment.NeverOrdered } },
+          CampaignAudienceType.Leads,
+        ),
+      ).rejects.toThrow('valid customer group');
+    });
+  });
 
   describe('resolveLeadAudience', () => {
     it('applies no filters when audience.all is true', async () => {
