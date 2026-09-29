@@ -1,3 +1,4 @@
+import { SegmentFilterDto } from '../../voucher/dto/segment-filter.dto';
 import {
   Column,
   CreateDateColumn,
@@ -35,6 +36,7 @@ export enum CampaignAudienceType {
 }
 
 export interface CampaignAudience {
+  customerSegment?: SegmentFilterDto;
   all?: boolean;
   states?: string[];
   businessTypes?: string[];

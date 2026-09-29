@@ -1,3 +1,4 @@
+import { SegmentFilterDto } from '../../voucher/dto/segment-filter.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
@@ -16,6 +17,10 @@ import {
 } from '../entities/notification-campaign.entity';
 
 export class AudienceDto {
+  @IsOptional()
+  @IsObject()
+  customerSegment?: SegmentFilterDto;
+
   @IsOptional()
   @IsString()
   leadSearch?: string;

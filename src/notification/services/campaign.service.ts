@@ -1,4 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import {
+  SegmentFilterDto,
+  VoucherSegment,
+} from '../../voucher/dto/segment-filter.dto';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -36,6 +46,7 @@ export class CampaignService {
   ) {}
 
   async create(dto: CreateCampaignDto, createdBy?: string) {
+    this.validateCustomerSegment(dto.audience, dto.audienceType);
     const campaign = this.campaignRepo.create({
       title: dto.title,
       message: dto.message,
@@ -103,11 +114,68 @@ export class CampaignService {
     };
   }
 
+  private validateCustomerSegment(
+    audience: CampaignAudience,
+    audienceType = CampaignAudienceType.Users,
+  ) {
+    if (audience?.customerSegment === undefined) return;
+    const segment = audience.customerSegment;
+    if (
+      audienceType !== CampaignAudienceType.Users ||
+      audience.all ||
+      !segment ||
+      typeof segment !== 'object' ||
+      Array.isArray(segment) ||
+      validateSync(plainToInstance(SegmentFilterDto, segment), {
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }).length
+    ) {
+      throw new BadRequestException(
+        'Choose a valid customer group and thresholds for a custom registered-user audience',
+      );
+    }
+  }
+
+  private applyCustomerSegment(
+    query: ReturnType<DataSource['createQueryBuilder']>,
+    segment: SegmentFilterDto,
+  ) {
+    query.andWhere(`NOT EXISTS (SELECT 1 FROM complaints c
+      WHERE c."userId" = "user".id AND c.status IN ('open', 'in_progress'))`);
+    if (segment.segment === VoucherSegment.NeverOrdered) {
+      return query.andWhere(`NOT EXISTS (SELECT 1 FROM orders o
+        WHERE o."userId" = "user".id AND o."deletedAt" IS NULL)`);
+    }
+    const condition = {
+      [VoucherSegment.OneTimeBuyer]: 'COUNT(o.id) = 1',
+      [VoucherSegment.LapsedRegular]: 'COUNT(o.id) >= :segmentMinOrders',
+      [VoucherSegment.HighValueChurned]:
+        'SUM(o."totalPrice") >= :segmentMinSpend',
+    }[segment.segment];
+    return query.andWhere(
+      `"user".id IN (
+      SELECT o."userId" FROM orders o
+      WHERE o."deletedAt" IS NULL AND o."paymentStatus" = 'completed'
+      GROUP BY o."userId" HAVING ${condition}
+      AND MAX(o."createdAt") <= NOW() - (:segmentDays * INTERVAL '1 day')
+    )`,
+      {
+        segmentDays: segment.inactivityDays ?? 90,
+        segmentMinOrders: segment.minOrders ?? 3,
+        segmentMinSpend: segment.minLifetimeSpend ?? 100000,
+      },
+    );
+  }
+
   private applyUserAudienceFilters(
     query: ReturnType<DataSource['createQueryBuilder']>,
     audience: CampaignAudience,
   ) {
+    this.validateCustomerSegment(audience);
     if (audience?.all) return query;
+    if (audience?.customerSegment)
+      this.applyCustomerSegment(query, audience.customerSegment);
 
     if (audience?.states?.length) {
       query.andWhere('user.state IN (:...states)', { states: audience.states });
@@ -142,6 +210,7 @@ export class CampaignService {
     query: ReturnType<DataSource['createQueryBuilder']>,
     audience: CampaignAudience,
   ) {
+    this.validateCustomerSegment(audience, CampaignAudienceType.Leads);
     if (audience?.all) return query;
 
     if (audience?.states?.length) {
