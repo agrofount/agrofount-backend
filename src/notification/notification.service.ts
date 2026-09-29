@@ -472,7 +472,11 @@ export class NotificationService {
       );
     }
 
-    const templateId = EmailTemplateIds[messageType];
+    const templateId =
+      messageType === MessageTypes.LOGIN_INACTIVITY_REMINDER &&
+      params.voucher_code
+        ? EmailTemplateIds.LOGIN_INACTIVITY_VOUCHER_REMINDER
+        : EmailTemplateIds[messageType];
 
     try {
       await this.sendInBlue.sendEmail(recipient.email, templateId, params, {
@@ -691,7 +695,10 @@ export class NotificationService {
       case MessageTypes.PENDING_ORDER_REMINDER:
         return `Hi ${params.customer_name}, your Agrofount order ${params.order_id} is still pending. Complete payment by ${params.due_date} to secure your items: ${params.order_link}`;
       case MessageTypes.LOGIN_INACTIVITY_REMINDER:
-        return `Hi ${params.customer_name}, it's been a while since you visited Agrofount. Check out what's new: ${params.login_link}`;
+        if (params.voucher_message) {
+          return `Hi ${params.customer_name}, ${params.voucher_message} Shop now: ${params.login_link} Need help? WhatsApp +2349019170273.`;
+        }
+        return `Hi ${params.customer_name}, it's been a while since you visited Agrofount. Check out what's new: ${params.login_link} Need help? WhatsApp +2349019170273.`;
       case MessageTypes.UNVERIFIED_ACCOUNT_REMINDER:
         return `Hi ${params.customer_name}, complete your Agrofount registration with this code: ${params.otp}. Verify here: ${params.verification_link}`;
       default:
