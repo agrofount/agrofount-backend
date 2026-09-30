@@ -275,11 +275,29 @@ export class NotificationController {
     const targets = await this.triggersJob.getTargetsForJob(
       name as CronJobName,
     );
-    return paginateArray(targets, query, (target: CronJobTarget) => [
-      target.name,
-      target.email,
-      target.phone,
-    ]);
+    const contactSummary = {
+      total: targets.length,
+      email: 0,
+      phone: 0,
+      both: 0,
+      neither: 0,
+    };
+    for (const target of targets) {
+      const email = Boolean(target.email?.trim());
+      const phone = Boolean(target.phone?.trim());
+      if (email) contactSummary.email++;
+      if (phone) contactSummary.phone++;
+      if (email && phone) contactSummary.both++;
+      if (!email && !phone) contactSummary.neither++;
+    }
+    return {
+      ...paginateArray(targets, query, (target: CronJobTarget) => [
+        target.name,
+        target.email,
+        target.phone,
+      ]),
+      contactSummary,
+    };
   }
 
   @Get('cron-jobs/:name/preview')
@@ -288,11 +306,20 @@ export class NotificationController {
     summary:
       'Preview a sample of the email/SMS/in-app message this cron job would send',
   })
-  async getCronJobPreview(@Param('name') name: string) {
+  async getCronJobPreview(
+    @Param('name') name: string,
+    @Query('channel') channel?: string,
+  ) {
     if (!Object.values(CronJobName).includes(name as CronJobName)) {
       throw new BadRequestException(`Unknown cron job: ${name}`);
     }
-    return this.triggersJob.getPreviewForJob(name as CronJobName);
+    if (channel !== undefined && channel !== 'EMAIL' && channel !== 'SMS') {
+      throw new BadRequestException('channel must be EMAIL or SMS');
+    }
+    return this.triggersJob.getPreviewForJob(
+      name as CronJobName,
+      channel as 'EMAIL' | 'SMS' | undefined,
+    );
   }
 
   @Get('cron-jobs/:name/deliveries')
