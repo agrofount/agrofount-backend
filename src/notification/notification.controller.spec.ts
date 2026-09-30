@@ -117,6 +117,7 @@ describe('NotificationController', () => {
 
       expect(triggersJob.getPreviewForJob).toHaveBeenCalledWith(
         CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+        undefined,
       );
       expect(result).toEqual(
         expect.objectContaining({
@@ -126,10 +127,34 @@ describe('NotificationController', () => {
       );
     });
 
+    it('passes an explicit channel through to the job', async () => {
+      const { controller, triggersJob } = setup();
+
+      await controller.getCronJobPreview(
+        CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+        'SMS',
+      );
+
+      expect(triggersJob.getPreviewForJob).toHaveBeenCalledWith(
+        CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+        'SMS',
+      );
+    });
+
     it('rejects an unknown job name', async () => {
       const { controller } = setup();
       await expect(
         controller.getCronJobPreview('not-a-real-job'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects an invalid channel', async () => {
+      const { controller } = setup();
+      await expect(
+        controller.getCronJobPreview(
+          CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+          'FAX',
+        ),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });

@@ -226,6 +226,7 @@ describe('NotificationTriggersJob', () => {
       status: 'active',
       used: false,
       expiresAt: new Date('2026-10-02T08:00:00Z'),
+      user: { id: 'u1' },
     };
     beforeEach(() => {
       jest.useFakeTimers();
@@ -1063,7 +1064,7 @@ describe('NotificationTriggersJob', () => {
       expect(preview.usedFallbackSample).toBe(false);
     });
 
-    it('LOGIN_INACTIVITY_REMINDERS: falls back to the SMS leg when the candidate has no email', async () => {
+    it('LOGIN_INACTIVITY_REMINDERS: requesting the SMS channel finds a phone-only candidate', async () => {
       const qb = chainableQueryBuilder([
         {
           id: 'user-1',
@@ -1078,6 +1079,7 @@ describe('NotificationTriggersJob', () => {
 
       const preview = await job.getPreviewForJob(
         CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        'SMS',
       );
 
       expect(preview.channel).toBe('SMS');
@@ -1087,6 +1089,75 @@ describe('NotificationTriggersJob', () => {
         expect.objectContaining({ customer_name: 'Amina' }),
       );
       expect(preview.usedFallbackSample).toBe(false);
+    });
+
+    it('LOGIN_INACTIVITY_REMINDERS: prefers a candidate with an active voucher over an earlier one without', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: null,
+          phone: '+2348010000001',
+          firstname: 'Bola',
+        },
+        {
+          id: 'user-2',
+          email: null,
+          phone: '+2348010000002',
+          firstname: 'Chidi',
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: {
+          createQueryBuilder: jest.fn().mockReturnValue(qb),
+          getRepository: jest.fn().mockReturnValue({
+            findOne: jest.fn().mockResolvedValue({
+              code: 'WELCOME10',
+              amount: 10,
+              discountType: 'percentage',
+              currency: 'NGN',
+              minimumSpend: '0',
+              status: 'active',
+              used: false,
+              expiresAt: new Date(Date.now() + 86400000),
+              user: { id: 'user-2' },
+            }),
+          }),
+        },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        'SMS',
+      );
+
+      expect(preview.sampleTarget.name).toBe('Chidi');
+      expect(notificationService.buildSmsPreviewText).toHaveBeenCalledWith(
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        expect.objectContaining({ voucher_code: 'WELCOME10' }),
+      );
+    });
+
+    it('LOGIN_INACTIVITY_REMINDERS: EMAIL channel ignores a phone-only candidate and uses the placeholder', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'user-1',
+          email: null,
+          phone: '+2348012345678',
+          firstname: 'Amina',
+        },
+      ]);
+      const { job } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+
+      const preview = await job.getPreviewForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        'EMAIL',
+      );
+
+      expect(preview.channel).toBe('EMAIL');
+      expect(preview.usedFallbackSample).toBe(true);
+      expect(preview.sampleTarget.email).toBe('jane.doe@example.com');
     });
 
     it('LOGIN_INACTIVITY_REMINDERS: surfaces a renderError instead of throwing when Brevo fails', async () => {
@@ -1148,6 +1219,7 @@ describe('NotificationTriggersJob', () => {
 
       const preview = await job.getPreviewForJob(
         CronJobName.UNVERIFIED_ACCOUNT_REMINDERS,
+        'SMS',
       );
 
       expect(preview.channel).toBe('SMS');
@@ -1250,6 +1322,7 @@ describe('NotificationTriggersJob', () => {
 
       const preview = await job.getPreviewForJob(
         CronJobName.PENDING_ORDER_REMINDERS,
+        'SMS',
       );
 
       expect(preview.channel).toBe('SMS');

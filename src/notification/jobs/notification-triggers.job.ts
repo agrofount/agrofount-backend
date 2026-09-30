@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { createHash, randomBytes, randomInt, randomUUID } from 'crypto';
-import { DataSource, MoreThan } from 'typeorm';
+import { DataSource, In, MoreThan } from 'typeorm';
 import { NotificationService } from '../notification.service';
 import { NotificationGateway } from '../gateways/notification.gateway';
 import { CronMonitorService } from '../services/cron-monitor.service';
@@ -542,9 +542,36 @@ export class NotificationTriggersJob {
     }));
   }
 
-  private async getLoginInactivityPreview(): Promise<CronJobMessagePreview> {
+  // Prefers a candidate who currently holds an active voucher, so the
+  // preview demonstrates the voucher-aware copy whenever a real one is
+  // available, instead of only ever showing the generic fallback message.
+  private async pickLoginInactivitySample(
+    candidates: UserEntity[],
+  ): Promise<UserEntity | undefined> {
+    if (!candidates.length) return undefined;
+    const voucher = await this.dataSource.getRepository(VoucherEntity).findOne({
+      where: {
+        user: { id: In(candidates.map((c) => c.id)) },
+        status: VoucherStatus.Active,
+        used: false,
+        expiresAt: MoreThan(new Date()),
+      },
+      relations: ['user'],
+      order: { expiresAt: 'ASC' },
+    });
+    const withVoucher =
+      voucher && candidates.find((c) => c.id === voucher.user.id);
+    return withVoucher || candidates[0];
+  }
+
+  private async getLoginInactivityPreview(
+    channel: 'EMAIL' | 'SMS' = 'EMAIL',
+  ): Promise<CronJobMessagePreview> {
     const users = await this.getLoginInactivityCandidates();
-    const real = users.find((user) => user.email || user.phone);
+    const channelMatches = users.filter((user) =>
+      channel === 'EMAIL' ? !!user.email : !!user.phone,
+    );
+    const real = await this.pickLoginInactivitySample(channelMatches);
     const usedFallbackSample = !real;
     const sample = real ?? PLACEHOLDER_USER;
     const params = await this.buildLoginInactivityParams(
@@ -557,7 +584,7 @@ export class NotificationTriggersJob {
       phone: sample.phone,
     };
 
-    if (sample.email) {
+    if (channel === 'EMAIL') {
       const templateId = params.voucher_code
         ? EmailTemplateIds.LOGIN_INACTIVITY_VOUCHER_REMINDER
         : EmailTemplateIds.LOGIN_INACTIVITY_REMINDER;
@@ -661,18 +688,22 @@ export class NotificationTriggersJob {
   // Unlike a live send, this must never mutate the user (the real send path
   // writes a fresh verification token), so it fakes the token in the link
   // instead of calling dispatchUnverifiedReminder.
-  private async getUnverifiedAccountPreview(): Promise<CronJobMessagePreview> {
+  private async getUnverifiedAccountPreview(
+    channel: 'EMAIL' | 'SMS' = 'EMAIL',
+  ): Promise<CronJobMessagePreview> {
     const users = await this.getUnverifiedAccountCandidates();
-    const real = users.find((user) => user.email || user.phone);
+    const real = users.find((user) =>
+      channel === 'EMAIL' ? !!user.email : !!user.phone,
+    );
     const usedFallbackSample = !real;
     const sample = real ?? PLACEHOLDER_USER;
     const sampleTarget = {
       name: sample.firstname || 'Unnamed user',
       email: sample.email,
-      phone: sample.email ? null : sample.phone,
+      phone: sample.phone,
     };
 
-    if (!sample.email && sample.phone) {
+    if (channel === 'SMS') {
       const params = {
         customer_name: sample.firstname ?? 'there',
         otp: '123456',
@@ -1183,9 +1214,13 @@ export class NotificationTriggersJob {
     return { sharedParams, emailParams };
   }
 
-  private async getPendingOrderReminderPreview(): Promise<CronJobMessagePreview> {
+  private async getPendingOrderReminderPreview(
+    channel: 'EMAIL' | 'SMS' = 'EMAIL',
+  ): Promise<CronJobMessagePreview> {
     const orders = await this.getPendingOrderReminderCandidates();
-    const real = orders.find((order) => order.user?.email || order.user?.phone);
+    const real = orders.find((order) =>
+      channel === 'EMAIL' ? !!order.user?.email : !!order.user?.phone,
+    );
     const usedFallbackSample = !real;
     const order: PendingOrderContent = real ?? PLACEHOLDER_ORDER;
     const user = order.user;
@@ -1197,7 +1232,7 @@ export class NotificationTriggersJob {
     const { sharedParams, emailParams } =
       this.buildPendingOrderReminderParams(order);
 
-    if (user.email) {
+    if (channel === 'EMAIL') {
       const rendered =
         await this.notificationService.renderEmailTemplatePreview(
           EmailTemplateIds.PENDING_ORDER_REMINDER,
@@ -1605,13 +1640,17 @@ export class NotificationTriggersJob {
     return targets;
   }
 
-  private async getRegisteredNoOrderPreview(): Promise<CronJobMessagePreview> {
+  private async getRegisteredNoOrderPreview(
+    channel: 'EMAIL' | 'SMS' = 'EMAIL',
+  ): Promise<CronJobMessagePreview> {
     let real: UserEntity | undefined;
     let touchpoint = NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS[0];
 
     for (const tp of NotificationTriggersJob.REGISTERED_NO_ORDER_TOUCHPOINTS) {
       const users = await this.getRegisteredNoOrderCandidatesForTouchpoint(tp);
-      const match = users.find((user) => user.email || user.phone);
+      const match = users.find((user) =>
+        channel === 'EMAIL' ? !!user.email : !!user.phone,
+      );
       if (match) {
         real = match;
         touchpoint = tp;
@@ -1644,7 +1683,6 @@ export class NotificationTriggersJob {
     }
 
     const shopLink = process.env.FRONTEND_URL ?? '';
-    const channel = sample.email ? 'EMAIL' : 'SMS';
     return {
       channel,
       subject: channel === 'EMAIL' ? heading : undefined,
@@ -1957,22 +1995,25 @@ export class NotificationTriggersJob {
   // Single entry point for "what would this job's message look like right
   // now" — reuses the exact same content-building code the real send
   // methods use, so a preview can never drift out of sync with a live send.
-  async getPreviewForJob(jobName: CronJobName): Promise<CronJobMessagePreview> {
+  async getPreviewForJob(
+    jobName: CronJobName,
+    channel?: 'EMAIL' | 'SMS',
+  ): Promise<CronJobMessagePreview> {
     switch (jobName) {
       case CronJobName.ORDER_FEEDBACK_REQUESTS:
         return this.getOrderFeedbackPreview();
       case CronJobName.LOGIN_INACTIVITY_REMINDERS:
-        return this.getLoginInactivityPreview();
+        return this.getLoginInactivityPreview(channel);
       case CronJobName.UNVERIFIED_ACCOUNT_REMINDERS:
-        return this.getUnverifiedAccountPreview();
+        return this.getUnverifiedAccountPreview(channel);
       case CronJobName.EDUCATIONAL_CONTENT:
         return this.getEducationalContentPreview();
       case CronJobName.PENDING_ORDER_REMINDERS:
-        return this.getPendingOrderReminderPreview();
+        return this.getPendingOrderReminderPreview(channel);
       case CronJobName.VACCINATION_DUE_REMINDERS:
         return this.getVaccinationDuePreview();
       case CronJobName.REGISTERED_NO_ORDER_NUDGE:
-        return this.getRegisteredNoOrderPreview();
+        return this.getRegisteredNoOrderPreview(channel);
       case CronJobName.AYO_INTENT_FOLLOW_UP:
         return this.getAyoIntentPreview();
       default:

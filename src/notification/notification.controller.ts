@@ -306,11 +306,20 @@ export class NotificationController {
     summary:
       'Preview a sample of the email/SMS/in-app message this cron job would send',
   })
-  async getCronJobPreview(@Param('name') name: string) {
+  async getCronJobPreview(
+    @Param('name') name: string,
+    @Query('channel') channel?: string,
+  ) {
     if (!Object.values(CronJobName).includes(name as CronJobName)) {
       throw new BadRequestException(`Unknown cron job: ${name}`);
     }
-    return this.triggersJob.getPreviewForJob(name as CronJobName);
+    if (channel !== undefined && channel !== 'EMAIL' && channel !== 'SMS') {
+      throw new BadRequestException('channel must be EMAIL or SMS');
+    }
+    return this.triggersJob.getPreviewForJob(
+      name as CronJobName,
+      channel as 'EMAIL' | 'SMS' | undefined,
+    );
   }
 
   @Get('cron-jobs/:name/deliveries')
