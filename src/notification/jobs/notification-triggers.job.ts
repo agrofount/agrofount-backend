@@ -13,6 +13,7 @@ import { NotificationGateway } from '../gateways/notification.gateway';
 import { CronMonitorService } from '../services/cron-monitor.service';
 import { CronJobName } from '../enums/cron-job-name.enum';
 import { UserEntity } from '../../user/entities/user.entity';
+import { LivestockFarmerProfile } from '../../user/entities/profile.entity';
 import { OrderEntity } from '../../order/entities/order.entity';
 import { MessageEntity } from '../entities/message.entity';
 import { EmailTemplateIds, MessageTypes } from '../types/notification.type';
@@ -418,11 +419,18 @@ export class NotificationTriggersJob {
   }
 
   private loginInactivityName(
-    user: { firstname?: string; profile?: { businessName?: string } },
+    user: {
+      firstname?: string;
+      username?: string;
+      profile?: { businessName?: string };
+    },
     fallback: string,
   ): string {
     return (
-      user.firstname?.trim() || user.profile?.businessName?.trim() || fallback
+      user.firstname?.trim() ||
+      user.profile?.businessName?.trim() ||
+      user.username?.trim() ||
+      fallback
     );
   }
 
@@ -430,7 +438,12 @@ export class NotificationTriggersJob {
     const inactiveSince = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     return this.dataSource
       .createQueryBuilder(UserEntity, 'user')
-      .leftJoinAndSelect('user.profile', 'profile')
+      .leftJoinAndMapOne(
+        'user.profile',
+        LivestockFarmerProfile,
+        'profile',
+        'profile.userId = user.id',
+      )
       .where('user.deletedAt IS NULL')
       .andWhere('user.isVerified = true')
       .andWhere('user.updatedAt < :since', { since: inactiveSince })
@@ -439,6 +452,7 @@ export class NotificationTriggersJob {
         'user.email',
         'user.phone',
         'user.firstname',
+        'user.username',
         'profile.id',
         'profile.businessName',
       ])

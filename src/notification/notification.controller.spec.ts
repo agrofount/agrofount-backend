@@ -77,6 +77,28 @@ describe('NotificationController', () => {
       expect(result.meta.totalItems).toBe(1);
     });
 
+    it('counts contacts across all pages and treats blank contacts as missing', async () => {
+      const { controller, triggersJob } = setup();
+      triggersJob.getTargetsForJob.mockResolvedValue([
+        { id: '1', email: 'a@example.com', phone: null },
+        { id: '2', email: null, phone: '+2348012345678' },
+        { id: '3', email: 'b@example.com', phone: '+2348012345679' },
+        { id: '4', email: '  ', phone: '' },
+      ]);
+      const result = await controller.getCronJobRecipients(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+        { page: 2, limit: 1, path: '' } as any,
+      );
+      expect(result.data).toHaveLength(1);
+      expect(result.contactSummary).toEqual({
+        total: 4,
+        email: 2,
+        phone: 2,
+        both: 1,
+        neither: 1,
+      });
+    });
+
     it('rejects an unknown job name', async () => {
       const { controller } = setup();
       await expect(

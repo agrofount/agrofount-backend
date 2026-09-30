@@ -16,6 +16,7 @@ function chainableQueryBuilder(result: unknown) {
     'where',
     'andWhere',
     'leftJoinAndSelect',
+    'leftJoinAndMapOne',
     'innerJoin',
     'orderBy',
     'limit',
@@ -347,6 +348,37 @@ describe('NotificationTriggersJob', () => {
   });
 
   describe('sendLoginInactivityReminders', () => {
+    it('uses the saved username when first name and business name are missing', async () => {
+      const qb = chainableQueryBuilder([
+        {
+          id: 'u1',
+          firstname: null,
+          profile: null,
+          username: ' kosoko16 ',
+          email: 'kosoko16@yopmail.com',
+        },
+      ]);
+      const { job, notificationService } = setup({
+        dataSource: { createQueryBuilder: jest.fn().mockReturnValue(qb) },
+      });
+      const targets = await job.getTargetsForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+      expect(targets[0].name).toBe('kosoko16');
+      await job.sendLoginInactivityReminders();
+      expect(
+        notificationService.sendNotification.mock.calls[0][3].customer_name,
+      ).toBe('kosoko16');
+      const preview = await job.getPreviewForJob(
+        CronJobName.LOGIN_INACTIVITY_REMINDERS,
+      );
+      expect(preview.sampleTarget.name).toBe('kosoko16');
+      expect(preview.params.customer_name).toBe('kosoko16');
+      expect(qb.select).toHaveBeenCalledWith(
+        expect.arrayContaining(['user.username']),
+      );
+    });
+
     it.each([
       ['Amina', 'Green Farms', 'Amina', 'Amina'],
       ['  ', ' Green Farms ', 'Green Farms', 'Green Farms'],
@@ -379,9 +411,11 @@ describe('NotificationTriggersJob', () => {
         );
         expect(preview.params.customer_name).toBe(greeting);
         expect(preview.sampleTarget.name).toBe(displayName);
-        expect(qb.leftJoinAndSelect).toHaveBeenCalledWith(
+        expect(qb.leftJoinAndMapOne).toHaveBeenCalledWith(
           'user.profile',
+          expect.any(Function),
           'profile',
+          'profile.userId = user.id',
         );
       },
     );

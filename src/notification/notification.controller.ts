@@ -275,11 +275,29 @@ export class NotificationController {
     const targets = await this.triggersJob.getTargetsForJob(
       name as CronJobName,
     );
-    return paginateArray(targets, query, (target: CronJobTarget) => [
-      target.name,
-      target.email,
-      target.phone,
-    ]);
+    const contactSummary = {
+      total: targets.length,
+      email: 0,
+      phone: 0,
+      both: 0,
+      neither: 0,
+    };
+    for (const target of targets) {
+      const email = Boolean(target.email?.trim());
+      const phone = Boolean(target.phone?.trim());
+      if (email) contactSummary.email++;
+      if (phone) contactSummary.phone++;
+      if (email && phone) contactSummary.both++;
+      if (!email && !phone) contactSummary.neither++;
+    }
+    return {
+      ...paginateArray(targets, query, (target: CronJobTarget) => [
+        target.name,
+        target.email,
+        target.phone,
+      ]),
+      contactSummary,
+    };
   }
 
   @Get('cron-jobs/:name/preview')
