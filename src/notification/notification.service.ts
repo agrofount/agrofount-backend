@@ -1,4 +1,8 @@
 import {
+  isNotificationExcluded,
+  NotificationExcludedError,
+} from './utils/notification-exclusions';
+import {
   BadGatewayException,
   Inject,
   Injectable,
@@ -48,7 +52,20 @@ export class NotificationService {
     @InjectQueue('price-updates') private readonly queue: Queue,
   ) {}
 
+  private async assertNotificationAllowed(recipient: MessageRecipient) {
+    if (await isNotificationExcluded(this.messageRepo.manager, recipient)) {
+      throw new NotificationExcludedError();
+    }
+  }
+
   async create(dto: CreateNotificationDto) {
+    if (dto.channel === 'IN_APP' || dto.channel === 'PUSH') {
+      await this.assertNotificationAllowed({
+        userId: dto.userId,
+        email: dto.recipientEmail,
+        phoneNumber: dto.recipientPhone,
+      });
+    }
     const message = this.messageRepo.create(dto);
 
     return this.messageRepo.save(message);
@@ -366,7 +383,7 @@ export class NotificationService {
     return results;
   }
 
-  sendNotification(
+  async sendNotification(
     type: NotificationTypes,
     recipient: MessageRecipient,
     messageType: MessageTypes,
@@ -377,6 +394,7 @@ export class NotificationService {
       emailProvider?: 'brevo' | 'ses';
     },
   ): Promise<any> {
+    await this.assertNotificationAllowed(recipient);
     switch (type) {
       case 'EMAIL':
         return this.sendEmail(recipient, params, messageType, options);
@@ -412,6 +430,7 @@ export class NotificationService {
       emailProvider?: 'brevo' | 'ses';
     },
   ): Promise<void> {
+    await this.assertNotificationAllowed(recipient);
     if (!recipient.email) {
       throw new BadGatewayException(
         'Recipient email is required for email notifications',
@@ -964,6 +983,7 @@ export class NotificationService {
       skipPreviouslySent?: boolean;
     },
   ): Promise<any> {
+    await this.assertNotificationAllowed({ userId, phoneNumber: phone });
     const normalizedPhone = this.normalizeSmsRecipient(phone);
     const send = async (
       persist: (record: CreateNotificationDto) => Promise<unknown>,

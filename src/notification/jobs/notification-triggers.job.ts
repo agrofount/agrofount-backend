@@ -364,7 +364,7 @@ export class NotificationTriggersJob {
     for (const user of users) {
       try {
         const name = this.loginInactivityName(user, 'there');
-        this.notificationGateway.emitToUser(user.id, 'notification', {
+        await this.notificationGateway.emitToUser(user.id, 'notification', {
           title: 'We miss you!',
           message: "It's been a while. Check out what's new on Agrofount.",
           ctaLink: process.env.FRONTEND_URL,
@@ -1281,7 +1281,7 @@ export class NotificationTriggersJob {
         const orderLink = sharedParams.order_link;
 
         try {
-          this.notificationGateway.emitToUser(user.id, 'notification', {
+          await this.notificationGateway.emitToUser(user.id, 'notification', {
             title: 'Your order is pending',
             message: `Order ${order.code} is still pending. Complete payment to secure your items.`,
             ctaLink: orderLink,
@@ -1356,10 +1356,14 @@ export class NotificationTriggersJob {
             .map((item) => item.vaccineName)
             .join(', ');
 
-          this.notificationGateway.emitToUser(flock.userId, 'notification', {
-            title: 'Vaccination due today',
-            message: `Your ${flock.birdType} flock has a vaccination due today: ${vaccineNames}.`,
-          });
+          await this.notificationGateway.emitToUser(
+            flock.userId,
+            'notification',
+            {
+              title: 'Vaccination due today',
+              message: `Your ${flock.birdType} flock has a vaccination due today: ${vaccineNames}.`,
+            },
+          );
           sent++;
         } catch (err) {
           this.logger.warn(

@@ -38,6 +38,8 @@ type SegmentMatch = {
   id: string;
   firstname: string | null;
   lastname: string | null;
+  username: string | null;
+  businessName: string | null;
   email: string | null;
   phone: string | null;
   orderCount: number;
@@ -323,7 +325,8 @@ export class VoucherService {
       )
     `;
     const customerColumns = `
-      u.id, u.firstname, u.lastname, u.email, u.phone
+      u.id, u.firstname, u.lastname, u.username, u.email, u.phone,
+      (SELECT p."businessName" FROM profiles p WHERE p."userId" = u.id LIMIT 1) AS "businessName"
     `;
 
     let sql: string;

@@ -404,7 +404,7 @@ export class CampaignProcessor extends WorkerHost {
           return;
         }
         try {
-          this.notificationGateway.emitToUser(user.id, 'notification', {
+          await this.notificationGateway.emitToUser(user.id, 'notification', {
             title: campaign.title,
             message: campaign.message,
             ctaText: campaign.ctaText,
@@ -448,7 +448,7 @@ export class CampaignProcessor extends WorkerHost {
           return;
         }
         try {
-          this.notificationGateway.emitToUser(user.id, 'push', {
+          await this.notificationGateway.emitToUser(user.id, 'push', {
             title: campaign.title,
             body: campaign.message,
             ctaLink: campaign.ctaLink,

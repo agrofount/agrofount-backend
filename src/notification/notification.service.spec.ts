@@ -15,6 +15,7 @@ function chainableQueryBuilder(result: unknown) {
 describe('NotificationService', () => {
   function setup(overrides: Record<string, any> = {}) {
     const messageRepo = {
+      manager: { query: jest.fn().mockResolvedValue([]) },
       create: jest.fn((dto) => dto),
       save: jest.fn().mockResolvedValue(undefined),
       createQueryBuilder: jest.fn(),
@@ -87,6 +88,34 @@ describe('NotificationService', () => {
     },
   );
 
+  it('blocks an excluded email before invoking a provider', async () => {
+    const { service, sendInBlue } = setup();
+    await expect(
+      service.sendNotification(
+        'EMAIL',
+        { email: 'ak.fatoki@gmail.com' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        {},
+      ),
+    ).rejects.toThrow('excluded');
+    expect(sendInBlue.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('blocks SMS for an account whose email is excluded', async () => {
+    const { service, httpService } = setup({
+      messageRepo: { manager: { query: jest.fn().mockResolvedValue([{}]) } },
+    });
+    await expect(
+      service.sendNotification(
+        'SMS',
+        { userId: 'u1', phoneNumber: '+2348000000000' },
+        MessageTypes.LOGIN_INACTIVITY_REMINDER,
+        {},
+      ),
+    ).rejects.toThrow('excluded');
+    expect(httpService.post).not.toHaveBeenCalled();
+  });
+
   describe('bulk lead SMS history guard', () => {
     function guardedSetup(history: any[]) {
       const repository = {
@@ -101,7 +130,12 @@ describe('NotificationService', () => {
         getRepository: jest.fn().mockReturnValue(repository),
       };
       const { service } = setup({
-        messageRepo: { manager: { transaction: (work) => work(manager) } },
+        messageRepo: {
+          manager: {
+            query: jest.fn().mockResolvedValue([]),
+            transaction: (work) => work(manager),
+          },
+        },
       });
       const send = jest
         .spyOn(service as any, 'sendSmsMessage')
