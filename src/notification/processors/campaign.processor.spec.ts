@@ -190,11 +190,12 @@ describe('CampaignProcessor', () => {
       ...baseCampaign,
       audienceType: CampaignAudienceType.Users,
       channels: ['SMS'],
+      message: 'Hi {{username}}, happy new month!',
       ctaText: 'Get Started',
       ctaLink: 'https://agrofount.com/register',
     });
     campaignService.resolveAudience.mockResolvedValue([
-      { id: 'user-1', email: null, phone: '+2348012345678' },
+      { id: 'user-1', email: null, phone: '+2348012345678', username: 'ada' },
     ]);
 
     await processor.process({ data: { campaignId: 'campaign-1' } } as any);
@@ -202,7 +203,7 @@ describe('CampaignProcessor', () => {
     expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
       '+2348012345678',
       'user-1',
-      'You told us you want {{statedInterest}} in {{state}}. Get Started: https://agrofount.com/register',
+      'Hi ada, happy new month! Get Started: https://agrofount.com/register',
       { campaignId: 'campaign-1' },
     );
   });
@@ -312,25 +313,56 @@ describe('CampaignProcessor', () => {
     });
   });
 
-  it('still uses the plain, unpersonalized user path when audienceType is Users', async () => {
+  it('personalizes {{username}} for user recipients, falling back to firstname then "there"', async () => {
     const { processor, notificationService, campaignService } = setup();
     campaignService.findOne.mockResolvedValue({
       ...baseCampaign,
+      title: 'Hi {{username}}',
+      message: 'Happy new month, {{username}}.',
       audienceType: CampaignAudienceType.Users,
       channels: ['EMAIL'],
     });
     campaignService.resolveAudience.mockResolvedValue([
-      { id: 'user-1', email: 'farmer@example.com', phone: null },
+      {
+        id: 'user-1',
+        email: 'farmer@example.com',
+        phone: null,
+        username: 'ada',
+      },
+      {
+        id: 'user-2',
+        email: 'b@example.com',
+        phone: null,
+        username: ' ',
+        firstname: 'Bola',
+      },
+      { id: 'user-3', email: 'c@example.com', phone: null },
     ]);
 
     await processor.process({ data: { campaignId: 'campaign-1' } } as any);
 
     expect(campaignService.resolveLeadAudience).not.toHaveBeenCalled();
     expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 'user-1' }),
-      'Hi {{name}}',
+      expect.objectContaining({ userId: 'user-2' }),
+      'Hi Bola',
       expect.any(String),
-      'You told us you want {{statedInterest}} in {{state}}.',
+      'Happy new month, Bola.',
+      MessageTypes.CAMPAIGN_NOTIFICATION,
+      { campaignId: 'campaign-1', channel: 'EMAIL' },
+    );
+    expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-3' }),
+      'Hi there',
+      expect.any(String),
+      'Happy new month, there.',
+      MessageTypes.CAMPAIGN_NOTIFICATION,
+      { campaignId: 'campaign-1', channel: 'EMAIL' },
+    );
+    expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1' }),
+      'Hi ada',
+      expect.any(String),
+      'Happy new month, ada.',
       MessageTypes.CAMPAIGN_NOTIFICATION,
       { campaignId: 'campaign-1', channel: 'EMAIL' },
     );
@@ -381,10 +413,12 @@ describe('CampaignProcessor', () => {
       expect(result).toEqual([{ channel: 'SMS', success: true }]);
     });
 
-    it('does not personalize with lead tokens when the campaign audience is Users', async () => {
+    it('fills {{username}} with a sample value when the campaign audience is Users', async () => {
       const { processor, notificationService, campaignService } = setup();
       campaignService.findOne.mockResolvedValue({
         ...baseCampaign,
+        title: 'Hi {{username}}',
+        message: 'You told us you want {{statedInterest}}.',
         audienceType: CampaignAudienceType.Users,
       });
 
@@ -392,9 +426,9 @@ describe('CampaignProcessor', () => {
 
       expect(notificationService.sendCustomEmail).toHaveBeenCalledWith(
         expect.any(Object),
-        'Hi {{name}}',
+        'Hi TestUser',
         expect.any(String),
-        'You told us you want {{statedInterest}} in {{state}}.',
+        'You told us you want .',
         MessageTypes.CAMPAIGN_NOTIFICATION,
         { channel: 'EMAIL' },
       );

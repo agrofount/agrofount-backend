@@ -36,6 +36,10 @@ const TEST_SEND_VARIABLES: Record<string, string> = {
   formName: 'Test Form',
 };
 
+const USER_TEST_SEND_VARIABLES: Record<string, string> = {
+  username: 'TestUser',
+};
+
 // Minimal shape a test-send needs — deliberately not the full
 // NotificationCampaignEntity, so unsaved compose-form content (no id, no
 // audience/channels yet) can be tested before the campaign is ever created.
@@ -160,13 +164,11 @@ export class CampaignProcessor extends WorkerHost {
     }
 
     const isLeadAudience = campaign.audienceType === CampaignAudienceType.Leads;
-    const variables = isLeadAudience ? TEST_SEND_VARIABLES : {};
-    const title = isLeadAudience
-      ? renderTemplate(campaign.title, variables) || campaign.title
-      : campaign.title;
-    const message = isLeadAudience
-      ? renderTemplate(campaign.message, variables)
-      : campaign.message;
+    const variables = isLeadAudience
+      ? TEST_SEND_VARIABLES
+      : USER_TEST_SEND_VARIABLES;
+    const title = renderTemplate(campaign.title, variables) || campaign.title;
+    const message = renderTemplate(campaign.message, variables);
 
     const results: { channel: string; success: boolean; error?: string }[] = [];
 
@@ -179,10 +181,9 @@ export class CampaignProcessor extends WorkerHost {
             ...campaign,
             title,
             message,
-            emailContent:
-              isLeadAudience && campaign.emailContent
-                ? renderTemplate(campaign.emailContent, variables)
-                : campaign.emailContent,
+            emailContent: campaign.emailContent
+              ? renderTemplate(campaign.emailContent, variables)
+              : campaign.emailContent,
           }),
           message,
           MessageTypes.CAMPAIGN_NOTIFICATION,
@@ -313,6 +314,19 @@ export class CampaignProcessor extends WorkerHost {
     user: UserEntity,
     channel: string,
   ) {
+    const variables = {
+      username: user.username?.trim() || user.firstname?.trim() || 'there',
+    };
+    const title = renderTemplate(campaign.title, variables) || campaign.title;
+    const message = renderTemplate(campaign.message, variables);
+    const personalizedCampaign = {
+      ...campaign,
+      title,
+      message,
+      emailContent: campaign.emailContent
+        ? renderTemplate(campaign.emailContent, variables)
+        : campaign.emailContent,
+    };
     const recipient = {
       userId: user.id,
       email: user.email,
@@ -328,7 +342,7 @@ export class CampaignProcessor extends WorkerHost {
             messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
             userId: user.id,
             sender: 'Agrofount',
-            message: campaign.title,
+            message: title,
             channel: upperChannel,
             campaignId: campaign.id,
             status: 'SKIPPED',
@@ -337,20 +351,15 @@ export class CampaignProcessor extends WorkerHost {
           return;
         }
         if (
-          await this.isDuplicateDelivery(
-            campaign,
-            user.id,
-            upperChannel,
-            campaign.title,
-          )
+          await this.isDuplicateDelivery(campaign, user.id, upperChannel, title)
         ) {
           return;
         }
         await this.notificationService.sendCustomEmail(
           recipient,
-          campaign.title,
-          this.buildEmailHtml(campaign),
-          campaign.message,
+          title,
+          this.buildEmailHtml(personalizedCampaign),
+          message,
           MessageTypes.CAMPAIGN_NOTIFICATION,
           {
             campaignId: campaign.id,
@@ -366,7 +375,7 @@ export class CampaignProcessor extends WorkerHost {
             messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
             userId: user.id,
             sender: 'Agrofount',
-            message: campaign.title,
+            message: title,
             channel: upperChannel,
             campaignId: campaign.id,
             status: 'SKIPPED',
@@ -375,38 +384,28 @@ export class CampaignProcessor extends WorkerHost {
           return;
         }
         if (
-          await this.isDuplicateDelivery(
-            campaign,
-            user.id,
-            upperChannel,
-            campaign.title,
-          )
+          await this.isDuplicateDelivery(campaign, user.id, upperChannel, title)
         ) {
           return;
         }
         await this.notificationService.sendSmsForCampaign(
           user.phone,
           user.id,
-          this.appendCtaToSmsMessage(campaign.message, campaign),
+          this.appendCtaToSmsMessage(message, campaign),
           { campaignId: campaign.id },
         );
         break;
 
       case 'IN_APP':
         if (
-          await this.isDuplicateDelivery(
-            campaign,
-            user.id,
-            upperChannel,
-            campaign.title,
-          )
+          await this.isDuplicateDelivery(campaign, user.id, upperChannel, title)
         ) {
           return;
         }
         try {
           await this.notificationGateway.emitToUser(user.id, 'notification', {
-            title: campaign.title,
-            message: campaign.message,
+            title,
+            message,
             ctaText: campaign.ctaText,
             ctaLink: campaign.ctaLink,
             category: campaign.category,
@@ -416,7 +415,7 @@ export class CampaignProcessor extends WorkerHost {
             messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
             userId: user.id,
             sender: 'Agrofount',
-            message: campaign.title,
+            message: title,
             channel: upperChannel,
             campaignId: campaign.id,
             status: 'SENT',
@@ -426,7 +425,7 @@ export class CampaignProcessor extends WorkerHost {
             messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
             userId: user.id,
             sender: 'Agrofount',
-            message: campaign.title,
+            message: title,
             channel: upperChannel,
             campaignId: campaign.id,
             status: 'FAILED',
@@ -438,26 +437,21 @@ export class CampaignProcessor extends WorkerHost {
 
       case 'PUSH':
         if (
-          await this.isDuplicateDelivery(
-            campaign,
-            user.id,
-            upperChannel,
-            campaign.title,
-          )
+          await this.isDuplicateDelivery(campaign, user.id, upperChannel, title)
         ) {
           return;
         }
         try {
           await this.notificationGateway.emitToUser(user.id, 'push', {
-            title: campaign.title,
-            body: campaign.message,
+            title,
+            body: message,
             ctaLink: campaign.ctaLink,
           });
           await this.notificationService.recordDelivery({
             messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
             userId: user.id,
             sender: 'Agrofount',
-            message: campaign.title,
+            message: title,
             channel: upperChannel,
             campaignId: campaign.id,
             status: 'SENT',
@@ -467,7 +461,7 @@ export class CampaignProcessor extends WorkerHost {
             messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
             userId: user.id,
             sender: 'Agrofount',
-            message: campaign.title,
+            message: title,
             channel: upperChannel,
             campaignId: campaign.id,
             status: 'FAILED',
@@ -482,7 +476,7 @@ export class CampaignProcessor extends WorkerHost {
           messageType: MessageTypes.CAMPAIGN_NOTIFICATION,
           userId: user.id,
           sender: 'Agrofount',
-          message: campaign.title,
+          message: title,
           channel: upperChannel,
           campaignId: campaign.id,
           status: 'SKIPPED',
