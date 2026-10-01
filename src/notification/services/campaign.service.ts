@@ -276,7 +276,13 @@ export class CampaignService {
     );
 
     return query
-      .select(['user.id', 'user.email', 'user.phone', 'user.firstname'])
+      .select([
+        'user.id',
+        'user.email',
+        'user.phone',
+        'user.firstname',
+        'user.username',
+      ])
       .getMany();
   }
 
