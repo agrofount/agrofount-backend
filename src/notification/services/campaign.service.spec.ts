@@ -159,6 +159,30 @@ describe('CampaignService', () => {
       );
       expect(qb.andWhere).toHaveBeenCalledWith(expect.any(Object));
     });
+
+    it('excludes converted leads when excludeConvertedLeads is set', async () => {
+      const qb = chainableQueryBuilder([{ id: 'lead-1' }]);
+      const { service } = setup(qb);
+
+      await service.resolveLeadAudience({ excludeConvertedLeads: true });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'lead.status != :excludedConvertedStatus',
+        { excludedConvertedStatus: LeadStatus.Converted },
+      );
+    });
+
+    it('does not exclude converted leads by default', async () => {
+      const qb = chainableQueryBuilder([{ id: 'lead-1' }]);
+      const { service } = setup(qb);
+
+      await service.resolveLeadAudience({ states: ['Lagos'] });
+
+      expect(qb.andWhere).not.toHaveBeenCalledWith(
+        'lead.status != :excludedConvertedStatus',
+        expect.anything(),
+      );
+    });
   });
 
   describe('estimateAudience', () => {

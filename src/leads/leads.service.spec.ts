@@ -477,6 +477,30 @@ describe('LeadsService', () => {
         'admin-1',
       );
     });
+
+    it('passes excludeConverted and resend through as campaign audience flags', async () => {
+      const { service, campaignService } = setup();
+      campaignService.create.mockResolvedValue({ id: 'campaign-1' });
+
+      await service.sendBulkSms(
+        {
+          message: 'Hi {{name}}, still interested?',
+          excludeConverted: true,
+          resend: true,
+        },
+        'admin-1',
+      );
+
+      expect(campaignService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          audience: expect.objectContaining({
+            excludeConvertedLeads: true,
+            allowResend: true,
+          }),
+        }),
+        'admin-1',
+      );
+    });
   });
 
   describe('linkConversionByContact', () => {

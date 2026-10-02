@@ -49,6 +49,11 @@ export interface CampaignAudience {
   leadSourceIds?: string[];
   leadCampaignNames?: string[];
   leadCampaignIds?: string[];
+  // Excludes leads already marked converted, regardless of leadStatuses.
+  excludeConvertedLeads?: boolean;
+  // Bypasses the anti-spam skip that otherwise drops any lead who already
+  // received a successful campaign SMS from an earlier campaign.
+  allowResend?: boolean;
 }
 
 @Entity('notification_campaign')

@@ -411,6 +411,8 @@ export class LeadsService {
       leadCampaignNames:
         dto.campaignNames ??
         (dto.campaignName ? [dto.campaignName] : undefined),
+      excludeConvertedLeads: dto.excludeConverted,
+      allowResend: dto.resend,
     };
 
     return this.campaignService.create(

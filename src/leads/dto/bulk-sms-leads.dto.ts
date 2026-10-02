@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class BulkSmsLeadsDto {
   @ApiProperty({
@@ -70,4 +70,20 @@ export class BulkSmsLeadsDto {
   @IsOptional()
   @IsString()
   campaignName?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Exclude leads already marked converted, regardless of statuses.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  excludeConverted?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Allow sending to leads who already received a previous campaign SMS. Off by default to avoid re-spamming leads.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  resend?: boolean;
 }
