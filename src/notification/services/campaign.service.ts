@@ -230,6 +230,11 @@ export class CampaignService {
     if (safeStatus.length) {
       query.andWhere('lead.status IN (:...statuses)', { statuses: safeStatus });
     }
+    if (audience.excludeConvertedLeads) {
+      query.andWhere('lead.status != :excludedConvertedStatus', {
+        excludedConvertedStatus: LeadStatus.Converted,
+      });
+    }
     const validSources = Object.values(LeadSource);
     const safeSources = cleanStringList(audience.leadSources).filter((source) =>
       validSources.includes(source as LeadSource),

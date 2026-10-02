@@ -184,6 +184,33 @@ describe('CampaignProcessor', () => {
     );
   });
 
+  it('bypasses the previously-sent skip when the campaign audience allows resending', async () => {
+    const { processor, notificationService, campaignService } = setup();
+    campaignService.findOne.mockResolvedValue({
+      ...baseCampaign,
+      channels: ['SMS'],
+      audience: { all: true, allowResend: true },
+    });
+    campaignService.resolveLeadAudience.mockResolvedValue([
+      {
+        id: 'lead-1',
+        name: 'Amina',
+        email: null,
+        phone: '+2348012345678',
+        state: 'Lagos',
+      },
+    ]);
+
+    await processor.process({ data: { campaignId: 'campaign-1' } } as any);
+
+    expect(notificationService.sendSmsForCampaign).toHaveBeenCalledWith(
+      '+2348012345678',
+      'lead-1',
+      expect.any(String),
+      { campaignId: 'campaign-1', skipPreviouslySent: false },
+    );
+  });
+
   it('appends the CTA link to the SMS body for a plain user recipient', async () => {
     const { processor, notificationService, campaignService } = setup();
     campaignService.findOne.mockResolvedValue({

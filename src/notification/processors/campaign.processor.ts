@@ -294,7 +294,10 @@ export class CampaignProcessor extends WorkerHost {
           lead.phone,
           lead.id,
           this.appendCtaToSmsMessage(message, campaign),
-          { campaignId: campaign.id, skipPreviouslySent: true },
+          {
+            campaignId: campaign.id,
+            skipPreviouslySent: !campaign.audience?.allowResend,
+          },
         );
         if (smsResult?.skipped) return 'skipped' as const;
         if (smsResult?.success === false) {
