@@ -54,6 +54,8 @@ const MAX_SEGMENT_MATCHES = 1000;
 // How many rows the preview response includes for display; `matched` still
 // reflects the full qualified count (up to MAX_SEGMENT_MATCHES).
 const PREVIEW_SAMPLE_SIZE = 50;
+const VOUCHER_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+const GENERATED_VOUCHER_CODE_LENGTH = 5;
 
 @Injectable()
 export class VoucherService {
@@ -178,10 +180,13 @@ export class VoucherService {
     });
   }
 
-  // Uppercase hex only - no hyphen/underscore/other special characters, so
-  // generated codes are easy to read aloud and safe to paste anywhere.
+  // Five uppercase characters, excluding ambiguous 0, 1, I and O, make
+  // generated codes short, readable and safe to paste anywhere.
   private generateVoucherCode(): string {
-    return randomBytes(9).toString('hex').toUpperCase();
+    return Array.from(
+      randomBytes(GENERATED_VOUCHER_CODE_LENGTH),
+      (byte) => VOUCHER_CODE_ALPHABET[byte & 31],
+    ).join('');
   }
 
   private futureExpiry(value: string): Date {
