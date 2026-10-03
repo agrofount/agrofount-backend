@@ -460,7 +460,7 @@ export class VoucherService {
           user.userType === UserTypes.System
             ? undefined
             : { user: { id: user.id } },
-        relations: ['user'],
+        relations: ['user', 'user.profile'],
         defaultLimit: 25,
         maxLimit: 100,
       });
