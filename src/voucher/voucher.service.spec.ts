@@ -71,7 +71,7 @@ describe('Admin vouchers', () => {
       expiresAt: new Date(expiresAt),
     });
   });
-  it('generates an alphanumeric code with no special characters when omitted', async () => {
+  it('generates a short, readable code when omitted', async () => {
     const { service } = setup();
     const code = (
       await service.createForAdmin({
@@ -80,8 +80,8 @@ describe('Admin vouchers', () => {
         expiresAt: future(),
       })
     ).code;
-    expect(code).toMatch(/^[A-F0-9]{18}$/);
-    expect(code).not.toMatch(/[-_]/);
+    expect(code).toMatch(/^[2-9A-HJ-NP-Z]{5}$/);
+    expect(code).not.toMatch(/[01IO]/);
   });
   it('rejects unknown customers', async () => {
     const { service, customerRepo, repo } = setup();
