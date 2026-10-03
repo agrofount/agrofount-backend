@@ -125,6 +125,7 @@ describe('LeadsService', () => {
         {
           ...leads[0],
           messageCount: 3,
+          smsCount: 3,
           lastMessageSentAt,
           lastMessageContent: 'Hello there',
           lastMessageChannel: 'SMS',
@@ -134,6 +135,7 @@ describe('LeadsService', () => {
         {
           ...leads[1],
           messageCount: 0,
+          smsCount: 0,
           lastMessageSentAt: null,
           lastMessageContent: null,
           lastMessageChannel: null,
@@ -141,6 +143,9 @@ describe('LeadsService', () => {
           lastSmsSentAt: null,
         },
       ]);
+      expect(historyQuery.mock.calls[0][0]).toContain(
+        'message."userId" IS DISTINCT FROM lead.id::text',
+      );
       expect(historyQuery).toHaveBeenCalledWith(
         expect.stringContaining("message.status = 'SENT'"),
         [['lead-1', 'lead-2'], expect.any(String)],

@@ -387,6 +387,7 @@ export class LeadsService {
              FROM leads lead
              INNER JOIN message ON message."normalizedPhone" = lead."normalizedPhone"
              WHERE lead.id = ANY($1::uuid[])
+               AND message."userId" IS DISTINCT FROM lead.id::text
                AND message.channel = 'SMS' AND message.status = 'SENT'
                AND message."messageType" = $2
            ) combined
@@ -419,6 +420,7 @@ export class LeadsService {
         return {
           ...lead,
           messageCount: meta.messageCount,
+          smsCount: meta.messageCount,
           lastMessageSentAt: meta.lastMessageSentAt,
           lastMessageContent: meta.lastMessageContent,
           lastMessageChannel: meta.lastMessageChannel,
