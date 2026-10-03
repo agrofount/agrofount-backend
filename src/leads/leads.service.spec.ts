@@ -101,10 +101,16 @@ describe('LeadsService', () => {
         getManyAndCount: jest.fn().mockResolvedValue([leads, 2]),
       };
       Object.assign(leadRepo, { createQueryBuilder: () => query });
-      const lastSmsSentAt = new Date('2026-09-26T10:00:00Z');
-      const historyQuery = jest
-        .fn()
-        .mockResolvedValue([{ id: 'lead-1', lastSmsSentAt }]);
+      const lastMessageSentAt = new Date('2026-09-26T10:00:00Z');
+      const historyQuery = jest.fn().mockResolvedValue([
+        {
+          id: 'lead-1',
+          messageCount: '3',
+          lastMessageSentAt,
+          lastMessageContent: 'Hello there',
+          lastMessageChannel: 'SMS',
+        },
+      ]);
       Object.assign(dataSource, { query: historyQuery });
 
       const result = await service.findAll({
@@ -116,8 +122,24 @@ describe('LeadsService', () => {
       );
 
       expect(result.data).toEqual([
-        { ...leads[0], smsStatus: 'sent', lastSmsSentAt },
-        { ...leads[1], smsStatus: 'not_sent', lastSmsSentAt: null },
+        {
+          ...leads[0],
+          messageCount: 3,
+          lastMessageSentAt,
+          lastMessageContent: 'Hello there',
+          lastMessageChannel: 'SMS',
+          smsStatus: 'sent',
+          lastSmsSentAt: lastMessageSentAt,
+        },
+        {
+          ...leads[1],
+          messageCount: 0,
+          lastMessageSentAt: null,
+          lastMessageContent: null,
+          lastMessageChannel: null,
+          smsStatus: 'not_sent',
+          lastSmsSentAt: null,
+        },
       ]);
       expect(historyQuery).toHaveBeenCalledWith(
         expect.stringContaining("message.status = 'SENT'"),

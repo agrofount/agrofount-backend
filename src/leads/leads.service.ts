@@ -354,10 +354,24 @@ export class LeadsService {
     // combined with UNION ALL instead of a single OR'd regexp comparison,
     // which forced an unindexed scan of the message table per lead and timed
     // out once the requested page size grew (e.g. limit=1000).
-    const smsHistory: { id: string; lastSmsSentAt: Date | null }[] = data.length
+    const messageHistory: {
+      id: string;
+      messageCount: string;
+      lastMessageSentAt: Date | null;
+      lastMessageContent: string | null;
+      lastMessageChannel: string | null;
+    }[] = data.length
       ? await this.dataSource.query(
-          `SELECT id, MAX("createdAt") AS "lastSmsSentAt" FROM (
-             SELECT lead.id AS id, message."createdAt" AS "createdAt"
+          `SELECT id,
+                  COUNT(*) AS "messageCount",
+                  MAX("createdAt") AS "lastMessageSentAt",
+                  (ARRAY_AGG("message" ORDER BY "createdAt" DESC))[1] AS "lastMessageContent",
+                  (ARRAY_AGG("channel" ORDER BY "createdAt" DESC))[1] AS "lastMessageChannel"
+           FROM (
+             SELECT lead.id AS id,
+                    message."createdAt" AS "createdAt",
+                    message."message" AS "message",
+                    message.channel AS "channel"
              FROM leads lead
              INNER JOIN message ON message."userId" = lead.id::text
              WHERE lead.id = ANY($1::uuid[])
@@ -366,7 +380,10 @@ export class LeadsService {
 
              UNION ALL
 
-             SELECT lead.id AS id, message."createdAt" AS "createdAt"
+             SELECT lead.id AS id,
+                    message."createdAt" AS "createdAt",
+                    message."message" AS "message",
+                    message.channel AS "channel"
              FROM leads lead
              INNER JOIN message ON message."normalizedPhone" = lead."normalizedPhone"
              WHERE lead.id = ANY($1::uuid[])
@@ -377,17 +394,34 @@ export class LeadsService {
           [data.map((lead) => lead.id), MessageTypes.CAMPAIGN_NOTIFICATION],
         )
       : [];
-    const smsByLead = new Map(
-      smsHistory.map((row) => [row.id, row.lastSmsSentAt]),
+    const messageMetaByLead = new Map(
+      messageHistory.map((row) => [
+        row.id,
+        {
+          messageCount: Number(row.messageCount ?? 0),
+          lastMessageSentAt: row.lastMessageSentAt ? new Date(row.lastMessageSentAt) : null,
+          lastMessageContent: row.lastMessageContent ?? null,
+          lastMessageChannel: row.lastMessageChannel ?? null,
+        },
+      ]),
     );
 
     return {
       data: data.map((lead) => {
-        const lastSmsSentAt = smsByLead.get(lead.id) ?? null;
+        const meta = messageMetaByLead.get(lead.id) ?? {
+          messageCount: 0,
+          lastMessageSentAt: null,
+          lastMessageContent: null,
+          lastMessageChannel: null,
+        };
         return {
           ...lead,
-          smsStatus: lastSmsSentAt ? 'sent' : 'not_sent',
-          lastSmsSentAt,
+          messageCount: meta.messageCount,
+          lastMessageSentAt: meta.lastMessageSentAt,
+          lastMessageContent: meta.lastMessageContent,
+          lastMessageChannel: meta.lastMessageChannel,
+          smsStatus: meta.lastMessageSentAt ? 'sent' : 'not_sent',
+          lastSmsSentAt: meta.lastMessageSentAt,
         };
       }),
       meta: {
