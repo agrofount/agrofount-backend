@@ -69,7 +69,10 @@ export class CartService implements OnModuleDestroy {
     const products = await this.loadProducts(items.map((item) => item.itemId));
     const next: StoredCart = {};
     for (const item of items) {
-      const uom = this.assertUnit(products.get(item.itemId) || null, item.selectedUOMUnit);
+      const uom = this.assertUnit(
+        products.get(item.itemId) || null,
+        item.selectedUOMUnit,
+      );
       this.assertMinimumOrderQuantity(item.selectedUOMUnit, uom, item.quantity);
       next[item.itemId] ||= {};
       next[item.itemId][item.selectedUOMUnit] = { quantity: item.quantity };
