@@ -399,7 +399,9 @@ export class LeadsService {
         row.id,
         {
           messageCount: Number(row.messageCount ?? 0),
-          lastMessageSentAt: row.lastMessageSentAt ? new Date(row.lastMessageSentAt) : null,
+          lastMessageSentAt: row.lastMessageSentAt
+            ? new Date(row.lastMessageSentAt)
+            : null,
           lastMessageContent: row.lastMessageContent ?? null,
           lastMessageChannel: row.lastMessageChannel ?? null,
         },
