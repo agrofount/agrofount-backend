@@ -149,6 +149,30 @@ describe('OrderService.buildFindAllTarget', () => {
   });
 });
 
+describe('OrderService.validateItemAvailability', () => {
+  it('rejects cart quantities below the configured UOM minimum order quantity', async () => {
+    const service = Object.create(OrderService.prototype) as OrderService;
+    (service as any).productLocationService = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'product-location-1',
+        isAvailable: true,
+        isDraft: false,
+        product: { id: 'product-1', name: 'Rice' },
+        state: { id: 'state-1', name: 'Lagos' },
+        country: { id: 'country-1', name: 'Nigeria' },
+        productSlug: 'rice-lagos',
+        uom: [{ unit: 'bag', platformPrice: 5000, moq: 5 }],
+      }),
+    };
+
+    await expect(
+      (service as any).validateItemAvailability({
+        'product-location-1': { bag: { quantity: 3 } },
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+});
+
 describe('OrderService.validateVoucher', () => {
   const service = Object.create(OrderService.prototype) as OrderService;
 

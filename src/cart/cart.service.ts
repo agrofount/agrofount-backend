@@ -39,7 +39,8 @@ export class CartService implements OnModuleDestroy {
   }
 
   async addToCart(userId: string, dto: AddToCartDto) {
-    await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
+    const uom = await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
+    this.assertMinimumOrderQuantity(dto.selectedUOMUnit, uom, dto.quantity);
     await this.mutate(userId, (cart) => {
       cart[dto.itemId] ||= {};
       cart[dto.itemId][dto.selectedUOMUnit] = { quantity: dto.quantity };
@@ -68,7 +69,8 @@ export class CartService implements OnModuleDestroy {
     const products = await this.loadProducts(items.map((item) => item.itemId));
     const next: StoredCart = {};
     for (const item of items) {
-      this.assertUnit(products.get(item.itemId) || null, item.selectedUOMUnit);
+      const uom = this.assertUnit(products.get(item.itemId) || null, item.selectedUOMUnit);
+      this.assertMinimumOrderQuantity(item.selectedUOMUnit, uom, item.quantity);
       next[item.itemId] ||= {};
       next[item.itemId][item.selectedUOMUnit] = { quantity: item.quantity };
     }
@@ -124,7 +126,8 @@ export class CartService implements OnModuleDestroy {
 
   async update(userId: string, dto: UpdateCartDto) {
     if (dto.quantity > 0) {
-      await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
+      const uom = await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
+      this.assertMinimumOrderQuantity(dto.selectedUOMUnit, uom, dto.quantity);
     }
     await this.mutate(userId, (cart) => {
       if (dto.quantity === 0) {
@@ -236,14 +239,18 @@ export class CartService implements OnModuleDestroy {
     return new Map(products.map((product) => [product.id, product]));
   }
 
-  private async assertProductUnit(itemId: string, unit: string): Promise<void> {
+  private async assertProductUnit(
+    itemId: string,
+    unit: string,
+  ): Promise<{ unit: string; moq?: number }> {
     const product = await this.productLocationRepository.findOne({
       where: { id: itemId },
     });
-    this.assertUnit(product, unit);
+    const uom = this.assertUnit(product, unit);
     if (product.isDraft || !product.isAvailable) {
       throw new BadRequestException('Product is not available');
     }
+    return uom;
   }
 
   private assertUnit(product: ProductLocationEntity | null, unit: string) {
@@ -251,6 +258,18 @@ export class CartService implements OnModuleDestroy {
     const uom = product.uom.find((candidate) => candidate.unit === unit);
     if (!uom) throw new BadRequestException('Unit of Measure not found');
     return uom;
+  }
+
+  private assertMinimumOrderQuantity(
+    unit: string,
+    uom: { moq?: number },
+    quantity: number,
+  ): void {
+    if (uom.moq && Number(quantity) < Number(uom.moq)) {
+      throw new BadRequestException(
+        `Minimum quantity for ${unit} is ${uom.moq}`,
+      );
+    }
   }
 
   private assertCartSize(cart: StoredCart): void {

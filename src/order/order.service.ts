@@ -878,6 +878,11 @@ export class OrderService {
             'Cart quantity must be greater than zero',
           );
         }
+        if (uomData.moq && quantity < uomData.moq) {
+          throw new BadRequestException(
+            `Minimum quantity for ${uom} is ${uomData.moq}`,
+          );
+        }
         if (!productLocation.isAvailable || productLocation.isDraft) {
           throw new BadRequestException(`Product ${itemId} is not available`);
         }
