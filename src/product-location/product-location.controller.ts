@@ -189,12 +189,12 @@ export class ProductLocationController {
   @ApiQuery({
     name: 'range',
     required: false,
-    enum: ['1M', '3M', '6M', '1Y'],
+    enum: ['1M', '3M', '6M', '1Y', '3Y'],
     example: '3M',
   })
   getPriceHistory(
     @Param('slug') slug: string,
-    @Query('range') range: '1M' | '3M' | '6M' | '1Y' = '3M',
+    @Query('range') range: '1M' | '3M' | '6M' | '1Y' | '3Y' = '3M',
   ) {
     return this.productLocationService.getPriceHistory(slug, range);
   }

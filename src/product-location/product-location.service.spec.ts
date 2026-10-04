@@ -55,6 +55,25 @@ describe('ProductLocationService price history', () => {
     jest.useRealTimers();
   });
 
+  it('supports three years with monthly labels that include the year', async () => {
+    const { service } = createService({
+      productLocation: {
+        id: 'location-1',
+        productSlug: 'test',
+        price: '100',
+        product: { name: 'Test' },
+      },
+      changes: [],
+      previousChange: null,
+    });
+    const result = await service.getPriceHistory('test', '3Y');
+    expect(result.range).toBe('3Y');
+    expect(result.from).toBe('2023-09-05T12:00:00.000Z');
+    expect(result.points).toHaveLength(37);
+    expect(result.points[0].label).toBe('Sep 23');
+    expect(result.points[36].label).toBe('Sep 26');
+  });
+
   it('returns chart-ready points and raw changes for the requested range', async () => {
     const { service, productLocationRepo } = createService({
       productLocation: {
