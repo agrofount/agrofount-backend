@@ -462,7 +462,7 @@ export class VoucherService {
             : { user: { id: user.id } },
         relations: ['user', 'user.profile'],
         defaultLimit: 25,
-        maxLimit: 100,
+        maxLimit: 500,
       });
 
       result.data = plainToInstance(VoucherEntity, result.data);

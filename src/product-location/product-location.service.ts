@@ -38,6 +38,7 @@ export class ProductLocationService {
     '3M': 3,
     '6M': 6,
     '1Y': 12,
+    '3Y': 36,
   };
 
   constructor(
@@ -163,7 +164,10 @@ export class ProductLocationService {
     return productLocation;
   }
 
-  async getPriceHistory(slug: string, range: '1M' | '3M' | '6M' | '1Y' = '3M') {
+  async getPriceHistory(
+    slug: string,
+    range: '1M' | '3M' | '6M' | '1Y' | '3Y' = '3M',
+  ) {
     const productLocation = await this.productLocationRepo.findOne({
       where: { productSlug: slug },
       relations: ['product'],
@@ -549,7 +553,7 @@ export class ProductLocationService {
   }
 
   private buildPriceHistoryPoints(
-    range: '1M' | '3M' | '6M' | '1Y',
+    range: '1M' | '3M' | '6M' | '1Y' | '3Y',
     from: Date,
     to: Date,
     priceAtRangeStart: number,
@@ -575,7 +579,13 @@ export class ProductLocationService {
 
       const isLastPoint = index === buckets.length - 1;
       return {
-        label: bucket.label,
+        label:
+          range === '3Y'
+            ? bucket.date.toLocaleString('en-US', {
+                month: 'short',
+                year: '2-digit',
+              })
+            : bucket.label,
         date: bucket.date.toISOString(),
         price: isLastPoint ? currentPrice : price,
       };
