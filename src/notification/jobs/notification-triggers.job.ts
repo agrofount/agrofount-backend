@@ -708,7 +708,9 @@ export class NotificationTriggersJob {
         customer_name: sample.firstname ?? 'there',
         otp: '123456',
         verification_link: this.frontendUrl(
-          '/verify-phone?challengeId=sample-preview-challenge',
+          `/verify-phone?challengeId=sample-preview-challenge&phone=${encodeURIComponent(
+            sample.phone || '',
+          )}`,
           { preferSmsLinkBase: true },
         ),
       };
@@ -889,7 +891,9 @@ export class NotificationTriggersJob {
         customer_name: user.firstname ?? 'there',
         otp,
         verification_link: this.frontendUrl(
-          `/verify-phone?challengeId=${challengeId}`,
+          `/verify-phone?challengeId=${challengeId}&phone=${encodeURIComponent(
+            user.phone,
+          )}`,
           { preferSmsLinkBase: true },
         ),
       },
@@ -2099,7 +2103,9 @@ export class NotificationTriggersJob {
                 customer_name: name,
                 otp: '123456',
                 verification_link: this.frontendUrl(
-                  '/verify-phone?challengeId=sample-test-challenge',
+                  `/verify-phone?challengeId=sample-test-challenge&phone=${encodeURIComponent(
+                    phone || '',
+                  )}`,
                   { preferSmsLinkBase: true },
                 ),
               };
