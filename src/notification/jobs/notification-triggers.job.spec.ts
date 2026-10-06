@@ -1970,6 +1970,15 @@ describe('NotificationTriggersJob', () => {
         }),
         { jobName: CronJobName.UNVERIFIED_ACCOUNT_REMINDERS },
       );
+      const smsParams = notificationService.sendNotification.mock.calls[0][3];
+      const verificationUrl = new URL(
+        smsParams.verification_link,
+        'https://agrofount.com',
+      );
+      expect(verificationUrl.searchParams.get('phone')).toBe(user.phone);
+      expect(
+        `auth:otp:${verificationUrl.searchParams.get('challengeId')}`,
+      ).toBe(cacheManager.set.mock.calls[0][0]);
       expect(result).toEqual({ sent: 1, total: 1 });
     });
 
