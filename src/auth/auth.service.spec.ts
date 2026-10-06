@@ -223,3 +223,40 @@ describe('Registration lead conversion', () => {
     expect(leadsService.linkConversionByContact).not.toHaveBeenCalled();
   });
 });
+
+describe('OTP SMS verification links', () => {
+  it.each(['phone-verification', 'password-reset'])(
+    'uses the correct SMS for %s',
+    async (purpose) => {
+      const service = Object.create(AuthService.prototype) as any;
+      service.configService = { get: () => 'https://www.agrofount.com/' };
+      service.notificationService = {
+        sendNotification: jest.fn().mockResolvedValue({ success: true }),
+      };
+      service.cacheManager = { set: jest.fn() };
+      const id = await service.issueOtpChallenge(
+        { id: 'u1', phone: '+2348012345678', username: 'Bola' },
+        purpose,
+      );
+      const [, recipient, type, params] =
+        service.notificationService.sendNotification.mock.calls[0];
+      expect(recipient.userId).toBe('u1');
+      if (purpose === 'phone-verification') {
+        expect(type).toBe(MessageTypes.UNVERIFIED_ACCOUNT_REMINDER);
+        const url = new URL(params.verification_link);
+        expect(url.pathname).toBe('/verify-phone');
+        expect(url.searchParams.get('challengeId')).toBe(id);
+        expect(url.searchParams.get('phone')).toBe('+2348012345678');
+        expect(params.customer_name).toBe('Bola');
+      } else {
+        expect(type).toBe(MessageTypes.SEND_OTP);
+        expect(params.verification_link).toBeUndefined();
+      }
+      expect(service.cacheManager.set).toHaveBeenCalledWith(
+        `auth:otp:${id}`,
+        expect.objectContaining({ purpose }),
+        600000,
+      );
+    },
+  );
+});
