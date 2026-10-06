@@ -873,11 +873,30 @@ export class AuthService {
     const phone = this.normalizePhone(user.phone);
     const challengeId = randomUUID();
     const otp = randomInt(100000, 1000000).toString();
+    const verification = purpose === 'phone-verification';
+    const base = (
+      this.configService.get<string>('SMS_LINK_BASE_URL') ||
+      this.configService.get<string>('app.frontend_url') ||
+      process.env.FRONTEND_URL ||
+      ''
+    ).replace(/\/+$/, '');
     const providerResponse = await this.notificationService.sendNotification(
       NotificationChannels.SMS,
-      { phoneNumber: phone },
-      MessageTypes.SEND_OTP,
-      { userId: user.id, otp },
+      { userId: user.id, phoneNumber: phone },
+      verification
+        ? MessageTypes.UNVERIFIED_ACCOUNT_REMINDER
+        : MessageTypes.SEND_OTP,
+      verification
+        ? {
+            userId: user.id,
+            otp,
+            customer_name:
+              user.firstname?.trim() || user.username?.trim() || 'there',
+            verification_link: `${base}/verify-phone?challengeId=${challengeId}&phone=${encodeURIComponent(
+              user.phone,
+            )}`,
+          }
+        : { userId: user.id, otp },
     );
     if (providerResponse?.success === false) {
       throw new BadRequestException('Unable to issue OTP at this time');
