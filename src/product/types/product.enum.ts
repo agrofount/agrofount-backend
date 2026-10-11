@@ -36,6 +36,11 @@ export enum AnimalCategory {
   GRASSCUTTER = 'grasscutter',
   DOG = 'dog',
   CAT = 'cat',
+  // Not an animal species - this enum doubles as the admin "Category"
+  // dropdown's key, and CROPS covers raw grain/crop products (rice,
+  // maize, soyabeans) that aren't feed/drugs/equipment for a specific
+  // animal.
+  CROPS = 'crops',
 }
 
 // ======================
@@ -86,6 +91,7 @@ export const AnimalSubCategories: AnimalSubCategoryMap = {
   [AnimalCategory.GRASSCUTTER]: ['Meat Grasscutter', 'Pet Grasscutter'],
   [AnimalCategory.DOG]: ['Puppy', 'Adult Dog', 'Senior Dog'],
   [AnimalCategory.CAT]: ['Kitten', 'Adult Cat', 'Senior Cat'],
+  [AnimalCategory.CROPS]: ['Rice', 'Maize', 'Soyabeans'],
 };
 
 // ======================
@@ -97,6 +103,7 @@ export enum ProductSubCategoryType {
   DRUG = 'drug',
   EQUIPMENT = 'equipment',
   LIVESTOCK = 'livestock',
+  CROPS = 'crops',
 }
 
 type ProductSubCategories = {
@@ -164,6 +171,7 @@ export const ProductSubCategories: ProductSubCategories = {
     'Goats',
     'Pigs',
   ],
+  [ProductSubCategoryType.CROPS]: ['Rice', 'Maize', 'Soyabeans'],
 };
 
 // ======================
@@ -171,6 +179,7 @@ export const ProductSubCategories: ProductSubCategories = {
 // ======================
 
 export const Brands = [
+  'Agrofount',
   'Olam',
   'Ultima',
   'Chikun',
