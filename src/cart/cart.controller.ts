@@ -7,11 +7,18 @@ import {
   Put,
   UseGuards,
   Logger,
+  Param,
+  ParseUUIDPipe,
   Query,
 } from '@nestjs/common';
 import { CartService } from './cart.service';
 import { AddToCartDto, SyncCartDto } from './dto/create-cart.dto';
 import { UpdateCartDto } from './dto/update-cart.dto';
+import {
+  AdminAddCartLineDto,
+  AdminCartProductSearchDto,
+  AdminUpdateCartLineDto,
+} from './dto/admin-update-cart-line.dto';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { UserEntity } from '../user/entities/user.entity';
@@ -58,6 +65,78 @@ export class CartController {
       message: 'Fetch cart successfully',
       cart: cartData,
     };
+  }
+
+  // Declared before 'admin/:userId' so 'products' is not read as a user id.
+  @Get('admin/products')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('manage_carts')
+  @ApiOperation({ summary: 'Search sellable product locations for a cart' })
+  async searchProductsForAdmin(@Query() query: AdminCartProductSearchDto) {
+    return {
+      success: true,
+      message: 'Fetch products successfully',
+      products: await this.cartService.searchSellableProducts(
+        query.search,
+        query.limit,
+      ),
+    };
+  }
+
+  @Get('admin/:userId')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('manage_carts')
+  @ApiOperation({ summary: 'View a customer cart as an admin' })
+  async getCartForAdmin(@Param('userId') userId: string) {
+    return {
+      success: true,
+      message: 'Fetch cart successfully',
+      cart: await this.cartService.getCartForAdmin(userId),
+    };
+  }
+
+  @Post('admin/:userId')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('manage_carts')
+  @ApiOperation({ summary: 'Add an item to a customer cart as an admin' })
+  async addCartLineForAdmin(
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Body() dto: AdminAddCartLineDto,
+    @CurrentUser() admin: { id: string; email?: string },
+  ) {
+    return {
+      success: true,
+      message: 'Item added to cart',
+      cart: await this.cartService.addLineForAdmin(admin, userId, dto),
+    };
+  }
+
+  @Put('admin/:userId')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('manage_carts')
+  @ApiOperation({ summary: 'Update or remove one line of a customer cart' })
+  async updateCartLineForAdmin(
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Body() dto: AdminUpdateCartLineDto,
+    @CurrentUser() admin: { id: string; email?: string },
+  ) {
+    return {
+      success: true,
+      message: dto.quantity === 0 ? 'Cart line removed' : 'Cart line updated',
+      cart: await this.cartService.updateLineForAdmin(admin, userId, dto),
+    };
+  }
+
+  @Delete('admin/:userId')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('manage_carts')
+  @ApiOperation({ summary: 'Clear a customer cart as an admin' })
+  async clearCartForAdmin(
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() admin: { id: string; email?: string },
+  ) {
+    await this.cartService.clearForAdmin(admin, userId);
+    return { success: true, message: 'Cart cleared successfully' };
   }
 
   @Get()

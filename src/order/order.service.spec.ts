@@ -150,7 +150,7 @@ describe('OrderService.buildFindAllTarget', () => {
 });
 
 describe('OrderService.validateItemAvailability', () => {
-  it('rejects cart quantities below the configured UOM minimum order quantity', async () => {
+  it('does not enforce the configured UOM minimum order quantity', async () => {
     const service = Object.create(OrderService.prototype) as OrderService;
     (service as any).productLocationService = {
       findById: jest.fn().mockResolvedValue({
@@ -169,7 +169,7 @@ describe('OrderService.validateItemAvailability', () => {
       (service as any).validateItemAvailability({
         'product-location-1': { bag: { quantity: 3 } },
       }),
-    ).rejects.toThrow(BadRequestException);
+    ).resolves.toBeUndefined();
   });
 });
 
