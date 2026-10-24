@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { UserEntity } from './entities/user.entity';
+import { OrderEntity } from '../order/entities/order.entity';
 import { DataSource, In, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -218,6 +219,22 @@ export class UserService {
       throw new NotFoundException(`User with ID ${id} not found`);
     }
     return plainToInstance(UserEntity, user);
+  }
+
+  async findOneForAdmin(id: string) {
+    const user = await this.userRepo.findOne({ where: { id } });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    const orderCount = await this.dataSource
+      .getRepository(OrderEntity)
+      .createQueryBuilder('order')
+      .where('order.userId = :userId', { userId: id })
+      .getCount();
+
+    return { ...plainToInstance(UserEntity, user), orderCount };
   }
 
   async findByEmailOrPhone(emailOrPhone: string): Promise<UserEntity> {

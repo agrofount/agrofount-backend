@@ -9,8 +9,16 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import Redis from 'ioredis';
-import { In, Repository } from 'typeorm';
+import { Brackets, In, Repository } from 'typeorm';
 import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
+import { UserEntity } from '../user/entities/user.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { CartStartedNotifier } from './cart-started-notifier.service';
+import { InventoryEntity } from '../inventory/entities/inventory.entity';
+import {
+  AdminAddCartLineDto,
+  AdminUpdateCartLineDto,
+} from './dto/admin-update-cart-line.dto';
 import { AddToCartDto, CartItemDto } from './dto/create-cart.dto';
 import { UpdateCartDto } from './dto/update-cart.dto';
 
@@ -27,6 +35,12 @@ export class CartService implements OnModuleDestroy {
     configService: ConfigService,
     @InjectRepository(ProductLocationEntity)
     private readonly productLocationRepository: Repository<ProductLocationEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(InventoryEntity)
+    private readonly inventoryRepository: Repository<InventoryEntity>,
+    private readonly auditLogService: AuditLogService,
+    private readonly cartStartedNotifier: CartStartedNotifier,
   ) {
     this.redis = new Redis(configService.getOrThrow<string>('REDIS_URL'), {
       maxRetriesPerRequest: 2,
@@ -39,14 +53,15 @@ export class CartService implements OnModuleDestroy {
   }
 
   async addToCart(userId: string, dto: AddToCartDto) {
-    const uom = await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
-    this.assertMinimumOrderQuantity(dto.selectedUOMUnit, uom, dto.quantity);
-    await this.mutate(userId, (cart) => {
+    await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
+    const { wasEmpty } = await this.mutate(userId, (cart) => {
       cart[dto.itemId] ||= {};
       cart[dto.itemId][dto.selectedUOMUnit] = { quantity: dto.quantity };
       this.assertCartSize(cart);
       return cart;
     });
+    if (wasEmpty)
+      this.cartStartedNotifier.notifyCartStarted(userId, dto.itemId);
     await this.incrementAddedToCart(dto.itemId);
     return this.getCartData(userId);
   }
@@ -69,21 +84,20 @@ export class CartService implements OnModuleDestroy {
     const products = await this.loadProducts(items.map((item) => item.itemId));
     const next: StoredCart = {};
     for (const item of items) {
-      const uom = this.assertUnit(
-        products.get(item.itemId) || null,
-        item.selectedUOMUnit,
-      );
-      this.assertMinimumOrderQuantity(item.selectedUOMUnit, uom, item.quantity);
+      this.assertUnit(products.get(item.itemId) || null, item.selectedUOMUnit);
       next[item.itemId] ||= {};
       next[item.itemId][item.selectedUOMUnit] = { quantity: item.quantity };
     }
 
-    await this.redis.set(
-      this.key(userId),
-      JSON.stringify(next),
-      'EX',
-      this.ttlSeconds,
-    );
+    // GET and SET in one MULTI, so "was the cart empty" is atomic with the write.
+    const [[, previous]] = (await this.redis
+      .multi()
+      .get(this.key(userId))
+      .set(this.key(userId), JSON.stringify(next), 'EX', this.ttlSeconds)
+      .exec()) as [[Error | null, string | null], unknown];
+    if (this.lineCount(this.parse(previous)) === 0 && items.length > 0) {
+      this.cartStartedNotifier.notifyCartStarted(userId, items[0].itemId);
+    }
     await Promise.all(
       [...new Set(items.map((item) => item.itemId))].map((id) =>
         this.incrementAddedToCart(id),
@@ -98,7 +112,10 @@ export class CartService implements OnModuleDestroy {
   }
 
   async getCart(userId: string) {
-    return { items: await this.getCartData(userId) };
+    const cart = await this.read(userId);
+    return {
+      items: this.lineCount(cart) > 0 ? await this.hydrate(cart) : {},
+    };
   }
 
   async getCartData(userId: string): Promise<Record<string, any>> {
@@ -110,27 +127,72 @@ export class CartService implements OnModuleDestroy {
 
   async getAllCarts(cursor = '0', limit = 25) {
     const safeLimit = Math.min(500, Math.max(1, Math.trunc(limit)));
-    const [nextCursor, keys] = await this.redis.scan(
-      cursor,
-      'MATCH',
-      'cart:*',
-      'COUNT',
-      safeLimit,
-    );
+    // SCAN filters after sampling, so a page can be empty while more matches
+    // remain. Keep scanning until the page is full or the keyspace is done.
+    const found = new Set<string>();
+    let nextCursor = cursor;
+    let scans = 0;
+    do {
+      const [next, batch] = await this.redis.scan(
+        nextCursor,
+        'MATCH',
+        'cart:*',
+        'COUNT',
+        500,
+      );
+      nextCursor = next;
+      batch.forEach((key) => found.add(key));
+      scans += 1;
+    } while (nextCursor !== '0' && found.size < safeLimit && scans < 50);
+    const keys = [...found];
     const values = keys.length ? await this.redis.mget(keys) : [];
+    const carts = keys.map((key, index) => ({
+      userId: key.slice('cart:'.length),
+      data: this.parse(values[index]),
+    }));
+    const userIds = carts.map(({ userId }) => userId);
+    const users = userIds.length
+      ? await this.userRepository.find({ where: { id: In(userIds) } })
+      : [];
+    const usersById = new Map(users.map((user) => [user.id, user]));
+
     return {
-      items: keys.map((key, index) => ({
-        userId: key.slice('cart:'.length),
-        cart: this.parse(values[index]),
-      })),
-      nextCursor,
+      items: await Promise.all(
+        carts.map(async ({ userId, data }) => {
+          const ttl = await this.redis.ttl(this.key(userId));
+          const itemCount = this.lineCount(data);
+          return {
+            userId,
+            user: this.toAdminUserSummary(usersById.get(userId)),
+            active: itemCount > 0,
+            itemCount,
+            expiresInSeconds: ttl >= 0 ? ttl : null,
+          };
+        }),
+      ),
+      nextCursor: nextCursor === '0' ? null : nextCursor,
+    };
+  }
+
+  async getCartForAdmin(userId: string) {
+    const raw = await this.redis.get(this.key(userId));
+    if (raw === null) throw new NotFoundException('Cart not found');
+
+    const cart = this.parse(raw);
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    return {
+      userId,
+      user: this.toAdminUserSummary(user),
+      active: this.lineCount(cart) > 0,
+      itemCount: this.lineCount(cart),
+      expiresInSeconds: Math.max(0, await this.redis.ttl(this.key(userId))),
+      items: await this.hydrate(cart),
     };
   }
 
   async update(userId: string, dto: UpdateCartDto) {
     if (dto.quantity > 0) {
-      const uom = await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
-      this.assertMinimumOrderQuantity(dto.selectedUOMUnit, uom, dto.quantity);
+      await this.assertProductUnit(dto.itemId, dto.selectedUOMUnit);
     }
     await this.mutate(userId, (cart) => {
       if (dto.quantity === 0) {
@@ -150,6 +212,188 @@ export class CartService implements OnModuleDestroy {
       : {};
   }
 
+  async searchSellableProducts(search?: string, limit = 20) {
+    const take = Math.min(50, Math.max(1, Math.trunc(limit) || 20));
+    const query = this.productLocationRepository
+      .createQueryBuilder('pl')
+      .leftJoinAndSelect('pl.product', 'product')
+      .leftJoinAndSelect('pl.state', 'state')
+      .leftJoinAndSelect('pl.country', 'country')
+      .where('pl.isDraft = false')
+      .andWhere('pl.isAvailable = true');
+    const term = search?.trim().replace(/[\\%_]/g, '\\$&');
+    if (term) {
+      query.andWhere(
+        new Brackets((qb) =>
+          qb
+            .where('product.name ILIKE :term', { term: `%${term}%` })
+            .orWhere('product.brand ILIKE :term', { term: `%${term}%` }),
+        ),
+      );
+    }
+    const locations = await query
+      .orderBy('product.name', 'ASC')
+      .take(take)
+      .getMany();
+
+    const inventory = locations.length
+      ? await this.inventoryRepository.find({
+          where: { productLocationId: In(locations.map((l) => l.id)) },
+        })
+      : [];
+    const available = new Map(
+      inventory.map((row) => [
+        `${row.productLocationId}:${row.unit}`,
+        Number(row.availableQuantity) - Number(row.reservedQuantity),
+      ]),
+    );
+
+    return locations.map((location) => ({
+      productLocationId: location.id,
+      productId: location.product?.id ?? null,
+      name: location.product?.name ?? null,
+      slug: location.productSlug,
+      brand: location.product?.brand ?? null,
+      category: location.product?.category ?? null,
+      image: location.product?.images?.[0] ?? null,
+      images: location.product?.images ?? [],
+      state: location.state
+        ? { id: location.state.id, name: location.state.name }
+        : null,
+      country: location.country
+        ? { id: location.country.id, name: location.country.name }
+        : null,
+      uom: (location.uom || []).map((uom) => ({
+        unit: uom.unit,
+        platformPrice: Number(uom.platformPrice),
+        moq: uom.moq ?? null,
+        stockQuantity: uom.stockQuantity ?? null,
+        availableQuantity: available.get(`${location.id}:${uom.unit}`) ?? null,
+      })),
+    }));
+  }
+
+  async addLineForAdmin(
+    admin: { id: string; email?: string },
+    userId: string,
+    dto: AdminAddCartLineDto,
+  ) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const product = await this.productLocationRepository.findOne({
+      where: { id: dto.productLocationId },
+    });
+    this.assertUnit(product, dto.unit);
+    if (product.isDraft || !product.isAvailable) {
+      throw new BadRequestException('Product is not available');
+    }
+
+    const existing =
+      (await this.read(userId))[dto.productLocationId]?.[dto.unit]?.quantity ??
+      0;
+    const total = Number(existing) + dto.quantity;
+    if (total > 1_000_000) {
+      throw new BadRequestException('Quantity cannot exceed 1,000,000');
+    }
+    const inventory = await this.inventoryRepository.findOne({
+      where: { productLocationId: dto.productLocationId, unit: dto.unit },
+    });
+    if (!inventory) {
+      throw new BadRequestException(`Stock is not configured for ${dto.unit}`);
+    }
+    const available =
+      Number(inventory.availableQuantity) - Number(inventory.reservedQuantity);
+    if (total > available) {
+      throw new BadRequestException(
+        `Insufficient stock for ${dto.unit}. Available: ${Math.max(
+          0,
+          available,
+        )}`,
+      );
+    }
+
+    await this.mutate(userId, (cart) => {
+      cart[dto.productLocationId] ||= {};
+      cart[dto.productLocationId][dto.unit] = { quantity: total };
+      this.assertCartSize(cart);
+      return cart;
+    });
+    await this.auditAdminCartAction(admin, 'ADMIN_ADD_CART_LINE', userId, {
+      productLocationId: dto.productLocationId,
+      unit: dto.unit,
+      added: dto.quantity,
+      previousQuantity: Number(existing),
+      quantity: total,
+    });
+    return this.getCartForAdmin(userId);
+  }
+
+  async updateLineForAdmin(
+    admin: { id: string; email?: string },
+    userId: string,
+    dto: AdminUpdateCartLineDto,
+  ) {
+    const cart = await this.read(userId);
+    if (this.lineCount(cart) === 0)
+      throw new NotFoundException('Cart not found');
+    const previous = cart[dto.productLocationId]?.[dto.unit];
+    if (!previous) throw new NotFoundException('Cart line not found');
+
+    await this.update(userId, {
+      itemId: dto.productLocationId,
+      selectedUOMUnit: dto.unit,
+      quantity: dto.quantity,
+    });
+    await this.auditAdminCartAction(
+      admin,
+      dto.quantity === 0 ? 'ADMIN_REMOVE_CART_LINE' : 'ADMIN_UPDATE_CART_LINE',
+      userId,
+      {
+        productLocationId: dto.productLocationId,
+        unit: dto.unit,
+        previousQuantity: previous.quantity,
+        quantity: dto.quantity,
+      },
+    );
+    return this.getCartForAdmin(userId);
+  }
+
+  async clearForAdmin(admin: { id: string; email?: string }, userId: string) {
+    const raw = await this.redis.get(this.key(userId));
+    if (raw === null) throw new NotFoundException('Cart not found');
+    const cart = this.parse(raw);
+    await this.redis.del(this.key(userId));
+    await this.auditAdminCartAction(admin, 'ADMIN_CLEAR_CART', userId, {
+      itemCount: this.lineCount(cart),
+    });
+  }
+
+  private async auditAdminCartAction(
+    admin: { id: string; email?: string },
+    action: string,
+    targetUserId: string,
+    changes: Record<string, unknown>,
+  ): Promise<void> {
+    this.logger.log(
+      `${action} by admin ${admin.id} on cart of user ${targetUserId}`,
+    );
+    try {
+      await this.auditLogService.record({
+        action,
+        entityType: 'Cart',
+        entityId: targetUserId,
+        userId: admin.id,
+        userEmail: admin.email || null,
+        actorType: 'admin',
+        outcome: 'succeeded',
+        changes: { targetUserId, ...changes },
+      });
+    } catch (error) {
+      this.logger.error('Failed to persist cart audit record', error?.stack);
+    }
+  }
+
   async clear(userId: string) {
     const deleted = await this.redis.del(this.key(userId));
     if (!deleted) throw new BadRequestException('No cart found');
@@ -159,16 +403,20 @@ export class CartService implements OnModuleDestroy {
   private async mutate(
     userId: string,
     update: (cart: StoredCart) => StoredCart,
-  ): Promise<void> {
+  ): Promise<{ wasEmpty: boolean }> {
     const key = this.key(userId);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await this.redis.watch(key);
-      const next = update(this.parse(await this.redis.get(key)));
+      // Same read the write is guarded by, so "was empty" cannot race.
+      const before = this.parse(await this.redis.get(key));
+      // Counted before `update`, which edits the cart in place.
+      const wasEmpty = this.lineCount(before) === 0;
+      const next = update(before);
       const result = await this.redis
         .multi()
         .set(key, JSON.stringify(next), 'EX', this.ttlSeconds)
         .exec();
-      if (result !== null) return;
+      if (result !== null) return { wasEmpty };
     }
     throw new InternalServerErrorException(
       'Cart was updated concurrently; please retry',
@@ -242,18 +490,14 @@ export class CartService implements OnModuleDestroy {
     return new Map(products.map((product) => [product.id, product]));
   }
 
-  private async assertProductUnit(
-    itemId: string,
-    unit: string,
-  ): Promise<{ unit: string; moq?: number }> {
+  private async assertProductUnit(itemId: string, unit: string): Promise<void> {
     const product = await this.productLocationRepository.findOne({
       where: { id: itemId },
     });
-    const uom = this.assertUnit(product, unit);
+    this.assertUnit(product, unit);
     if (product.isDraft || !product.isAvailable) {
       throw new BadRequestException('Product is not available');
     }
-    return uom;
   }
 
   private assertUnit(product: ProductLocationEntity | null, unit: string) {
@@ -261,18 +505,6 @@ export class CartService implements OnModuleDestroy {
     const uom = product.uom.find((candidate) => candidate.unit === unit);
     if (!uom) throw new BadRequestException('Unit of Measure not found');
     return uom;
-  }
-
-  private assertMinimumOrderQuantity(
-    unit: string,
-    uom: { moq?: number },
-    quantity: number,
-  ): void {
-    if (uom.moq && Number(quantity) < Number(uom.moq)) {
-      throw new BadRequestException(
-        `Minimum quantity for ${unit} is ${uom.moq}`,
-      );
-    }
   }
 
   private assertCartSize(cart: StoredCart): void {
@@ -288,6 +520,18 @@ export class CartService implements OnModuleDestroy {
       (total, units) => total + Object.keys(units).length,
       0,
     );
+  }
+
+  private toAdminUserSummary(user?: UserEntity | null) {
+    if (!user) return null;
+    return {
+      id: user.id,
+      firstname: user.firstname,
+      lastname: user.lastname,
+      username: user.username,
+      email: user.email,
+      phone: user.phone,
+    };
   }
 
   private async incrementAddedToCart(itemId: string): Promise<void> {

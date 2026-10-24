@@ -65,6 +65,15 @@ export class UserController {
     return this.userService.findOne(user.id);
   }
 
+  // Must stay below the static 'profile' route, or ':id' captures it.
+  @Get(':id')
+  @UseInterceptors(ClassSerializerInterceptor)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_users')
+  findOneForAdmin(@Param('id') id: string) {
+    return this.userService.findOneForAdmin(id);
+  }
+
   @Delete(':id')
   @ApiOperation({ summary: 'Delete user data' })
   @UseGuards(JwtAuthGuard)

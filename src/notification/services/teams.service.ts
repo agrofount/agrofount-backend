@@ -19,11 +19,14 @@ export class TeamsService {
     messageType: MessageTypes,
     params: Record<string, any>,
   ): Promise<{ success: boolean; message?: string }> {
-    const teamsWebhookUrl = this.configService.get<string>(
-      'TEAMS_ORDER_WEBHOOK_URL',
-    );
+    // Cart pings use their own channel so they do not bury order alerts.
+    const webhookVariable =
+      messageType === MessageTypes.CART_STARTED_NOTIFICATION
+        ? 'TEAMS_CART_WEBHOOK_URL'
+        : 'TEAMS_ORDER_WEBHOOK_URL';
+    const teamsWebhookUrl = this.configService.get<string>(webhookVariable);
     if (!teamsWebhookUrl) {
-      this.logger.warn('Teams webhook URL not configured');
+      this.logger.warn(`Teams webhook URL not configured (${webhookVariable})`);
       return { success: false, message: 'Teams webhook URL not configured' };
     }
 
@@ -39,6 +42,9 @@ export class TeamsService {
           break;
         case MessageTypes.ORDER_FAILED_NOTIFICATION:
           cardContent = this.createFailedOrderCard(params.order);
+          break;
+        case MessageTypes.CART_STARTED_NOTIFICATION:
+          cardContent = this.createCartStartedCard(params);
           break;
         default:
           throw new Error(`Unsupported message type: ${messageType}`);
@@ -75,6 +81,28 @@ export class TeamsService {
         message: `Failed to send notification: ${axiosError.message}`,
       };
     }
+  }
+
+  private createCartStartedCard(params: Record<string, any>): any {
+    return {
+      '@type': 'MessageCard',
+      '@context': 'https://schema.org/extensions',
+      summary: 'New Cart Started',
+      themeColor: '2E7D32',
+      title: '🛍️ New Cart Started',
+      sections: [
+        {
+          activityTitle: `${params.customerName} started a cart`,
+          activitySubtitle: params.startedAt,
+          facts: [
+            { name: 'Customer', value: params.customerName },
+            { name: 'First Item', value: params.productName },
+            { name: 'Started At', value: params.startedAt },
+          ],
+          markdown: true,
+        },
+      ],
+    };
   }
 
   private createOrderNotificationCard(orderDetails: OrderEntity): any {

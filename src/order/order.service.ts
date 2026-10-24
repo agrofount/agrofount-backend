@@ -361,11 +361,6 @@ export class OrderService {
           (candidate) => candidate.unit === item.unit,
         );
         if (!uom) throw new BadRequestException('Unit of Measure not found');
-        if (uom.moq && item.quantity < uom.moq) {
-          throw new BadRequestException(
-            `Minimum quantity for ${item.unit} is ${uom.moq}`,
-          );
-        }
         const tier = uom.vtp?.find(
           (candidate) =>
             item.quantity >= candidate.minVolume &&
@@ -478,6 +473,7 @@ export class OrderService {
           price: [FilterOperator.GTE, FilterOperator.LTE],
           createdAt: [FilterOperator.GTE, FilterOperator.LTE],
           status: [FilterOperator.EQ],
+          userId: [FilterOperator.EQ],
         },
         // `where` is only honored by nestjs-paginate when a plain Repository
         // is passed in — once we switch to a query builder below (needed to
@@ -876,11 +872,6 @@ export class OrderService {
         if (!Number.isFinite(quantity) || quantity <= 0) {
           throw new BadRequestException(
             'Cart quantity must be greater than zero',
-          );
-        }
-        if (uomData.moq && quantity < uomData.moq) {
-          throw new BadRequestException(
-            `Minimum quantity for ${uom} is ${uomData.moq}`,
           );
         }
         if (!productLocation.isAvailable || productLocation.isDraft) {
