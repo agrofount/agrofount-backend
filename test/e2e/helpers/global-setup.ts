@@ -1,19 +1,20 @@
 import { Client } from 'pg';
 import Redis from 'ioredis';
+import { e2eConfig } from './config';
 
-// Refuses to run against anything but the docker-compose.test.yaml services,
-// so a stray .env can never point the suite at a real database.
+// Only ever talks to a throwaway localhost Postgres and Redis with the test
+// credentials, so a stray .env can never point the suite at a real database.
 export default async function globalSetup() {
-  const dbName = process.env.E2E_DB_NAME || 'agrofount_test';
+  const dbName = e2eConfig.dbName;
   if (!/^agrofount_test[a-z0-9_]*$/.test(dbName)) {
     throw new Error('E2E_DB_NAME must start with agrofount_test');
   }
   const pg = new Client({
-    host: '127.0.0.1',
-    port: 55432,
-    user: 'agrofount_test',
-    password: 'agrofount_test',
-    database: 'agrofount_test',
+    host: e2eConfig.dbHost,
+    port: e2eConfig.dbPort,
+    user: e2eConfig.dbUser,
+    password: e2eConfig.dbPassword,
+    database: e2eConfig.dbAdminDatabase,
   });
   try {
     await pg.connect();
@@ -24,23 +25,30 @@ export default async function globalSetup() {
     if (!exists.rowCount) await pg.query(`CREATE DATABASE "${dbName}"`);
   } catch (error) {
     throw new Error(
-      'Test Postgres is not reachable on 127.0.0.1:55432. Run: npm run test:e2e:up',
+      `Test Postgres is not reachable on ${e2eConfig.dbHost}:${
+        e2eConfig.dbPort
+      } (${(error as Error)?.message}). Locally run: npm run test:e2e:up`,
     );
   } finally {
     await pg.end().catch(() => undefined);
   }
 
-  const redis = new Redis('redis://127.0.0.1:56379', {
-    lazyConnect: true,
-    maxRetriesPerRequest: 1,
-    retryStrategy: () => null,
-  });
+  const redis = new Redis(
+    `redis://${e2eConfig.redisHost}:${e2eConfig.redisPort}`,
+    {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      retryStrategy: () => null,
+    },
+  );
   try {
     await redis.connect();
     await redis.ping();
   } catch (error) {
     throw new Error(
-      'Test Redis is not reachable on 127.0.0.1:56379. Run: npm run test:e2e:up',
+      `Test Redis is not reachable on ${e2eConfig.redisHost}:${
+        e2eConfig.redisPort
+      } (${(error as Error)?.message}). Locally run: npm run test:e2e:up`,
     );
   } finally {
     redis.disconnect();

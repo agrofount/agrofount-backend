@@ -5,9 +5,16 @@ describe('notification gateway exclusions', () => {
     'checks the account before emitting (excluded: %s)',
     async (excluded) => {
       const emit = jest.fn();
-      const gateway = new NotificationGateway({
-        manager: { query: jest.fn().mockResolvedValue(excluded ? [{}] : []) },
-      } as any);
+      const gateway = new NotificationGateway(
+        {
+          manager: {
+            query: jest.fn().mockResolvedValue(excluded ? [{}] : []),
+          },
+        } as any,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
       gateway.server = { to: jest.fn().mockReturnValue({ emit }) } as any;
       await gateway.emitToUser('u1', 'notification', {});
       expect(emit).toHaveBeenCalledTimes(excluded ? 0 : 1);
