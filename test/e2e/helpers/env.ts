@@ -1,21 +1,22 @@
 // Runs before any test module is imported. dotenv never overrides variables
 // that are already set, so these win over the developer's local .env.
 // E2E_DB_NAME / E2E_REDIS_DB (0-15) give parallel runs their own isolated
-// database and Redis index.
+// database and Redis index. E2E_DB_PORT / E2E_REDIS_PORT move the services.
 import '../../../src/polyfills/node-buffer';
+import { e2eConfig } from './config';
 
 const TEST_ENV: Record<string, string> = {
   NODE_ENV: 'test',
-  DB_HOST: '127.0.0.1',
-  DB_PORT: '55432',
-  DB_USERNAME: 'agrofount_test',
-  DB_PASSWORD: 'agrofount_test',
-  DB_NAME: process.env.E2E_DB_NAME || 'agrofount_test',
+  DB_HOST: e2eConfig.dbHost,
+  DB_PORT: String(e2eConfig.dbPort),
+  DB_USERNAME: e2eConfig.dbUser,
+  DB_PASSWORD: e2eConfig.dbPassword,
+  DB_NAME: e2eConfig.dbName,
   DB_SCHEMA: 'public',
   DB_SYNCHRONIZE: 'true',
   DB_LOGGING: 'false',
   DB_SSL: 'false',
-  REDIS_URL: `redis://127.0.0.1:56379/${process.env.E2E_REDIS_DB || '0'}`,
+  REDIS_URL: `redis://${e2eConfig.redisHost}:${e2eConfig.redisPort}/${e2eConfig.redisDb}`,
   JWT_SECRET: 'e2e-test-jwt-secret-at-least-32-characters-long',
   JWT_EXPIRATION: '15m',
   JWT_ISSUER: 'agrofount-api',
