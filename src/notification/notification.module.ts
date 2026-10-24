@@ -12,7 +12,8 @@ import { TeamsService } from './services/teams.service';
 import { CampaignService } from './services/campaign.service';
 import { CronMonitorService } from './services/cron-monitor.service';
 import { BullModule } from '@nestjs/bullmq';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { PriceUpdatesProcessor } from './notification.processor';
 import { CampaignProcessor } from './processors/campaign.processor';
 import { NotificationGateway } from './gateways/notification.gateway';
@@ -31,6 +32,13 @@ import { AiPlatformModule } from '../ai-platform/ai-platform.module';
     SendInBlueModule,
     HttpModule.register({ timeout: 10_000, maxRedirects: 3 }),
     ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.getOrThrow<string>('JWT_SECRET'),
+      }),
+    }),
     BullModule.registerQueue({ name: 'price-updates' }),
     BullModule.registerQueue({ name: 'notification-campaigns' }),
     ProductLikeModule,
