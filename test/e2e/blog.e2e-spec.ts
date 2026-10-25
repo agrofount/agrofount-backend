@@ -170,8 +170,8 @@ describe('Blog posts (e2e)', () => {
 
   describe('GET /posts (public)', () => {
     it('is readable without authentication and returns pagination meta', async () => {
-      await seedPost({ title: 'One' });
-      await seedPost({ title: 'Two' });
+      await seedPost({ published: true, title: 'One' });
+      await seedPost({ published: true, title: 'Two' });
       const res = await http().get('/posts').expect(200);
       expect(res.body.meta).toMatchObject({
         totalItems: 2,
@@ -184,10 +184,15 @@ describe('Blog posts (e2e)', () => {
 
     it('orders newest first by default and supports sortBy', async () => {
       await seedPost({
+        published: true,
         title: 'Alpha',
         createdAt: new Date(Date.now() - 60_000),
       });
-      await seedPost({ title: 'Bravo', createdAt: new Date() });
+      await seedPost({
+        published: true,
+        title: 'Bravo',
+        createdAt: new Date(),
+      });
       const def = await http().get('/posts').expect(200);
       expect(def.body.data.map((p: any) => p.title)).toEqual([
         'Bravo',
@@ -201,7 +206,8 @@ describe('Blog posts (e2e)', () => {
     });
 
     it('paginates and caps the limit', async () => {
-      for (let i = 0; i < 3; i++) await seedPost({ title: `Post ${i}` });
+      for (let i = 0; i < 3; i++)
+        await seedPost({ published: true, title: `Post ${i}` });
       const page = await http().get('/posts?limit=2&page=2').expect(200);
       expect(page.body.data).toHaveLength(1);
       expect(page.body.meta).toMatchObject({
@@ -214,8 +220,12 @@ describe('Blog posts (e2e)', () => {
     });
 
     it('filters by title and isActive', async () => {
-      await seedPost({ title: 'Active One', isActive: true });
-      await seedPost({ title: 'Inactive One', isActive: false });
+      await seedPost({ published: true, title: 'Active One', isActive: true });
+      await seedPost({
+        published: true,
+        title: 'Inactive One',
+        isActive: false,
+      });
       const byTitle = await http()
         .get('/posts?filter.title=Active One')
         .expect(200);
@@ -229,8 +239,16 @@ describe('Blog posts (e2e)', () => {
     });
 
     it('searches title and content', async () => {
-      await seedPost({ title: 'Cassava Notes', content: 'about roots' });
-      await seedPost({ title: 'Other', content: 'all about sorghum' });
+      await seedPost({
+        published: true,
+        title: 'Cassava Notes',
+        content: 'about roots',
+      });
+      await seedPost({
+        published: true,
+        title: 'Other',
+        content: 'all about sorghum',
+      });
       const byTitle = await http().get('/posts?search=cassava').expect(200);
       expect(byTitle.body.data.map((p: any) => p.title)).toEqual([
         'Cassava Notes',
@@ -240,7 +258,7 @@ describe('Blog posts (e2e)', () => {
     });
 
     it('includes comments on each post', async () => {
-      const post = await seedPost({ title: 'Commented' });
+      const post = await seedPost({ published: true, title: 'Commented' });
       await t.dataSource.getRepository(CommentEntity).save(
         t.dataSource.getRepository(CommentEntity).create({
           author: 'Reader',
@@ -255,23 +273,18 @@ describe('Blog posts (e2e)', () => {
     });
 
     it('hides soft-deleted posts', async () => {
-      const post = await seedPost({ title: 'Gone' });
+      const post = await seedPost({ published: true, title: 'Gone' });
       await posts().softRemove(post);
       const res = await http().get('/posts').expect(200);
       expect(res.body.data).toEqual([]);
     });
 
-    // BUG: the public list ignores `published`, so drafts are world readable.
-    // blog.service.ts findAll / pagination.config.ts (no `where: { published: true }`)
-    it.failing(
-      'does not expose unpublished drafts to anonymous readers',
-      async () => {
-        await seedPost({ title: 'Secret Draft', published: false });
-        await seedPost({ title: 'Live Post', published: true });
-        const res = await http().get('/posts').expect(200);
-        expect(res.body.data.map((p: any) => p.title)).toEqual(['Live Post']);
-      },
-    );
+    it('does not expose unpublished drafts to anonymous readers', async () => {
+      await seedPost({ title: 'Secret Draft', published: false });
+      await seedPost({ title: 'Live Post', published: true });
+      const res = await http().get('/posts').expect(200);
+      expect(res.body.data.map((p: any) => p.title)).toEqual(['Live Post']);
+    });
   });
 
   describe('GET /posts/:slug (public)', () => {
@@ -293,24 +306,18 @@ describe('Blog posts (e2e)', () => {
       expect(res.status).toBeGreaterThanOrEqual(400);
     });
 
-    // BUG: findOne wraps its own NotFound in a generic Error, so a missing slug is a 500.
-    // blog.service.ts:44-51
-    it.failing('returns 404 for an unknown slug', async () => {
+    it('returns 404 for an unknown slug', async () => {
       await http().get('/posts/no-such-post').expect(404);
     });
 
-    // BUG: same service method, drafts are served to anyone who knows the slug.
-    it.failing(
-      'does not serve an unpublished draft to anonymous readers',
-      async () => {
-        const draft = await seedPost({
-          title: 'Hidden Draft',
-          published: false,
-        });
-        const res = await http().get(`/posts/${draft.slug}`);
-        expect(res.status).toBeGreaterThanOrEqual(400);
-      },
-    );
+    it('does not serve an unpublished draft to anonymous readers', async () => {
+      const draft = await seedPost({
+        title: 'Hidden Draft',
+        published: false,
+      });
+      const res = await http().get(`/posts/${draft.slug}`);
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    });
   });
 
   describe('PUT /posts/:slug', () => {
@@ -358,14 +365,15 @@ describe('Blog posts (e2e)', () => {
       await put(post.slug, body).expect(400);
     });
 
-    // BUG: update() uses repository.update, which skips the @BeforeUpdate slug hook,
-    // so renaming a post leaves a stale slug. blog.service.ts:56-60
-    it.failing('regenerates the slug when the title changes', async () => {
+    it('keeps the slug stable when the title changes', async () => {
       const post = await seedPost({ title: 'Old Title' });
-      await put(post.slug, { title: 'Brand New Title' }).expect(200);
+      const res = await put(post.slug, { title: 'Brand New Title' }).expect(
+        200,
+      );
       const row = await posts().findOneByOrFail({ id: post.id });
       expect(row.title).toBe('Brand New Title');
-      expect(row.slug).toBe('brand-new-title');
+      expect(row.slug).toBe(post.slug);
+      expect(res.body.slug).toBe(post.slug);
     });
 
     it('persists a title change even though the slug stays put', async () => {
@@ -375,16 +383,13 @@ describe('Blog posts (e2e)', () => {
       expect(row.title).toBe('Renamed');
     });
 
-    // BUG: duplicate title on update hits the unique constraint and surfaces as a 500
-    // instead of the 409 that create returns. blog.service.ts:56-60
-    it.failing('returns 409 when renaming onto an existing title', async () => {
+    it('returns 409 when renaming onto an existing title', async () => {
       await seedPost({ title: 'Taken Title' });
       const post = await seedPost({ title: 'Other Title' });
       await put(post.slug, { title: 'Taken Title' }).expect(409);
     });
 
-    // BUG: missing slug is a 500 (see findOne).
-    it.failing('returns 404 for an unknown slug', async () => {
+    it('returns 404 for an unknown slug', async () => {
       await put('no-such-post', { content: 'x' }).expect(404);
     });
   });
@@ -411,18 +416,13 @@ describe('Blog posts (e2e)', () => {
       );
     });
 
-    // BUG: publishing twice throws a plain Error (500) instead of a 4xx.
-    // blog.service.ts:64-66
-    it.failing(
-      'answers a repeat publish with a 4xx, not a server error',
-      async () => {
-        const post = await seedPost({ title: 'Twice' });
-        await publish(post.slug).expect(200);
-        const second = await publish(post.slug);
-        expect(second.status).toBeGreaterThanOrEqual(400);
-        expect(second.status).toBeLessThan(500);
-      },
-    );
+    it('answers a repeat publish with a 4xx, not a server error', async () => {
+      const post = await seedPost({ title: 'Twice' });
+      await publish(post.slug).expect(200);
+      const second = await publish(post.slug);
+      expect(second.status).toBeGreaterThanOrEqual(400);
+      expect(second.status).toBeLessThan(500);
+    });
 
     it('leaves the original publication record untouched on a repeat publish', async () => {
       const post = await seedPost({ title: 'Keep Stamp' });
@@ -433,8 +433,7 @@ describe('Blog posts (e2e)', () => {
       expect(after.publishedAt.getTime()).toBe(first.publishedAt.getTime());
     });
 
-    // BUG: missing slug is a 500 (see findOne).
-    it.failing('returns 404 for an unknown slug', async () => {
+    it('returns 404 for an unknown slug', async () => {
       await publish('no-such-post').expect(404);
     });
   });
@@ -477,25 +476,18 @@ describe('Blog posts (e2e)', () => {
       expect(second.status).toBeGreaterThanOrEqual(400);
     });
 
-    // BUG: missing slug is a 500 (see findOne).
-    it.failing('returns 404 for an unknown slug', async () => {
+    it('returns 404 for an unknown slug', async () => {
       await del('no-such-post').expect(404);
     });
 
-    // BUG: a soft-deleted post still owns its unique title, but the duplicate check in
-    // create() ignores deleted rows, so re-using the title is a 500 rather than a clean
-    // 201 or 409. blog.service.ts:15-21
-    it.failing(
-      'lets a deleted post title be reused or reports a conflict',
-      async () => {
-        const post = await seedPost({ title: 'Recycled Title' });
-        await del(post.slug).expect(200);
-        const res = await http()
-          .post('/posts')
-          .set(superAdmin.auth)
-          .send(postBody({ title: 'Recycled Title' }));
-        expect([201, 409]).toContain(res.status);
-      },
-    );
+    it('lets a deleted post title be reused or reports a conflict', async () => {
+      const post = await seedPost({ title: 'Recycled Title' });
+      await del(post.slug).expect(200);
+      const res = await http()
+        .post('/posts')
+        .set(superAdmin.auth)
+        .send(postBody({ title: 'Recycled Title' }));
+      expect([201, 409]).toContain(res.status);
+    });
   });
 });

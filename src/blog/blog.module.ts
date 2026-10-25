@@ -4,10 +4,15 @@ import { BlogController } from './blog.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PostEntity } from './entities/post.entity';
 import { CommentEntity } from './entities/comment.entity';
+import { BlogSchedulerService } from './blog-scheduler.service';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([PostEntity, CommentEntity])],
+  imports: [
+    TypeOrmModule.forFeature([PostEntity, CommentEntity]),
+    AuditLogModule,
+  ],
   controllers: [BlogController],
-  providers: [BlogService],
+  providers: [BlogService, BlogSchedulerService],
 })
 export class BlogModule {}
