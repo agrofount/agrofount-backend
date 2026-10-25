@@ -13,7 +13,7 @@ import {
 import { BlogService } from './blog.service';
 import { CreatePostDto } from './dto/create-blog.dto';
 import { UpdatePostDto } from './dto/update-blog.dto';
-import { SetPostActiveDto } from './dto/set-post-active.dto';
+import { SchedulePostDto, SetPostActiveDto } from './dto/set-post-active.dto';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -67,7 +67,7 @@ export class BlogController {
   @ApiQuery({
     name: 'status',
     required: false,
-    enum: ['published', 'draft', 'all'],
+    enum: ['published', 'scheduled', 'draft', 'all'],
     description: 'Filter by publication state. Omit for all posts',
   })
   findAll(
@@ -114,6 +114,27 @@ export class BlogController {
   @RequiredPermissions('publish_blogPosts')
   unpublish(@Param('slug') slug: string, @CurrentUser() user: AdminEntity) {
     return this.blogService.unpublish(slug, user.id);
+  }
+
+  @Patch(':slug/schedule')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Schedule a post to publish at a future time' })
+  @RequiredPermissions('publish_blogPosts')
+  @ApiBody({ type: SchedulePostDto })
+  schedule(
+    @Param('slug') slug: string,
+    @Body() dto: SchedulePostDto,
+    @CurrentUser() user: AdminEntity,
+  ) {
+    return this.blogService.schedule(slug, dto.scheduledAt, user.id);
+  }
+
+  @Patch(':slug/unschedule')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Cancel a scheduled publish' })
+  @RequiredPermissions('publish_blogPosts')
+  unschedule(@Param('slug') slug: string, @CurrentUser() user: AdminEntity) {
+    return this.blogService.unschedule(slug, user.id);
   }
 
   @Patch(':slug/active')

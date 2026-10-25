@@ -356,14 +356,15 @@ describe('Blog posts (e2e)', () => {
       await put(post.slug, body).expect(400);
     });
 
-    // BUG: update() uses repository.update, which skips the @BeforeUpdate slug hook,
-    // so renaming a post leaves a stale slug. blog.service.ts:56-60
-    it.failing('regenerates the slug when the title changes', async () => {
+    it('keeps the slug stable when the title changes', async () => {
       const post = await seedPost({ title: 'Old Title' });
-      await put(post.slug, { title: 'Brand New Title' }).expect(200);
+      const res = await put(post.slug, { title: 'Brand New Title' }).expect(
+        200,
+      );
       const row = await posts().findOneByOrFail({ id: post.id });
       expect(row.title).toBe('Brand New Title');
-      expect(row.slug).toBe('brand-new-title');
+      expect(row.slug).toBe(post.slug);
+      expect(res.body.slug).toBe(post.slug);
     });
 
     it('persists a title change even though the slug stays put', async () => {
@@ -373,9 +374,7 @@ describe('Blog posts (e2e)', () => {
       expect(row.title).toBe('Renamed');
     });
 
-    // BUG: duplicate title on update hits the unique constraint and surfaces as a 500
-    // instead of the 409 that create returns. blog.service.ts:56-60
-    it.failing('returns 409 when renaming onto an existing title', async () => {
+    it('returns 409 when renaming onto an existing title', async () => {
       await seedPost({ title: 'Taken Title' });
       const post = await seedPost({ title: 'Other Title' });
       await put(post.slug, { title: 'Taken Title' }).expect(409);
@@ -472,20 +471,14 @@ describe('Blog posts (e2e)', () => {
       await del('no-such-post').expect(404);
     });
 
-    // BUG: a soft-deleted post still owns its unique title, but the duplicate check in
-    // create() ignores deleted rows, so re-using the title is a 500 rather than a clean
-    // 201 or 409. blog.service.ts:15-21
-    it.failing(
-      'lets a deleted post title be reused or reports a conflict',
-      async () => {
-        const post = await seedPost({ title: 'Recycled Title' });
-        await del(post.slug).expect(200);
-        const res = await http()
-          .post('/posts')
-          .set(superAdmin.auth)
-          .send(postBody({ title: 'Recycled Title' }));
-        expect([201, 409]).toContain(res.status);
-      },
-    );
+    it('lets a deleted post title be reused or reports a conflict', async () => {
+      const post = await seedPost({ title: 'Recycled Title' });
+      await del(post.slug).expect(200);
+      const res = await http()
+        .post('/posts')
+        .set(superAdmin.auth)
+        .send(postBody({ title: 'Recycled Title' }));
+      expect([201, 409]).toContain(res.status);
+    });
   });
 });

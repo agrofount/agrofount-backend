@@ -12,6 +12,9 @@ import {
 } from 'typeorm';
 import { CommentEntity } from './comment.entity';
 import slugify from 'slugify';
+import { Expose } from 'class-transformer';
+
+export type PostStatus = 'draft' | 'scheduled' | 'published';
 
 @Entity('posts')
 export class PostEntity {
@@ -55,6 +58,12 @@ export class PostEntity {
   @Column({ default: false })
   isActive: boolean;
 
+  @Column({ type: 'timestamp', nullable: true })
+  scheduledAt: Date | null;
+
+  @Column({ nullable: true })
+  scheduledById: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 
@@ -63,6 +72,13 @@ export class PostEntity {
 
   @DeleteDateColumn()
   deletedAt: Date;
+
+  /** Derived from the flags so clients do not have to infer it. */
+  @Expose()
+  get status(): PostStatus {
+    if (this.published) return 'published';
+    return this.scheduledAt ? 'scheduled' : 'draft';
+  }
 
   @BeforeInsert()
   @BeforeUpdate()
