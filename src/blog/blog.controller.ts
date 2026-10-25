@@ -8,11 +8,19 @@ import {
   Delete,
   UseGuards,
   Put,
+  Query,
 } from '@nestjs/common';
 import { BlogService } from './blog.service';
 import { CreatePostDto } from './dto/create-blog.dto';
 import { UpdatePostDto } from './dto/update-blog.dto';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { SetPostActiveDto } from './dto/set-post-active.dto';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -56,8 +64,17 @@ export class BlogController {
   @ApiOperation({ summary: 'Get all blog Post' })
   @ApiOkPaginatedResponse(BlogPostResponseDto, BLOG_POST_PAGINATION_CONFIG)
   @ApiPaginationQuery(BLOG_POST_PAGINATION_CONFIG)
-  findAll(@Paginate() query: PaginateQuery): Promise<Paginated<PostEntity>> {
-    return this.blogService.findAll(query);
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['published', 'draft', 'all'],
+    description: 'Filter by publication state. Omit for all posts',
+  })
+  findAll(
+    @Paginate() query: PaginateQuery,
+    @Query('status') status?: string,
+  ): Promise<Paginated<PostEntity>> {
+    return this.blogService.findAll(query, status);
   }
 
   @Get(':slug')
@@ -89,6 +106,27 @@ export class BlogController {
   @RequiredPermissions('publish_blogPosts')
   togglePublish(@Param('slug') slug: string, @CurrentUser() user: AdminEntity) {
     return this.blogService.togglePublish(slug, user.id);
+  }
+
+  @Patch(':slug/unpublish')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Unpublish Post' })
+  @RequiredPermissions('publish_blogPosts')
+  unpublish(@Param('slug') slug: string, @CurrentUser() user: AdminEntity) {
+    return this.blogService.unpublish(slug, user.id);
+  }
+
+  @Patch(':slug/active')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Activate or deactivate Post' })
+  @RequiredPermissions('publish_blogPosts')
+  @ApiBody({ type: SetPostActiveDto })
+  setActive(
+    @Param('slug') slug: string,
+    @Body() dto: SetPostActiveDto,
+    @CurrentUser() user: AdminEntity,
+  ) {
+    return this.blogService.setActive(slug, dto.isActive, user.id);
   }
 
   @Delete(':slug')

@@ -9,6 +9,7 @@ export const BLOG_POST_PAGINATION_CONFIG: PaginateConfig<PostEntity> = {
   filterableColumns: {
     title: [FilterOperator.EQ],
     isActive: [FilterOperator.EQ],
+    published: [FilterOperator.EQ],
   },
   relations: ['comments'],
   defaultLimit: 25,

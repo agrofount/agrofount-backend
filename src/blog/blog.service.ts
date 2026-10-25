@@ -1,4 +1,9 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreatePostDto } from './dto/create-blog.dto';
 import { UpdatePostDto } from './dto/update-blog.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -24,26 +29,38 @@ export class BlogService {
     return this.postRepo.save(post);
   }
 
-  async findAll(query: PaginateQuery): Promise<Paginated<PostEntity>> {
+  async findAll(
+    query: PaginateQuery,
+    status?: string,
+  ): Promise<Paginated<PostEntity>> {
+    if (status && !['published', 'draft', 'all'].includes(status)) {
+      throw new BadRequestException(
+        'status must be one of: published, draft, all',
+      );
+    }
+    if (status === 'published' || status === 'draft') {
+      query = {
+        ...query,
+        filter: {
+          ...query.filter,
+          published: `$eq:${status === 'published'}`,
+        },
+      };
+    }
     return paginate(query, this.postRepo, {
       ...BLOG_POST_PAGINATION_CONFIG,
     });
   }
 
   async findOne(slug: string) {
-    try {
-      const post = await this.postRepo.findOne({
-        where: { slug },
-        relations: ['comments'],
-      });
-      if (!post) {
-        throw new Error(`Post with slug ${slug} not found`);
-      }
-      return post;
-    } catch (error) {
-      console.error('Error finding post:', error);
-      throw new Error('Error finding post');
+    const post = await this.postRepo.findOne({
+      where: { slug },
+      relations: ['comments'],
+    });
+    if (!post) {
+      throw new NotFoundException(`Post with slug ${slug} not found`);
     }
+    return post;
   }
 
   async update(slug: string, dto: UpdatePostDto) {
@@ -55,11 +72,29 @@ export class BlogService {
   async togglePublish(slug: string, userId: string) {
     const post = await this.findOne(slug);
     if (post.published) {
-      throw new Error('Post already published');
+      throw new ConflictException('Post already published');
     }
-    post.published = !post.published;
+    post.published = true;
     post.publishedById = userId;
     post.publishedAt = new Date();
+    return this.postRepo.save(post);
+  }
+
+  async unpublish(slug: string, userId: string) {
+    const post = await this.findOne(slug);
+    if (!post.published) return post;
+    post.published = false;
+    post.publishedById = null;
+    post.publishedAt = null;
+    post.updatedById = userId;
+    return this.postRepo.save(post);
+  }
+
+  async setActive(slug: string, isActive: boolean, userId: string) {
+    const post = await this.findOne(slug);
+    if (post.isActive === isActive) return post;
+    post.isActive = isActive;
+    post.updatedById = userId;
     return this.postRepo.save(post);
   }
 

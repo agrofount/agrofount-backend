@@ -293,9 +293,7 @@ describe('Blog posts (e2e)', () => {
       expect(res.status).toBeGreaterThanOrEqual(400);
     });
 
-    // BUG: findOne wraps its own NotFound in a generic Error, so a missing slug is a 500.
-    // blog.service.ts:44-51
-    it.failing('returns 404 for an unknown slug', async () => {
+    it('returns 404 for an unknown slug', async () => {
       await http().get('/posts/no-such-post').expect(404);
     });
 
@@ -383,8 +381,7 @@ describe('Blog posts (e2e)', () => {
       await put(post.slug, { title: 'Taken Title' }).expect(409);
     });
 
-    // BUG: missing slug is a 500 (see findOne).
-    it.failing('returns 404 for an unknown slug', async () => {
+    it('returns 404 for an unknown slug', async () => {
       await put('no-such-post', { content: 'x' }).expect(404);
     });
   });
@@ -411,18 +408,13 @@ describe('Blog posts (e2e)', () => {
       );
     });
 
-    // BUG: publishing twice throws a plain Error (500) instead of a 4xx.
-    // blog.service.ts:64-66
-    it.failing(
-      'answers a repeat publish with a 4xx, not a server error',
-      async () => {
-        const post = await seedPost({ title: 'Twice' });
-        await publish(post.slug).expect(200);
-        const second = await publish(post.slug);
-        expect(second.status).toBeGreaterThanOrEqual(400);
-        expect(second.status).toBeLessThan(500);
-      },
-    );
+    it('answers a repeat publish with a 4xx, not a server error', async () => {
+      const post = await seedPost({ title: 'Twice' });
+      await publish(post.slug).expect(200);
+      const second = await publish(post.slug);
+      expect(second.status).toBeGreaterThanOrEqual(400);
+      expect(second.status).toBeLessThan(500);
+    });
 
     it('leaves the original publication record untouched on a repeat publish', async () => {
       const post = await seedPost({ title: 'Keep Stamp' });
@@ -433,8 +425,7 @@ describe('Blog posts (e2e)', () => {
       expect(after.publishedAt.getTime()).toBe(first.publishedAt.getTime());
     });
 
-    // BUG: missing slug is a 500 (see findOne).
-    it.failing('returns 404 for an unknown slug', async () => {
+    it('returns 404 for an unknown slug', async () => {
       await publish('no-such-post').expect(404);
     });
   });
@@ -477,8 +468,7 @@ describe('Blog posts (e2e)', () => {
       expect(second.status).toBeGreaterThanOrEqual(400);
     });
 
-    // BUG: missing slug is a 500 (see findOne).
-    it.failing('returns 404 for an unknown slug', async () => {
+    it('returns 404 for an unknown slug', async () => {
       await del('no-such-post').expect(404);
     });
 
