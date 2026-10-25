@@ -122,11 +122,12 @@ describe('Blog post activation (e2e)', () => {
       await seedPost({ title: 'Off Post' });
       await setActive(on.slug, { isActive: true }).expect(200);
 
-      const all = await http().get('/posts').expect(200);
+      const all = await http().get('/posts').set(admin.auth).expect(200);
       expect(all.body.data.find((p) => p.slug === on.slug).isActive).toBe(true);
 
       const active = await http()
         .get('/posts')
+        .set(admin.auth)
         .query({ 'filter.isActive': '$eq:true' })
         .expect(200);
       expect(active.body.data.map((p) => p.slug)).toEqual([on.slug]);
@@ -192,7 +193,7 @@ describe('Blog post activation (e2e)', () => {
       await seedPost({ title: 'Draft One', published: false });
     });
     const list = (query: Record<string, string>) =>
-      http().get('/posts').query(query);
+      http().get('/posts').set(admin.auth).query(query);
 
     it('returns everything without a status, and for status=all', async () => {
       expect((await list({}).expect(200)).body.meta.totalItems).toBe(3);

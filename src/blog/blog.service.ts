@@ -35,16 +35,36 @@ export class BlogService {
     }
   }
 
+  /**
+   * `includeUnpublished` is for admins. Everyone else only ever sees
+   * published posts, whatever filters or status they ask for.
+   */
   async findAll(
     query: PaginateQuery,
     status?: string,
+    includeUnpublished = false,
   ): Promise<Paginated<PostEntity>> {
     if (status && !POST_STATUS_FILTERS.includes(status)) {
       throw new BadRequestException(
         `status must be one of: ${POST_STATUS_FILTERS.join(', ')}`,
       );
     }
-    if (status === 'published') {
+    if (!includeUnpublished) {
+      const filter = { ...query.filter };
+      delete filter.scheduledAt;
+      query = {
+        ...query,
+        filter: {
+          ...filter,
+          published: '$eq:true',
+          // Published posts never have a schedule, so asking a public caller
+          // for drafts or scheduled posts matches nothing.
+          ...(status === 'draft' || status === 'scheduled'
+            ? { scheduledAt: '$not:$null' }
+            : {}),
+        },
+      };
+    } else if (status === 'published') {
       query = { ...query, filter: { ...query.filter, published: '$eq:true' } };
     } else if (status === 'scheduled') {
       query = {
@@ -70,12 +90,13 @@ export class BlogService {
     });
   }
 
-  async findOne(slug: string) {
+  async findOne(slug: string, includeUnpublished = true) {
     const post = await this.postRepo.findOne({
       where: { slug },
       relations: ['comments'],
     });
-    if (!post) {
+    // An unpublished post looks exactly like a missing one to the public.
+    if (!post || (!post.published && !includeUnpublished)) {
       throw new NotFoundException(`Post with slug ${slug} not found`);
     }
     return post;

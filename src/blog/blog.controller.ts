@@ -23,6 +23,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { UserTypes } from '../auth/enums/role.enum';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
@@ -37,6 +39,12 @@ import {
 import { PostEntity } from './entities/post.entity';
 import { BLOG_POST_PAGINATION_CONFIG } from './config/pagination.config';
 import { BlogPostResponseDto } from './dto/blog-post-response.dto';
+
+/** Same test AdminAuthGuard applies, for routes that are public but show admins more. */
+const isAdmin = (user?: Record<string, any> | null) =>
+  user?.principalType === 'admin' &&
+  user.userType === UserTypes.System &&
+  Boolean(user.isVerified);
 
 @Controller('posts')
 @ApiTags('Agrofount Blog')
@@ -61,7 +69,11 @@ export class BlogController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all blog Post' })
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Get blog posts. The public sees published posts only; admins see all',
+  })
   @ApiOkPaginatedResponse(BlogPostResponseDto, BLOG_POST_PAGINATION_CONFIG)
   @ApiPaginationQuery(BLOG_POST_PAGINATION_CONFIG)
   @ApiQuery({
@@ -72,15 +84,20 @@ export class BlogController {
   })
   findAll(
     @Paginate() query: PaginateQuery,
-    @Query('status') status?: string,
+    @Query('status') status: string | undefined,
+    @CurrentUser() user?: AdminEntity,
   ): Promise<Paginated<PostEntity>> {
-    return this.blogService.findAll(query, status);
+    return this.blogService.findAll(query, status, isAdmin(user));
   }
 
   @Get(':slug')
-  @ApiOperation({ summary: 'Get single Blog Post' })
-  findOne(@Param('slug') slug: string) {
-    return this.blogService.findOne(slug);
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Get a single blog post. The public sees published posts only; admins see all',
+  })
+  findOne(@Param('slug') slug: string, @CurrentUser() user?: AdminEntity) {
+    return this.blogService.findOne(slug, isAdmin(user));
   }
 
   @Put(':slug')

@@ -364,7 +364,7 @@ describe('Blog scheduling, autosave and limits (e2e)', () => {
         published: true,
       });
 
-      const list = await http().get('/posts').expect(200);
+      const list = await http().get('/posts').set(admin.auth).expect(200);
       const byTitle = Object.fromEntries(
         list.body.data.map((p) => [p.title, p.status]),
       );
@@ -378,14 +378,20 @@ describe('Blog scheduling, autosave and limits (e2e)', () => {
         [scheduled, 'scheduled'],
         [published, 'published'],
       ] as const) {
-        const one = await http().get(`/posts/${post.slug}`).expect(200);
+        const one = await http()
+          .get(`/posts/${post.slug}`)
+          .set(admin.auth)
+          .expect(200);
         expect(one.body.status).toBe(status);
       }
     });
 
     it('leaves published and isActive unchanged in the response', async () => {
       const post = await seedPost({ published: true, isActive: true });
-      const res = await http().get(`/posts/${post.slug}`).expect(200);
+      const res = await http()
+        .get(`/posts/${post.slug}`)
+        .set(admin.auth)
+        .expect(200);
       expect(res.body).toMatchObject({ published: true, isActive: true });
     });
 
@@ -403,9 +409,9 @@ describe('Blog scheduling, autosave and limits (e2e)', () => {
       await seedPost({ title: 'L Published', published: true });
     });
     const titles = async (status: string) =>
-      (await http().get('/posts').query({ status }).expect(200)).body.data.map(
-        (p) => p.title,
-      );
+      (
+        await http().get('/posts').set(admin.auth).query({ status }).expect(200)
+      ).body.data.map((p) => p.title);
 
     it('splits posts into draft, scheduled and published', async () => {
       expect(await titles('draft')).toEqual(['L Draft']);
@@ -420,7 +426,11 @@ describe('Blog scheduling, autosave and limits (e2e)', () => {
         ['scheduled', 1],
         ['published', 1],
       ] as const) {
-        const res = await http().get('/posts').query({ status }).expect(200);
+        const res = await http()
+          .get('/posts')
+          .set(admin.auth)
+          .query({ status })
+          .expect(200);
         expect(res.body.meta.totalItems).toBe(total);
       }
     });
@@ -437,7 +447,11 @@ describe('Blog scheduling, autosave and limits (e2e)', () => {
     });
 
     it('rejects an unknown status with 400', async () => {
-      await http().get('/posts').query({ status: 'archived' }).expect(400);
+      await http()
+        .get('/posts')
+        .set(admin.auth)
+        .query({ status: 'archived' })
+        .expect(400);
     });
   });
 
@@ -515,7 +529,7 @@ describe('Blog scheduling, autosave and limits (e2e)', () => {
         200,
       );
       expect(res.body.slug).toBe(post.slug);
-      await http().get(`/posts/${post.slug}`).expect(200);
+      await http().get(`/posts/${post.slug}`).set(admin.auth).expect(200);
     });
 
     it('records who saved it last', async () => {
