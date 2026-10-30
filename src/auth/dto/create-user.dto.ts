@@ -1,14 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
-  IsEmail,
   IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
+  MaxLength,
   MinLength,
-  ValidateIf,
 } from 'class-validator';
 import { BusinessType } from '../enums/role.enum';
+import { CUSTOMER_PASSWORD_MIN_LENGTH } from './password-policy';
 
 export class RegisterUserDto {
   @ApiProperty({
@@ -37,8 +39,11 @@ export class RegisterUserDto {
   username: string;
 
   @ApiPropertyOptional({
-    description: 'The phone number of the user.',
-    example: '+23488894893033',
+    description:
+      'Optional contact phone number, only used when `identifier` is an email. ' +
+      'It is saved unverified and cannot be used to log in. Ignored when ' +
+      '`identifier` is a phone number.',
+    example: '2349019170273',
     required: false,
   })
   @IsString()
@@ -46,17 +51,18 @@ export class RegisterUserDto {
   phone?: string;
 
   @ApiPropertyOptional({
-    description: 'The email of the user.',
-    example: 'adigun@example.com',
+    description:
+      'Deprecated and ignored. Send the email as `identifier` instead.',
+    deprecated: true,
     required: false,
   })
-  @ValidateIf((o) => !o.identifier) // Validate email only if phone is not provided
-  @IsEmail()
-  @IsNotEmpty()
+  @IsString()
+  @IsOptional()
   email?: string;
 
   @ApiProperty({
-    description: 'The identifier of the user (email or phone number).',
+    description:
+      'The email or phone number the account is verified and logged in with.',
     example: 'adigun@example.com or +23488894893033',
     required: true,
   })
@@ -78,16 +84,27 @@ export class RegisterUserDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MinLength(12)
+  @MinLength(CUSTOMER_PASSWORD_MIN_LENGTH)
   password: string;
 
   @ApiPropertyOptional({
-    description: 'Referral code of the user who referred this user',
-    example: 'ABC123',
+    description:
+      'Referral code of the user who referred this user. Letters and digits ' +
+      'only, matched case-insensitively. Blank counts as not provided and an ' +
+      'unknown code is ignored.',
+    example: 'ABC12345',
+    maxLength: 20,
     required: false,
   })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
   @IsString()
   @IsOptional()
+  @MaxLength(20, { message: 'referralCode must be at most 20 characters' })
+  @Matches(/^[A-Za-z0-9]+$/, {
+    message: 'referralCode may only contain letters and numbers',
+  })
   referralCode?: string;
 
   @ApiProperty({

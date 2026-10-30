@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   HttpException,
+  InternalServerErrorException,
   Inject,
   Injectable,
   Logger,
@@ -9,7 +10,14 @@ import {
 } from '@nestjs/common';
 import { UserEntity } from '../user/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, MoreThan, Repository } from 'typeorm';
+import {
+  DataSource,
+  FindOptionsWhere,
+  In,
+  MoreThan,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { AuthResult } from '../utils/types/AccessToken';
@@ -47,6 +55,13 @@ import {
 } from './entities/auth-session.entity';
 import { authenticator } from 'otplib';
 import { ConfirmAdminMfaDto } from './dto/confirm-admin-mfa.dto';
+import {
+  generateReferralCode,
+  normalizeReferralCode,
+} from './utils/referral-code.util';
+
+const DUPLICATE_ACCOUNT_MESSAGE =
+  'Email or phone number is already in use, please choose a new one.';
 
 type SessionMetadata = {
   ipAddress?: string;
@@ -214,10 +229,15 @@ export class AuthService {
       const isEmail = identifier.includes('@');
       let email: string | undefined;
       let phone: string | undefined;
+      // Unverified optional number from an email sign-up. Never used to log in.
+      let contactPhone: string | undefined;
 
       if (isEmail) {
         email = identifier.trim().toLowerCase();
-      } else if (/^(?:\+?[1-9]\d{1,14}|0\d{9,14})$/.test(identifier)) {
+        contactPhone = this.parseOptionalPhone(dto.phone);
+      } else if (this.isValidPhone(identifier)) {
+        // A phone identifier is the whole identity: any `phone` or `email`
+        // in the body is ignored so it cannot override it.
         phone = identifier.trim();
       } else {
         throw new BadRequestException(
@@ -225,31 +245,31 @@ export class AuthService {
         );
       }
 
-      const userExist = await this.userRepository.findOne({
-        where: [
-          { email: email }, // Check if email exists
-          { phone: phone }, // Check if phone exists
-        ],
-      });
+      // Only list fields that have a value: an undefined field in a TypeORM
+      // `where` is dropped, which would turn the condition into "match anyone".
+      // A number given as a contact is also checked against both phone columns,
+      // while a phone identifier is only checked against verified numbers, so
+      // someone cannot block a number just by listing it as their contact.
+      const taken: FindOptionsWhere<UserEntity>[] = [];
+      if (email) taken.push({ email });
+      if (phone) taken.push({ phone });
+      if (contactPhone) {
+        taken.push({ phone: contactPhone }, { contactPhone });
+      }
+      const userExist = await this.userRepository.findOne({ where: taken });
 
       if (userExist) {
-        throw new BadRequestException(
-          'Email or phone number is already in use, please choose a new one.',
-        );
+        throw new BadRequestException(DUPLICATE_ACCOUNT_MESSAGE);
       }
 
       const verificationToken = this.generateToken();
-      const newReferralCode = randomBytes(6)
-        .toString('base64url')
-        .slice(0, 8)
-        .toUpperCase();
+      const newReferralCode = await this.newUniqueReferralCode();
 
-      // If a referral code was provided, find the referrer
+      // If a referral code was provided, find the referrer. An unknown code
+      // is ignored rather than failing the sign-up.
       let referredBy: string | undefined = undefined;
       if (referralCode) {
-        const referrer = await this.userRepository.findOne({
-          where: { referralCode },
-        });
+        const referrer = await this.findReferrer(referralCode);
         if (referrer) {
           referredBy = referrer.id;
         }
@@ -267,6 +287,7 @@ export class AuthService {
         gender,
         email,
         phone,
+        contactPhone: contactPhone ?? null,
         verificationToken: email ? this.hashToken(verificationToken) : null,
         verificationTokenExpires: email
           ? new Date(Date.now() + 24 * 60 * 60 * 1000)
@@ -274,7 +295,22 @@ export class AuthService {
         referralCode: newReferralCode,
         referredBy,
       });
-      const savedUser = await this.userRepository.save(user);
+      let savedUser: UserEntity;
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          savedUser = await this.userRepository.save(user);
+          break;
+        } catch (error) {
+          if (!this.isUniqueViolation(error)) throw error;
+          // Another sign-up took the same generated code between our check and
+          // the insert: draw a new one. Anything else is a duplicate account.
+          if (this.violatesReferralCode(error) && attempt < 5) {
+            user.referralCode = await this.newUniqueReferralCode();
+            continue;
+          }
+          throw new BadRequestException(DUPLICATE_ACCOUNT_MESSAGE);
+        }
+      }
 
       if (!savedUser) {
         throw new BadRequestException('User not created');
@@ -406,6 +442,17 @@ export class AuthService {
 
     user.isVerified = true;
     await this.userRepository.save(user);
+
+    // Proving the number wins it: drop it from anyone who only listed it as
+    // an unverified contact number.
+    await this.userRepository
+      .update(
+        { contactPhone: In([user.phone, this.normalizePhone(user.phone)]) },
+        { contactPhone: null },
+      )
+      .catch((error) =>
+        Logger.error('Failed to clear contact phone claims', error),
+      );
 
     // Create wallet after verification
     await this.walletService.createWallet(user.id);
@@ -951,6 +998,75 @@ export class AuthService {
 
   private normalizePhone(phone: string): string {
     return phone.replace(/[\s()-]/g, '');
+  }
+
+  /** An eight character A-Z0-9 code that no account has yet. */
+  private async newUniqueReferralCode(): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const code = generateReferralCode();
+      if (!(await this.userRepository.existsBy({ referralCode: code }))) {
+        return code;
+      }
+    }
+    throw new InternalServerErrorException(
+      'Could not generate a referral code, please try again',
+    );
+  }
+
+  /**
+   * Looks the referrer up case-insensitively. Codes issued before codes were
+   * limited to letters and digits can contain "-" or "_", and the sign-up form
+   * strips those characters, so a legacy code also matches in its stripped
+   * form, as long as exactly one account does.
+   */
+  private async findReferrer(code: string): Promise<UserEntity | null> {
+    const normalized = normalizeReferralCode(code);
+    const exact = await this.userRepository.findOne({
+      where: { referralCode: normalized },
+    });
+    if (exact) return exact;
+
+    const legacy = await this.userRepository
+      .createQueryBuilder('account')
+      .where(`account."referralCode" ~ '[^A-Za-z0-9]'`)
+      .andWhere(
+        `regexp_replace(upper(account."referralCode"), '[^A-Z0-9]', '', 'g') = :code`,
+        { code: normalized },
+      )
+      .take(2)
+      .getMany();
+    return legacy.length === 1 ? legacy[0] : null;
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    return (
+      error instanceof QueryFailedError &&
+      (error.driverError as { code?: string })?.code === '23505'
+    );
+  }
+
+  private violatesReferralCode(error: unknown): boolean {
+    const driverError = (error as QueryFailedError).driverError as {
+      detail?: string;
+      constraint?: string;
+    };
+    return /referralCode/i.test(
+      `${driverError?.detail ?? ''} ${driverError?.constraint ?? ''}`,
+    );
+  }
+
+  private isValidPhone(value: string): boolean {
+    return /^(?:\+?[1-9]\d{1,14}|0\d{9,14})$/.test(value);
+  }
+
+  /** Same rule as a phone identifier. Blank means "not provided". */
+  private parseOptionalPhone(value?: string): string | undefined {
+    const phone = value?.trim();
+    if (!phone) return undefined;
+    if (!this.isValidPhone(phone)) {
+      throw new BadRequestException('Invalid phone number.');
+    }
+    return phone;
   }
 
   private hashOtp(challengeId: string, otp: string): string {

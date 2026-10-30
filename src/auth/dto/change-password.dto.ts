@@ -1,4 +1,5 @@
 import { IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { CUSTOMER_PASSWORD_MIN_LENGTH } from './password-policy';
 
 export class ChangePasswordDto {
   @IsString()
@@ -7,6 +8,6 @@ export class ChangePasswordDto {
 
   @IsString()
   @IsNotEmpty()
-  @MinLength(12)
+  @MinLength(CUSTOMER_PASSWORD_MIN_LENGTH)
   newPassword: string;
 }
