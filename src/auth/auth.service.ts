@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   HttpException,
+  HttpStatus,
   InternalServerErrorException,
   Inject,
   Injectable,
@@ -15,6 +16,7 @@ import {
   FindOptionsWhere,
   In,
   MoreThan,
+  Not,
   QueryFailedError,
   Repository,
 } from 'typeorm';
@@ -55,10 +57,14 @@ import {
 } from './entities/auth-session.entity';
 import { authenticator } from 'otplib';
 import { ConfirmAdminMfaDto } from './dto/confirm-admin-mfa.dto';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import {
   generateReferralCode,
   normalizeReferralCode,
 } from './utils/referral-code.util';
+
+const CONTACT_PHONE_RESEND_COOLDOWN_SECONDS = 30;
+const CONTACT_PHONE_DAILY_LIMIT = 5;
 
 const DUPLICATE_ACCOUNT_MESSAGE =
   'Email or phone number is already in use, please choose a new one.';
@@ -68,7 +74,10 @@ type SessionMetadata = {
   userAgent?: string;
 };
 
-type OtpPurpose = 'phone-verification' | 'password-reset';
+type OtpPurpose =
+  | 'phone-verification'
+  | 'password-reset'
+  | 'contact-phone-verification';
 
 type OtpChallenge = {
   userId: string;
@@ -98,6 +107,7 @@ export class AuthService {
     private readonly sessionRepository: Repository<AuthSessionEntity>,
     private readonly dataSource: DataSource,
     private readonly leadsService: LeadsService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async validateUser(
@@ -916,8 +926,9 @@ export class AuthService {
   private async issueOtpChallenge(
     user: UserEntity,
     purpose: OtpPurpose,
+    targetPhone: string = user.phone,
   ): Promise<string> {
-    const phone = this.normalizePhone(user.phone);
+    const phone = this.normalizePhone(targetPhone);
     const challengeId = randomUUID();
     const otp = randomInt(100000, 1000000).toString();
     const verification = purpose === 'phone-verification';
@@ -998,6 +1009,173 @@ export class AuthService {
 
   private normalizePhone(phone: string): string {
     return phone.replace(/[\s()-]/g, '');
+  }
+
+  /**
+   * Sends an OTP to the signed-in customer's unverified contact number. This
+   * is its own flow: it never touches the wallet, voucher or sign-up SMS.
+   */
+  async requestContactPhoneVerification(userId: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('user not found');
+    if (user.phone) {
+      throw new BadRequestException('Your phone number is already verified.');
+    }
+    if (!user.contactPhone) {
+      throw new BadRequestException(
+        'There is no phone number on your account to verify.',
+      );
+    }
+
+    const cooldownKey = `auth:contact-phone:cooldown:${userId}`;
+    const dailyKey = `auth:contact-phone:daily:${userId}`;
+    const activeKey = `auth:contact-phone:active:${userId}`;
+
+    if (await this.cacheManager.get(cooldownKey)) {
+      throw new HttpException(
+        {
+          message: `Please wait ${CONTACT_PHONE_RESEND_COOLDOWN_SECONDS} seconds before asking for another code.`,
+          retryAfterSeconds: CONTACT_PHONE_RESEND_COOLDOWN_SECONDS,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const sentToday = Number((await this.cacheManager.get(dailyKey)) ?? 0);
+    if (sentToday >= CONTACT_PHONE_DAILY_LIMIT) {
+      throw new HttpException(
+        'You have asked for too many codes today. Please try again tomorrow.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const challengeId = await this.issueOtpChallenge(
+      user,
+      'contact-phone-verification',
+      user.contactPhone,
+    );
+
+    // A newer code replaces the previous one.
+    const previous = await this.cacheManager.get<string>(activeKey);
+    if (previous) await this.cacheManager.del(`auth:otp:${previous}`);
+    const day = 24 * 60 * 60 * 1000;
+    await this.cacheManager.set(activeKey, challengeId, 10 * 60 * 1000);
+    await this.cacheManager.set(
+      cooldownKey,
+      true,
+      CONTACT_PHONE_RESEND_COOLDOWN_SECONDS * 1000,
+    );
+    await this.cacheManager.set(dailyKey, sentToday + 1, day);
+
+    Logger.log(`Contact phone OTP sent for user ${user.id}`);
+    return {
+      challengeId,
+      expiresInSeconds: 600,
+      resendAfterSeconds: CONTACT_PHONE_RESEND_COOLDOWN_SECONDS,
+      maskedPhone: this.maskPhone(user.contactPhone),
+    };
+  }
+
+  /**
+   * Turns the contact number into the verified login number once the OTP is
+   * right. One transaction, and nothing else happens: no wallet, voucher,
+   * welcome SMS, session or token.
+   */
+  async confirmContactPhoneVerification(
+    userId: string,
+    dto: VerifyPhoneDto,
+  ): Promise<{ phone: string }> {
+    const { challengeId, otp } = dto;
+
+    // Look before verifying, so presenting someone else's challenge cannot
+    // use up their attempts or consume their code.
+    const pending = await this.cacheManager.get<OtpChallenge>(
+      `auth:otp:${challengeId}`,
+    );
+    if (
+      !pending ||
+      pending.purpose !== 'contact-phone-verification' ||
+      pending.userId !== userId
+    ) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+    const challenge = await this.verifyOtpChallenge(
+      challengeId,
+      otp,
+      'contact-phone-verification',
+    );
+    await this.cacheManager.del(`auth:contact-phone:active:${userId}`);
+
+    let phone: string;
+    try {
+      phone = await this.dataSource.transaction(async (manager) => {
+        const users = manager.getRepository(UserEntity);
+        const user = await users.findOne({
+          where: { id: userId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!user) throw new BadRequestException('Invalid or expired OTP');
+        if (user.phone) {
+          throw new BadRequestException(
+            'Your phone number is already verified.',
+          );
+        }
+        // The number may have changed since the code was sent.
+        if (
+          !user.contactPhone ||
+          this.normalizePhone(user.contactPhone) !== challenge.phone
+        ) {
+          throw new BadRequestException('Invalid or expired OTP');
+        }
+
+        const number = user.contactPhone;
+        const variants = [number, this.normalizePhone(number)];
+        const taken = await users.findOne({
+          where: { phone: In(variants), id: Not(userId) },
+        });
+        if (taken) throw new BadRequestException(DUPLICATE_ACCOUNT_MESSAGE);
+
+        await users.update(
+          { id: userId },
+          { phone: number, contactPhone: null },
+        );
+        // Proving the number wins it over anyone who only listed it.
+        await users.update(
+          { contactPhone: In(variants), id: Not(userId) },
+          { contactPhone: null },
+        );
+        return number;
+      });
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        throw new BadRequestException(DUPLICATE_ACCOUNT_MESSAGE);
+      }
+      throw error;
+    }
+
+    Logger.log(`Contact phone verified for user ${userId}`);
+    await this.auditLogService
+      .record({
+        action: 'VERIFY_CONTACT_PHONE',
+        entityType: 'User',
+        entityId: userId,
+        userId,
+        actorType: 'user',
+        outcome: 'succeeded',
+        changes: { phone: this.maskPhone(phone) },
+      })
+      .catch((error) =>
+        Logger.error('Failed to audit contact phone verification', error),
+      );
+    return { phone };
+  }
+
+  /** "+2349019170273" becomes "234*******273", enough for the user to recognise. */
+  private maskPhone(phone: string): string {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length <= 7) return '*'.repeat(digits.length);
+    return `${digits.slice(0, 3)}${'*'.repeat(digits.length - 6)}${digits.slice(
+      -3,
+    )}`;
   }
 
   /** An eight character A-Z0-9 code that no account has yet. */
