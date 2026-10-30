@@ -11,7 +11,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
-import { Exclude } from 'class-transformer';
+import { Exclude, Expose } from 'class-transformer';
 import { BusinessType, UserTypes } from '../../auth/enums/role.enum';
 import { ReviewEntity } from '../../review/entities/review.entity';
 import { OrderEntity } from '../../order/entities/order.entity';
@@ -36,6 +36,12 @@ export class UserEntity {
 
   @Column({ nullable: true, unique: true })
   phone: string;
+
+  /** True when `phone` is set: it only ever holds an OTP-verified number. */
+  @Expose()
+  get phoneVerified(): boolean {
+    return Boolean(this.phone) && this.isVerified === true;
+  }
 
   /**
    * Optional number given at email sign-up. It is NOT verified, so it is
