@@ -96,6 +96,7 @@ describe('Phone verification onboarding', () => {
       isVerified: false,
     };
     const sendNotification = jest.fn().mockResolvedValue(undefined);
+    const update = jest.fn().mockResolvedValue({ affected: 0 });
 
     Object.assign(service, {
       configService: {
@@ -113,6 +114,7 @@ describe('Phone verification onboarding', () => {
       userRepository: {
         findOne: jest.fn().mockResolvedValue(user),
         save: jest.fn().mockImplementation(async (value) => value),
+        update,
       },
       walletService: { createWallet: jest.fn().mockResolvedValue(undefined) },
       voucherService: {
@@ -128,6 +130,12 @@ describe('Phone verification onboarding', () => {
     });
 
     await service.verifyPhone({ challengeId: 'challenge-1', otp: '123456' });
+
+    // Proving the number clears anyone else's unverified claim on it.
+    expect(update).toHaveBeenCalledWith(
+      { contactPhone: expect.anything() },
+      { contactPhone: null },
+    );
 
     expect(sendNotification).toHaveBeenNthCalledWith(
       1,
@@ -159,6 +167,7 @@ describe('Registration lead conversion', () => {
     const service = Object.create(AuthService.prototype) as AuthService;
     const userRepository = {
       findOne: jest.fn().mockResolvedValue(null),
+      existsBy: jest.fn().mockResolvedValue(false),
       create: jest.fn((user) => user),
       save: jest.fn(async (user) => ({ ...user, id: 'registered-user' })),
     };

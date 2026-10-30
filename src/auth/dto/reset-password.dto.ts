@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { CUSTOMER_PASSWORD_MIN_LENGTH } from './password-policy';
 
 export class ResetPasswordDto {
   @ApiPropertyOptional({
@@ -25,6 +26,6 @@ export class ResetPasswordDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MinLength(12)
+  @MinLength(CUSTOMER_PASSWORD_MIN_LENGTH)
   newPassword: string;
 }

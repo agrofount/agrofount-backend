@@ -37,6 +37,14 @@ export class UserEntity {
   @Column({ nullable: true, unique: true })
   phone: string;
 
+  /**
+   * Optional number given at email sign-up. It is NOT verified, so it is
+   * never used to log in, reset a password or receive an OTP. Only `phone`
+   * (verified by OTP) does that.
+   */
+  @Column({ type: 'varchar', nullable: true, unique: true })
+  contactPhone: string | null;
+
   @Column({ nullable: true })
   address: string;
 
