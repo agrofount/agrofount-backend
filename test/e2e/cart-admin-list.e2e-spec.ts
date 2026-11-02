@@ -56,6 +56,23 @@ describe('GET /cart/all (admin cart list)', () => {
     expect(res.body.cart.nextCursor).toBeNull();
   });
 
+  it('ignores cart:* keys that do not belong to a user id', async () => {
+    const admin = await createAdmin(t.app);
+    const customer = await createUser(t.app);
+    await seedCart(customer.entity.id);
+    await seedCart('not-a-uuid');
+    await redis.set('cart:started:abc', '1');
+
+    const res = await request(t.app.getHttpServer())
+      .get('/cart/all')
+      .set(admin.auth)
+      .expect(200);
+
+    expect(res.body.cart.items.map((item) => item.userId)).toEqual([
+      customer.entity.id,
+    ]);
+  });
+
   it('returns an empty list with no cursor when there are no carts', async () => {
     const admin = await createAdmin(t.app);
     await seedNoise(300);
