@@ -22,6 +22,9 @@ import {
 import { AddToCartDto, CartItemDto } from './dto/create-cart.dto';
 import { UpdateCartDto } from './dto/update-cart.dto';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type StoredCart = Record<string, Record<string, { quantity: number }>>;
 
 @Injectable()
@@ -141,7 +144,10 @@ export class CartService implements OnModuleDestroy {
         500,
       );
       nextCursor = next;
-      batch.forEach((key) => found.add(key));
+      // Other features share the `cart:` prefix; only `cart:<user uuid>` is a cart.
+      batch
+        .filter((key) => UUID_PATTERN.test(key.slice('cart:'.length)))
+        .forEach((key) => found.add(key));
       scans += 1;
     } while (nextCursor !== '0' && found.size < safeLimit && scans < 50);
     const keys = [...found];
