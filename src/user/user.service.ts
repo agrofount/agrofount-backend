@@ -173,7 +173,14 @@ export class UserService {
     const paginationOptions: PaginateConfig<UserEntity> = {
       sortableColumns: ['id', 'firstname', 'lastname', 'username', 'email'],
       nullSort: 'last',
-      searchableColumns: ['firstname', 'lastname', 'username', 'email'],
+      searchableColumns: [
+        'firstname',
+        'lastname',
+        'username',
+        'email',
+        'phone',
+        'contactPhone',
+      ],
       defaultSortBy: [['createdAt', 'DESC']],
       filterableColumns: {
         firstname: [FilterOperator.ILIKE],
