@@ -18,7 +18,7 @@ import {
 } from 'nestjs-paginate';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MessageEntity } from './entities/message.entity';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   EmailTemplateIds,
   FailureCategory,
@@ -178,6 +178,20 @@ export class NotificationService {
       defaultLimit: 25,
       maxLimit: 100,
     });
+  }
+
+  async countUnseen(userId: string): Promise<{ unseen: number }> {
+    return { unseen: await this.messageRepo.countBy({ userId, seen: false }) };
+  }
+
+  /** Marks the caller's own unseen messages (all, or just `ids`) as seen. */
+  async markSeen(userId: string, ids?: string[]): Promise<{ updated: number }> {
+    if (ids && ids.length === 0) return { updated: 0 };
+    const result = await this.messageRepo.update(
+      { userId, seen: false, ...(ids ? { id: In(ids) } : {}) },
+      { seen: true },
+    );
+    return { updated: result.affected ?? 0 };
   }
 
   async findOne(messageId: string, userId: string) {

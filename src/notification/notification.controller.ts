@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { NotificationService } from './notification.service';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
+import { MarkSeenDto } from './dto/mark-seen.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
@@ -401,6 +402,21 @@ export class NotificationController {
   @ApiOperation({ summary: 'get messages' })
   findAll(@Query() query: PaginateQuery, @CurrentUser() user: UserEntity) {
     return this.notificationService.findAll(user.id, query);
+  }
+
+  // Declared before ':id' so these are not read as message ids.
+  @Get('unseen/count')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'count the caller unseen messages' })
+  countUnseen(@CurrentUser() user: UserEntity) {
+    return this.notificationService.countUnseen(user.id);
+  }
+
+  @Patch('seen')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'mark the caller messages as seen' })
+  markSeen(@Body() dto: MarkSeenDto, @CurrentUser() user: UserEntity) {
+    return this.notificationService.markSeen(user.id, dto.ids);
   }
 
   @Get(':id')
