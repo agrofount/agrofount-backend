@@ -73,6 +73,29 @@ describe('GET /cart/all (admin cart list)', () => {
     ]);
   });
 
+  it('does not use multi-key reads, which fail with CROSSSLOT on a Redis cluster', async () => {
+    const admin = await createAdmin(t.app);
+    const first = await createUser(t.app);
+    const second = await createUser(t.app);
+    await seedCart(first.entity.id);
+    await seedCart(second.entity.id);
+    const mget = jest
+      .spyOn(Redis.prototype, 'mget')
+      .mockRejectedValue(new Error("CROSSSLOT Keys in request don't hash"));
+
+    try {
+      const res = await request(t.app.getHttpServer())
+        .get('/cart/all')
+        .set(admin.auth)
+        .expect(200);
+
+      expect(res.body.cart.items).toHaveLength(2);
+      expect(mget).not.toHaveBeenCalled();
+    } finally {
+      mget.mockRestore();
+    }
+  });
+
   it('returns an empty list with no cursor when there are no carts', async () => {
     const admin = await createAdmin(t.app);
     await seedNoise(300);
