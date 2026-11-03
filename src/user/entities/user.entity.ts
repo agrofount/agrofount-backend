@@ -39,7 +39,12 @@ export class UserEntity {
 
   /** True when `phone` is set: it only ever holds an OTP-verified number. */
   @Expose()
-  get phoneVerified(): boolean {
+  get phoneVerified(): boolean | undefined {
+    // Partial selects (e.g. an invoice's order.user) do not load these columns;
+    // report nothing rather than a misleading false.
+    if (this.phone === undefined || this.isVerified === undefined) {
+      return undefined;
+    }
     return Boolean(this.phone) && this.isVerified === true;
   }
 
