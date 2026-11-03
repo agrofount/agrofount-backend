@@ -14,6 +14,7 @@ import {
 import { NotificationService } from './notification.service';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
 import { MarkSeenDto } from './dto/mark-seen.dto';
+import { MessageKindQueryDto } from './dto/message-kind.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
@@ -408,15 +409,18 @@ export class NotificationController {
   @Get('unseen/count')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'count the caller unseen messages' })
-  countUnseen(@CurrentUser() user: UserEntity) {
-    return this.notificationService.countUnseen(user.id);
+  countUnseen(
+    @Query() query: MessageKindQueryDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.notificationService.countUnseen(user.id, query.kind);
   }
 
   @Patch('seen')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'mark the caller messages as seen' })
   markSeen(@Body() dto: MarkSeenDto, @CurrentUser() user: UserEntity) {
-    return this.notificationService.markSeen(user.id, dto.ids);
+    return this.notificationService.markSeen(user.id, dto.ids, dto.kind);
   }
 
   @Get(':id')

@@ -18,7 +18,8 @@ import {
 } from 'nestjs-paginate';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MessageEntity } from './entities/message.entity';
-import { In, Repository } from 'typeorm';
+import { Repository, WhereExpressionBuilder } from 'typeorm';
+import { MessageKind } from './dto/message-kind.dto';
 import {
   EmailTemplateIds,
   FailureCategory,
@@ -38,6 +39,13 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { renderTemplate } from './utils/render-template.util';
 import { classifyProviderError } from './utils/classify-provider-error.util';
+
+const CONVERSATION_TYPE_PATTERNS = [
+  '%message%',
+  '%contact%',
+  '%chat%',
+  '%conversation%',
+];
 
 @Injectable()
 export class NotificationService {
@@ -180,18 +188,49 @@ export class NotificationService {
     });
   }
 
-  async countUnseen(userId: string): Promise<{ unseen: number }> {
-    return { unseen: await this.messageRepo.countBy({ userId, seen: false }) };
+  async countUnseen(
+    userId: string,
+    kind?: MessageKind,
+  ): Promise<{ unseen: number }> {
+    const query = this.messageRepo
+      .createQueryBuilder('m')
+      .where('m.userId = :userId AND m.seen = false', { userId });
+    this.applyKind(query, kind, 'm."messageType"');
+    return { unseen: await query.getCount() };
   }
 
   /** Marks the caller's own unseen messages (all, or just `ids`) as seen. */
-  async markSeen(userId: string, ids?: string[]): Promise<{ updated: number }> {
+  async markSeen(
+    userId: string,
+    ids?: string[],
+    kind?: MessageKind,
+  ): Promise<{ updated: number }> {
     if (ids && ids.length === 0) return { updated: 0 };
-    const result = await this.messageRepo.update(
-      { userId, seen: false, ...(ids ? { id: In(ids) } : {}) },
-      { seen: true },
-    );
+    const query = this.messageRepo
+      .createQueryBuilder()
+      .update(MessageEntity)
+      .set({ seen: true })
+      .where('"userId" = :userId AND seen = false', { userId });
+    if (ids) query.andWhere('id IN (:...ids)', { ids });
+    this.applyKind(query, kind, '"messageType"');
+    const result = await query.execute();
     return { updated: result.affected ?? 0 };
+  }
+
+  /**
+   * The admin portal's message icon shows contact and chat style types; the
+   * bell shows everything else.
+   */
+  private applyKind(
+    query: WhereExpressionBuilder,
+    kind: MessageKind | undefined,
+    column: string,
+  ) {
+    if (!kind) return;
+    const match = `${column} ILIKE ANY(:conversationPatterns)`;
+    query.andWhere(kind === 'conversation' ? match : `NOT (${match})`, {
+      conversationPatterns: CONVERSATION_TYPE_PATTERNS,
+    });
   }
 
   async findOne(messageId: string, userId: string) {
