@@ -20,6 +20,7 @@ import { ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SignInDto } from './dto/signin-auth.dto';
 import { LocalAdminAuthGuard } from './guards/local-admin-auth.guard';
 import { VerifyPhoneDto } from './dto/verify-phoneDto';
+import { UserAuthGuard } from './guards/user.guard';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { AdminEntity } from '../admins/entities/admin.entity';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -200,6 +201,36 @@ export class AuthController extends BaseController {
       token: accessToken,
       refreshToken,
     };
+  }
+
+  @Post('contact-phone/verification')
+  @UseGuards(JwtAuthGuard, UserAuthGuard)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Send an OTP to the contact phone number to verify it',
+  })
+  async requestContactPhoneVerification(@CurrentUser() user: UserEntity) {
+    const data = await this.authService.requestContactPhoneVerification(
+      user.id,
+    );
+    return { success: true, ...data };
+  }
+
+  @Post('contact-phone/verification/confirm')
+  @UseGuards(JwtAuthGuard, UserAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Confirm the OTP and make the contact number the verified phone',
+  })
+  async confirmContactPhoneVerification(
+    @Body() dto: VerifyPhoneDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    const { phone } = await this.authService.confirmContactPhoneVerification(
+      user.id,
+      dto,
+    );
+    return { success: true, phone };
   }
 
   @Post('resend-otp')

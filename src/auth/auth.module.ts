@@ -14,12 +14,14 @@ import { WalletModule } from '../wallet/wallet.module';
 import { AdminEntity } from '../admins/entities/admin.entity';
 import { AuthSessionEntity } from './entities/auth-session.entity';
 import { LeadsModule } from '../leads/leads.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 import type { SignOptions } from 'jsonwebtoken';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([UserEntity, AdminEntity, AuthSessionEntity]),
     PassportModule,
+    AuditLogModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

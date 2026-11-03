@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+import { QueryFailedError } from 'typeorm';
 import { AuthService } from './auth.service';
 import { authenticator } from 'otplib';
 import { AuthPrincipalType } from './entities/auth-session.entity';
@@ -268,4 +270,33 @@ describe('OTP SMS verification links', () => {
       );
     },
   );
+});
+
+describe('Contact phone verification race', () => {
+  it('answers 400, not 500, when the unique constraint catches a concurrent claim', async () => {
+    const service = Object.create(AuthService.prototype) as AuthService;
+    const violation = new QueryFailedError('UPDATE', [], {
+      code: '23505',
+    } as any);
+    Object.assign(service, {
+      cacheManager: {
+        get: jest.fn().mockResolvedValue({
+          userId: 'user-1',
+          purpose: 'contact-phone-verification',
+        }),
+        del: jest.fn().mockResolvedValue(undefined),
+      },
+      verifyOtpChallenge: jest
+        .fn()
+        .mockResolvedValue({ userId: 'user-1', phone: '2349012345678' }),
+      dataSource: { transaction: jest.fn().mockRejectedValue(violation) },
+    });
+
+    await expect(
+      service.confirmContactPhoneVerification('user-1', {
+        challengeId: 'c',
+        otp: '123456',
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
 });
