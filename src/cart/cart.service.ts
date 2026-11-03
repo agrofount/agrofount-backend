@@ -151,7 +151,8 @@ export class CartService implements OnModuleDestroy {
       scans += 1;
     } while (nextCursor !== '0' && found.size < safeLimit && scans < 50);
     const keys = [...found];
-    const values = keys.length ? await this.redis.mget(keys) : [];
+    // One GET per key: MGET fails with CROSSSLOT when Redis runs in cluster mode.
+    const values = await Promise.all(keys.map((key) => this.redis.get(key)));
     const carts = keys.map((key, index) => ({
       userId: key.slice('cart:'.length),
       data: this.parse(values[index]),
