@@ -211,21 +211,16 @@ describe('Auth password flows (e2e)', () => {
         .expect(201);
     });
 
-    // BUG: forgot-password looks the email up verbatim while registration
-    // stores it lower-cased, so "USER@..." never receives a reset link.
-    // src/auth/auth.service.ts sendPasswordResetEmail (findOne by identifier).
-    it.failing(
-      'finds the account regardless of email letter case',
-      async () => {
-        const email = uniqueEmail('casing');
-        await createUser(t.app, { email } as any);
-        await api(t)
-          .post('/auth/forgot-password')
-          .send({ identifier: email.toUpperCase() })
-          .expect(201);
-        await emailedResetToken(t, email);
-      },
-    );
+    // Registration stores emails lower-cased, so the lookup must ignore case.
+    it('finds the account regardless of email letter case', async () => {
+      const email = uniqueEmail('casing');
+      await createUser(t.app, { email } as any);
+      await api(t)
+        .post('/auth/forgot-password')
+        .send({ identifier: email.toUpperCase() })
+        .expect(201);
+      await emailedResetToken(t, email);
+    });
 
     it('validates the body', async () => {
       await api(t).post('/auth/forgot-password').send({}).expect(400);
