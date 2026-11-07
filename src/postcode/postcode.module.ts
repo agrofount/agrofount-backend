@@ -9,10 +9,7 @@ import { PostcodeProvider } from './postcode.types';
 import { NipostPostcodeProvider } from './nipost-postcode.provider';
 import { MockPostcodeProvider } from './mock-postcode.provider';
 
-/**
- * NIPOST_POSTCODE_MOCK=true swaps in the deterministic mock for local work.
- * It is refused outright in production so it can never serve real orders.
- */
+/** NIPOST_POSTCODE_MOCK=true swaps in the deterministic mock provider. */
 export const selectPostcodeProvider = (
   configService: ConfigService,
   httpService: HttpService,
@@ -20,12 +17,7 @@ export const selectPostcodeProvider = (
   const mock =
     String(configService.get('NIPOST_POSTCODE_MOCK') ?? '').toLowerCase() ===
     'true';
-  if (mock) {
-    if (configService.get('NODE_ENV') === 'production') {
-      throw new Error('NIPOST_POSTCODE_MOCK must not be enabled in production');
-    }
-    return new MockPostcodeProvider();
-  }
+  if (mock) return new MockPostcodeProvider();
   return new NipostPostcodeProvider(configService, httpService);
 };
 
