@@ -130,6 +130,10 @@ export class UserEntity {
   @Column({ nullable: true })
   city: string;
 
+  /** NIPOST digital postcode, saved after a verified delivery address. */
+  @Column({ type: 'varchar', length: 11, nullable: true })
+  postcode: string | null;
+
   @Column({ nullable: true })
   gender: string;
 

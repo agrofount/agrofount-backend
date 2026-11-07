@@ -110,13 +110,18 @@ export class AuthService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  private normalizeEmailIdentifier(identifier: string): string {
+    const trimmed = identifier.trim();
+    return trimmed.includes('@') ? trimmed.toLowerCase() : trimmed;
+  }
+
   async validateUser(
     identifier: string,
     passwd: string,
   ): Promise<Partial<UserEntity> | null> {
     const user = await this.userRepository.findOne({
       where: [
-        { email: identifier }, // Check if identifier matches email
+        { email: this.normalizeEmailIdentifier(identifier) }, // Emails are stored lowercase
         { phone: identifier }, // Check if identifier matches phone
       ],
     });
@@ -513,7 +518,7 @@ export class AuthService {
     const isEmail = identifier.includes('@');
     const user = await this.userRepository.findOne({
       where: [
-        { email: identifier }, // Check if identifier matches email
+        { email: this.normalizeEmailIdentifier(identifier) }, // Emails are stored lowercase
         { phone: identifier }, // Check if identifier matches phone
       ],
     });

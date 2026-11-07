@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -7,6 +8,7 @@ import {
 import {
   CreateProductLocationDto,
   CreateProductLocationNotificationDto,
+  DispatchLocationDto,
 } from './dto/create-product-location.dto';
 import { UpdateProductLocationDto } from './dto/update-product-location.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -29,6 +31,7 @@ import { SEOEntity } from './entities/product-location-seo';
 import { Cron } from '@nestjs/schedule';
 import { AnimalCategory } from '../product/types/product.enum';
 import { InventoryService } from '../inventory/inventory.service';
+import { PostcodeService } from '../postcode/postcode.service';
 
 @Injectable()
 export class ProductLocationService {
@@ -55,6 +58,7 @@ export class ProductLocationService {
     private readonly stateService: StateService,
     private readonly notificationService: NotificationService,
     private readonly inventoryService: InventoryService,
+    private readonly postcodeService: PostcodeService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -103,7 +107,8 @@ export class ProductLocationService {
   }
 
   async create(dto: CreateProductLocationDto) {
-    const { productId, stateId, countryId, price, uom, createdById } = dto;
+    const { productId, stateId, countryId, price, uom, createdById, dispatch } =
+      dto;
 
     const product = await this.productService.findOne(productId);
     const country = await this.countryService.findOne(countryId);
@@ -117,6 +122,7 @@ export class ProductLocationService {
       state,
       createdById,
     });
+    await this.applyDispatch(productLocation, dispatch);
 
     return this.dataSource.transaction(async (manager) => {
       const saved = await manager
@@ -264,15 +270,61 @@ export class ProductLocationService {
   }
 
   async update(slug: string, dto: UpdateProductLocationDto) {
-    const { stateId } = dto;
+    const { stateId, dispatch, ...rest } = dto;
 
     const productLocation = await this.findOne(slug);
 
     const state = await this.stateService.findOne(stateId);
 
-    Object.assign(productLocation, { ...dto, state });
+    Object.assign(productLocation, { ...rest, state });
+    await this.applyDispatch(productLocation, dispatch);
 
     return this.productLocationRepo.save(productLocation);
+  }
+
+  /**
+   * Sets or clears the dispatch centre. The postcode is checked with NIPOST
+   * once, here, and the result is stored, so product page views never call
+   * NIPOST. undefined leaves it alone, null clears it.
+   */
+  private async applyDispatch(
+    target: ProductLocationEntity,
+    dispatch: DispatchLocationDto | null | undefined,
+  ) {
+    if (dispatch === undefined) return;
+    if (dispatch === null) {
+      Object.assign(target, {
+        dispatchName: null,
+        dispatchAddress: null,
+        dispatchPostcode: null,
+        dispatchPostcodeVerified: false,
+        dispatchLga: null,
+        dispatchLatitude: null,
+        dispatchLongitude: null,
+      });
+      return;
+    }
+    const postcode = this.postcodeService.normalize(dispatch.postcode);
+    const resolved = await this.postcodeService.resolve({ postcode });
+    if (resolved.status === 'not_found') {
+      throw new BadRequestException(
+        `Postcode ${postcode} was not found by NIPOST`,
+      );
+    }
+    const record =
+      resolved.status === 'verified' || resolved.status === 'mismatch'
+        ? resolved.record
+        : undefined;
+    Object.assign(target, {
+      dispatchName: dispatch.name.trim(),
+      dispatchAddress: dispatch.address?.trim() || record?.street || null,
+      dispatchPostcode: postcode,
+      // An outage stores the code unverified rather than blocking the save.
+      dispatchPostcodeVerified: resolved.status === 'verified',
+      dispatchLga: record?.lga ?? null,
+      dispatchLatitude: dispatch.latitude ?? record?.latitude ?? null,
+      dispatchLongitude: dispatch.longitude ?? record?.longitude ?? null,
+    });
   }
 
   async remove(slug: string) {

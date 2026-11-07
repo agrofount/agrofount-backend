@@ -4,6 +4,9 @@ import {
   IsDateString,
   IsEmail,
   IsInt,
+  IsLatitude,
+  IsLongitude,
+  MaxLength,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -67,6 +70,41 @@ export class UomDto {
   stockQuantity?: number;
 }
 
+export class DispatchLocationDto {
+  @ApiProperty({ example: 'Agrited Broilers - Dispatch Centre' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name: string;
+
+  @ApiPropertyOptional({ description: 'Street or area line' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  address?: string;
+
+  @ApiProperty({
+    description: 'NIPOST digital postcode, with or without dashes',
+    example: 'OG-01-A03-FK-01',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  postcode: string;
+
+  @ApiPropertyOptional({
+    description: 'Map pin. Defaults to the postcode record when it has one',
+  })
+  @IsOptional()
+  @IsLatitude()
+  latitude?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsLongitude()
+  longitude?: number;
+}
+
 export class CreateProductLocationDto {
   @ApiProperty({
     description: 'country id',
@@ -114,6 +152,16 @@ export class CreateProductLocationDto {
   @IsOptional()
   @IsDateString({}, { each: true })
   availableDates: string[];
+
+  @ApiPropertyOptional({
+    type: DispatchLocationDto,
+    nullable: true,
+    description: 'Dispatch centre. Send null on update to clear it',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DispatchLocationDto)
+  dispatch?: DispatchLocationDto | null;
 
   createdById: string;
 }

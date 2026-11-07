@@ -246,7 +246,14 @@ export class UserService {
 
   async findByEmailOrPhone(emailOrPhone: string): Promise<UserEntity> {
     return this.userRepo.findOne({
-      where: [{ email: emailOrPhone }, { phone: emailOrPhone }],
+      where: [
+        {
+          email: emailOrPhone.includes('@')
+            ? emailOrPhone.trim().toLowerCase()
+            : emailOrPhone,
+        },
+        { phone: emailOrPhone },
+      ],
     });
   }
 
