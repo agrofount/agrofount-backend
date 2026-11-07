@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { ProductModule } from './product/product.module';
 import { OrderModule } from './order/order.module';
+import { PostcodeModule } from './postcode/postcode.module';
 import { PaymentModule } from './payment/payment.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -103,6 +104,7 @@ import { ComplaintsModule } from './complaints/complaints.module';
     UserModule,
     ProductModule,
     OrderModule,
+    PostcodeModule,
     PaymentModule,
     SendInBlueModule,
     CartModule,

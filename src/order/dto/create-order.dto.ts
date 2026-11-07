@@ -75,6 +75,16 @@ class AddressDto {
   @IsString()
   @IsNotEmpty()
   country: string;
+
+  @ApiPropertyOptional({
+    description:
+      'NIPOST digital postcode (11 characters). When valid it is used to verify state and city for delivery pricing.',
+    example: 'FC02A09DB09',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  postcode?: string;
 }
 
 export class CreateOrderDto {

@@ -4,6 +4,8 @@ import { OrderController } from './order.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OrderEntity } from './entities/order.entity';
 import { PaymentEntity } from '../payment/entities/payment.entity';
+import { ComplaintsModule } from '../complaints/complaints.module';
+import { PostcodeModule } from '../postcode/postcode.module';
 import { PaymentModule } from '../payment/payment.module';
 import { VoucherModule } from '../voucher/voucher.module';
 import { ProductLocationModule } from '../product-location/product-location.module';
@@ -16,6 +18,8 @@ import { LogisticsPricingModule } from '../logistics-pricing/logistics-pricing.m
   imports: [
     TypeOrmModule.forFeature([OrderEntity, PaymentEntity]),
     PaymentModule,
+    PostcodeModule,
+    ComplaintsModule,
     VoucherModule,
     ProductLocationModule,
     InventoryModule,

@@ -28,6 +28,12 @@ export interface addressInterface {
   landmark: string;
   country: string;
   pickupLocation: string;
+  postcode?: string;
+  postcodeVerified?: boolean;
+  postcodeMismatch?: string[];
+  lga?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface orderItemInterface {

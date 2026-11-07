@@ -16,6 +16,7 @@ import {
 import { OrderService } from './order.service';
 import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
+import { AdminCancelOrderDto } from './dto/admin-cancel-order.dto';
 import { ApiBearerAuth, ApiBody, ApiOperation } from '@nestjs/swagger';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { UserEntity } from '../user/entities/user.entity';
@@ -164,11 +165,15 @@ export class OrderController {
   @Patch('admin/:id/cancel')
   @UseGuards(AdminAuthGuard, RolesGuard, StepUpGuard)
   @RequiredPermissions('cancel_orders')
+  @ApiOperation({
+    summary: 'Admin cancel a pending or confirmed order (refunds if paid)',
+  })
   cancelOrderForAdmin(
     @Param('id') id: string,
+    @Body() dto: AdminCancelOrderDto,
     @CurrentUser() admin: AdminEntity,
   ) {
-    return this.orderService.cancelOrder(id, admin);
+    return this.orderService.adminCancelOrder(id, admin, dto);
   }
 
   @Patch(':id/items/:itemId')

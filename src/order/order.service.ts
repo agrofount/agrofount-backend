@@ -10,6 +10,7 @@ import {
 import { Cache, CACHE_MANAGER } from '@nestjs/cache-manager';
 import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
+import { AdminCancelOrderDto } from './dto/admin-cancel-order.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { OrderEntity } from './entities/order.entity';
 import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
@@ -43,6 +44,8 @@ import { InventoryService } from '../inventory/inventory.service';
 import { CartService } from '../cart/cart.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { ConfigService } from '@nestjs/config';
+import { ComplaintsService } from '../complaints/complaints.service';
+import { PostcodeService } from '../postcode/postcode.service';
 import { LogisticsPricingService } from '../logistics-pricing/logistics-pricing.service';
 
 export type BankAccount = {
@@ -67,6 +70,8 @@ export class OrderService {
     private readonly outboxService: OutboxService,
     private readonly configService: ConfigService,
     private readonly logisticsPricingService: LogisticsPricingService,
+    private readonly postcodeService: PostcodeService,
+    private readonly complaintsService: ComplaintsService,
   ) {}
 
   private getBankAccounts(): BankAccount[] {
@@ -84,6 +89,110 @@ export class OrderService {
     }
   }
 
+  /**
+   * Checkout address check. The customer types an address as usual and the
+   * postcode is optional. For delivery orders NIPOST finds the postcode and
+   * confirms state, LGA and area. A confirmed address gets trusted state and
+   * location data for pricing and routing. A mismatch keeps the typed address
+   * and is flagged for support. An unknown address or an outage never blocks
+   * the sale. A malformed customer-supplied postcode is a 400.
+   */
+  private async applyPostcode(
+    address: CreateOrderDto['address'] | undefined,
+    isPickup: boolean,
+  ): Promise<{
+    address: any;
+    mismatch?: { postcode: string; fields: string[] };
+  }> {
+    if (!address) return { address };
+    // Never trust client-supplied verification fields.
+    const rest: any = { ...address };
+    for (const field of [
+      'postcodeVerified',
+      'postcodeMismatch',
+      'latitude',
+      'longitude',
+      'lga',
+    ]) {
+      delete rest[field];
+    }
+    if (rest.postcode)
+      rest.postcode = this.postcodeService.normalize(rest.postcode);
+    if (isPickup) {
+      return {
+        address: rest.postcode ? { ...rest, postcodeVerified: false } : rest,
+      };
+    }
+
+    const result = await Promise.race([
+      this.postcodeService.resolve(rest),
+      new Promise<{ status: 'unavailable' }>((resolve) =>
+        setTimeout(() => resolve({ status: 'unavailable' }), 6_000).unref(),
+      ),
+    ]);
+
+    if (result.status === 'verified') {
+      const { record, stateId, postcode } = result;
+      return {
+        address: {
+          ...rest,
+          postcode,
+          postcodeVerified: true,
+          state: record.state || rest.state,
+          stateId,
+          lga: record.lga,
+          latitude: record.latitude,
+          longitude: record.longitude,
+        },
+      };
+    }
+    if (result.status === 'mismatch') {
+      return {
+        address: {
+          ...rest,
+          postcode: result.postcode,
+          postcodeVerified: false,
+          postcodeMismatch: result.mismatches,
+        },
+        mismatch: { postcode: result.postcode, fields: result.mismatches },
+      };
+    }
+    return { address: { ...rest, postcodeVerified: false } };
+  }
+
+  /** After the order exists: save the postcode on the profile, or flag a mismatch to support. */
+  private async recordPostcodeOutcome(
+    user: UserEntity,
+    order: OrderEntity,
+    mismatch?: { postcode: string; fields: string[] },
+  ): Promise<void> {
+    try {
+      const address = order.address as any;
+      if (address?.postcodeVerified && address.postcode) {
+        await this.dataSource
+          .getRepository(UserEntity)
+          .update(user.id, { postcode: address.postcode });
+      }
+      if (mismatch) {
+        await this.complaintsService.create(user, {
+          subject: 'Delivery address and postcode mismatch',
+          description: `Order ${order.code}: the typed ${mismatch.fields.join(
+            ' and ',
+          )} does not match postcode ${
+            mismatch.postcode
+          }. Please confirm the delivery location with the customer before dispatch.`,
+          orderId: order.id,
+        });
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Postcode follow-up failed for order ${order.id}: ${
+          error?.message || error
+        }`,
+      );
+    }
+  }
+
   generateOrderCode() {
     return `ORD-${randomUUID()}`;
   }
@@ -92,7 +201,7 @@ export class OrderService {
     try {
       const {
         paymentMethod,
-        address,
+        address: rawAddress,
         paymentChannel = PaymentChannel.Paystack,
         isPickup,
         voucherCode,
@@ -114,6 +223,11 @@ export class OrderService {
       if (!Object.values(PaymentMethod).includes(paymentMethod)) {
         throw new BadRequestException('Invalid payment method');
       }
+
+      const { address, mismatch } = await this.applyPostcode(
+        rawAddress,
+        isPickup,
+      );
 
       const cartData = await this.cartService.getCartData(user.id);
 
@@ -240,6 +354,7 @@ export class OrderService {
           );
         }
         await this.outboxService.dispatch(orderCreatedEventId);
+        await this.recordPostcodeOutcome(user, createdOrder, mismatch);
       }
 
       if (paymentMethod != PaymentMethod.PayLater) {
@@ -681,6 +796,88 @@ export class OrderService {
       await this.inventoryService.releaseOrder(order.id, manager);
       return repo.save(order);
     });
+  }
+
+  /**
+   * Admin cancellation for pending or confirmed orders, paid or not.
+   * Unpaid orders are cancelled immediately. Paid orders start a full refund
+   * (wallet refunds settle at once; Paystack refunds cancel the order when the
+   * refund webhook confirms). Offline methods are cancelled and flagged for a
+   * manual refund.
+   */
+  async adminCancelOrder(
+    id: string,
+    admin: AdminEntity,
+    dto: AdminCancelOrderDto,
+  ) {
+    const existing = await this.orderRepository.findOne({ where: { id } });
+    if (!existing) throw new NotFoundException(`Order with ID ${id} not found`);
+    if (existing.status === OrderStatus.Cancelled) {
+      throw new ConflictException('Order is already cancelled');
+    }
+    this.assertOrderTransition(existing.status, OrderStatus.Cancelled);
+
+    const payment = await this.paymentService.findByOrderId(id);
+    const isPaid =
+      [PaymentStatus.Completed, PaymentStatus.RefundPending].includes(
+        existing.paymentStatus,
+      ) ||
+      (payment &&
+        [PaymentStatus.Completed, PaymentStatus.RefundPending].includes(
+          payment.paymentStatus,
+        ));
+
+    if (isPaid && payment) {
+      const onlineRefund = [
+        PaymentMethod.PayNow,
+        PaymentMethod.Wallet,
+      ].includes(payment.paymentMethod);
+      if (onlineRefund) {
+        const refund = await this.paymentService.createRefund(
+          payment.id,
+          { idempotencyKey: dto.idempotencyKey, reason: dto.reason },
+          admin.id,
+        );
+        const order = await this.orderRepository.findOne({ where: { id } });
+        this.logger.log(
+          `Admin ${admin.id} cancelled paid order ${id} via refund ${refund.id}: ${dto.reason}`,
+        );
+        return { order, refund, requiresManualRefund: false };
+      }
+    }
+
+    const order = await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(OrderEntity);
+      const locked = await repo.findOne({
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) throw new NotFoundException(`Order with ID ${id} not found`);
+      this.assertOrderTransition(locked.status, OrderStatus.Cancelled);
+      if (locked.status === OrderStatus.Cancelled) {
+        throw new ConflictException('Order is already cancelled');
+      }
+      // Held reservations are released; committed ones are restocked.
+      await this.inventoryService.releaseOrder(locked.id, manager);
+      await this.inventoryService.restockOrder(locked.id, manager);
+      locked.status = OrderStatus.Cancelled;
+      if (!isPaid) {
+        locked.paymentStatus = PaymentStatus.Cancelled;
+        await manager
+          .getRepository(PaymentEntity)
+          .update(
+            { orderId: id, paymentStatus: PaymentStatus.Pending },
+            { paymentStatus: PaymentStatus.Cancelled },
+          );
+      }
+      return repo.save(locked);
+    });
+    this.logger.log(
+      `Admin ${admin.id} cancelled order ${id} (paid=${!!isPaid}): ${
+        dto.reason
+      }`,
+    );
+    return { order, refund: null, requiresManualRefund: !!isPaid };
   }
 
   async calculateOrderSummary(
