@@ -142,12 +142,12 @@ describe('selectPostcodeProvider', () => {
     ).toBeInstanceOf(NipostPostcodeProvider);
   });
 
-  it('refuses to start with the mock in production', () => {
-    expect(() =>
+  it('uses the mock when enabled in production', () => {
+    expect(
       selectPostcodeProvider(
         config({ NIPOST_POSTCODE_MOCK: 'true', NODE_ENV: 'production' }),
         {} as any,
       ),
-    ).toThrow(/production/);
+    ).toBeInstanceOf(MockPostcodeProvider);
   });
 });

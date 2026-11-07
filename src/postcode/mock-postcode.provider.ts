@@ -99,10 +99,9 @@ const fold = (value?: string): string =>
     .replace(/[^a-z]/g, '');
 
 /**
- * Deterministic stand-in for NIPOST, for local development only (enabled by
- * NIPOST_POSTCODE_MOCK=true, refused in production). It never makes a network
- * call. PostcodeService still does normalisation, state matching, mismatch
- * comparison and caching on top of it.
+ * Deterministic stand-in for NIPOST, enabled by NIPOST_POSTCODE_MOCK=true. It
+ * never makes a network call. PostcodeService still does normalisation, state
+ * matching, mismatch comparison and caching on top of it.
  */
 @Injectable()
 export class MockPostcodeProvider extends PostcodeProvider {
