@@ -133,7 +133,7 @@ export class AdminsService {
         dto;
 
       const userExist = await this.adminRepo.findOne({
-        where: { email: email },
+        where: { email: email.trim().toLowerCase() },
       });
 
       if (userExist) {
@@ -232,7 +232,9 @@ export class AdminsService {
     email: string,
     passwd: string,
   ): Promise<Partial<AdminEntity> | null> {
-    const user = await this.adminRepo.findOneBy({ email });
+    const user = await this.adminRepo.findOneBy({
+      email: email?.trim().toLowerCase(),
+    });
 
     const fallbackHash =
       '$2a$12$JqSH7uOEpRsz4l9XfX.6Oel3lUo.BSgMQC3AvOSMEyeM9FjKQFnj2';
