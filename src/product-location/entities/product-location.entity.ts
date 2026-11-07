@@ -145,10 +145,9 @@ export class ProductLocationEntity {
   /** Customer-visible dispatch centre, or null when none is set. */
   @Expose()
   get location() {
-    // WARNING: with NIPOST_POSTCODE_MOCK=true (never in production) this
-    // OVERRIDES every real dispatch location with a sample one, even rows that
-    // have stored data. Response mapping only: the stored columns are untouched
-    // and nothing is written. Never enable it in a shared or staging environment.
+    // With NIPOST_POSTCODE_MOCK=true this overrides every real dispatch
+    // location in API responses, even rows that have stored data. This is only
+    // response mapping: the stored columns are untouched and nothing is written.
     if (isPostcodeMockEnabled()) return mockSourcingLocation();
     if (!this.dispatchPostcode || !this.dispatchName) return null;
     return {

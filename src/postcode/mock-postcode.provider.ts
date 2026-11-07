@@ -59,12 +59,11 @@ const OYO: PostcodeRecord = {
   longitude: 3.868,
 };
 
-/** True only for local development with the mock provider switched on. */
+/** True when the mock provider is explicitly switched on. */
 export const isPostcodeMockEnabled = (): boolean =>
-  String(process.env.NIPOST_POSTCODE_MOCK ?? '').toLowerCase() === 'true' &&
-  process.env.NODE_ENV !== 'production';
+  String(process.env.NIPOST_POSTCODE_MOCK ?? '').toLowerCase() === 'true';
 
-/** Sample dispatch centre for product pages in dev. Never stored. */
+/** Sample dispatch centre for product pages when mock mode is enabled. */
 export const mockSourcingLocation = () => ({
   name: 'Oluyole Dispatch Centre',
   address: OYO.street,
