@@ -842,7 +842,8 @@ export class OrderService {
         this.logger.log(
           `Admin ${admin.id} cancelled paid order ${id} via refund ${refund.id}: ${dto.reason}`,
         );
-        return { order, refund, requiresManualRefund: false };
+        // Order fields stay at the top level so existing clients keep working.
+        return { ...order, refund, requiresManualRefund: false };
       }
     }
 
@@ -877,7 +878,7 @@ export class OrderService {
         dto.reason
       }`,
     );
-    return { order, refund: null, requiresManualRefund: !!isPaid };
+    return { ...order, refund: null, requiresManualRefund: !!isPaid };
   }
 
   async calculateOrderSummary(
