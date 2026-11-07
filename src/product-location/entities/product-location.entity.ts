@@ -145,10 +145,12 @@ export class ProductLocationEntity {
   /** Customer-visible dispatch centre, or null when none is set. */
   @Expose()
   get location() {
-    if (!this.dispatchPostcode || !this.dispatchName) {
-      // Dev only, response mapping only: nothing is written to the database.
-      return isPostcodeMockEnabled() ? mockSourcingLocation() : null;
-    }
+    // WARNING: with NIPOST_POSTCODE_MOCK=true (never in production) this
+    // OVERRIDES every real dispatch location with a sample one, even rows that
+    // have stored data. Response mapping only: the stored columns are untouched
+    // and nothing is written. Never enable it in a shared or staging environment.
+    if (isPostcodeMockEnabled()) return mockSourcingLocation();
+    if (!this.dispatchPostcode || !this.dispatchName) return null;
     return {
       name: this.dispatchName,
       address: this.dispatchAddress ?? undefined,

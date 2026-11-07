@@ -276,12 +276,28 @@ describe('ProductLocationEntity mock location', () => {
     expect(entity.location).toBeNull();
   });
 
-  it('lets stored dispatch data win over the sample', () => {
+  it('overrides stored dispatch data when the mock is on', () => {
     process.env.NIPOST_POSTCODE_MOCK = 'true';
     process.env.NODE_ENV = 'development';
     const entity = new ProductLocationEntity();
     entity.dispatchName = 'Real Centre';
     entity.dispatchPostcode = 'OG01A03FK01';
+    expect(entity.location?.name).toBe('Oluyole Dispatch Centre');
+    expect(entity.location?.postcode).toBe('OY03A05OL01');
+    // The stored columns are left alone.
+    expect(entity.dispatchName).toBe('Real Centre');
+    expect(entity.dispatchPostcode).toBe('OG01A03FK01');
+  });
+
+  it('returns stored dispatch data when the mock is off or in production', () => {
+    const entity = new ProductLocationEntity();
+    entity.dispatchName = 'Real Centre';
+    entity.dispatchPostcode = 'OG01A03FK01';
+    process.env.NIPOST_POSTCODE_MOCK = 'false';
+    process.env.NODE_ENV = 'development';
+    expect(entity.location?.name).toBe('Real Centre');
+    process.env.NIPOST_POSTCODE_MOCK = 'true';
+    process.env.NODE_ENV = 'production';
     expect(entity.location?.name).toBe('Real Centre');
   });
 });
