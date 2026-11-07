@@ -5,7 +5,7 @@ describe('CronMonitorService', () => {
   function setup(configOverrides: Record<string, string> = {}) {
     const runs: any[] = [];
     const configs: any[] = [];
-    const runRepo = {
+    const runRepo: any = {
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => {
         const saved = { id: 'run-1', ...value };
@@ -24,6 +24,16 @@ describe('CronMonitorService', () => {
       values: jest.fn().mockReturnThis(),
       orIgnore: jest.fn().mockReturnThis(),
       execute: jest.fn().mockResolvedValue(undefined),
+    };
+    const transactionManager = {
+      update: jest.fn().mockResolvedValue(undefined),
+      createQueryBuilder: jest.fn(() => queryBuilder),
+    };
+    runRepo.manager = {
+      transaction: jest.fn(
+        async (callback: (manager: typeof transactionManager) => unknown) =>
+          callback(transactionManager),
+      ),
     };
     const configRepo = {
       create: jest.fn((value) => value),
@@ -47,7 +57,14 @@ describe('CronMonitorService', () => {
       configService as any,
     );
 
-    return { service, notificationService, runRepo, queryBuilder, configRepo };
+    return {
+      service,
+      notificationService,
+      runRepo,
+      queryBuilder,
+      configRepo,
+      transactionManager,
+    };
   }
 
   const baseRun = {
