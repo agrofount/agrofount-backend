@@ -1706,6 +1706,11 @@ describe('Order (e2e)', () => {
   });
 
   describe('PATCH /order/admin/:id/cancel', () => {
+    const cancelBody = () => ({
+      idempotencyKey: randomUUID(),
+      reason: 'Cancelled by an admin in a test',
+    });
+
     it('lets an admin cancel any unpaid order and releases stock', async () => {
       const admin = await createAdmin(t.app);
       const user = await createUser(t.app);
@@ -1715,6 +1720,7 @@ describe('Order (e2e)', () => {
       const res = await request(http())
         .patch(`/order/admin/${id}/cancel`)
         .set(admin.auth)
+        .send(cancelBody())
         .expect(200);
       expect(res.body).toMatchObject({
         status: 'cancelled',
@@ -1731,18 +1737,40 @@ describe('Order (e2e)', () => {
       await request(http())
         .patch(`/order/admin/${order.id}/cancel`)
         .set(admin.auth)
+        .send(cancelBody())
         .expect(200);
     });
 
-    it('requires a refund for paid orders', async () => {
+    it('cancels a paid order and flags it for a manual refund when there is no online payment', async () => {
       const admin = await createAdmin(t.app);
       const { order } = await customerWithOrder({
         paymentStatus: PaymentStatus.Completed,
       });
+      const res = await request(http())
+        .patch(`/order/admin/${order.id}/cancel`)
+        .set(admin.auth)
+        .send(cancelBody())
+        .expect(200);
+      expect(res.body).toMatchObject({
+        status: 'cancelled',
+        paymentStatus: 'completed',
+        requiresManualRefund: true,
+      });
+    });
+
+    it('requires an idempotency key and a reason', async () => {
+      const admin = await createAdmin(t.app);
+      const { order } = await customerWithOrder();
       await request(http())
         .patch(`/order/admin/${order.id}/cancel`)
         .set(admin.auth)
-        .expect(409);
+        .send({})
+        .expect(400);
+      await request(http())
+        .patch(`/order/admin/${order.id}/cancel`)
+        .set(admin.auth)
+        .send({ idempotencyKey: randomUUID(), reason: 'x' })
+        .expect(400);
     });
 
     it('refuses an invalid transition', async () => {
@@ -1753,6 +1781,7 @@ describe('Order (e2e)', () => {
       await request(http())
         .patch(`/order/admin/${order.id}/cancel`)
         .set(admin.auth)
+        .send(cancelBody())
         .expect(409);
     });
 
@@ -1761,6 +1790,7 @@ describe('Order (e2e)', () => {
       await request(http())
         .patch(`/order/admin/${randomUUID()}/cancel`)
         .set(admin.auth)
+        .send(cancelBody())
         .expect(404);
     });
   });

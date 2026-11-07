@@ -173,11 +173,9 @@ describe('Auth sessions (e2e)', () => {
         .expect(401);
     });
 
-    // BUG: registration stores the email lower-cased but login compares the raw
-    // identifier, so "Farmer@Mail.com" cannot sign in to the account created
-    // as "farmer@mail.com". src/auth/auth.service.ts validateUser (findOne by
-    // { email: identifier }).
-    it.failing('matches the email regardless of letter case', async () => {
+    // Registration stores the email lower-cased, so login lower-cases the
+    // identifier too (src/auth/auth.service.ts validateUser).
+    it('matches the email regardless of letter case', async () => {
       const email = uniqueEmail('casing');
       const user = await createUser(t.app, { email } as any);
       await api(t)
