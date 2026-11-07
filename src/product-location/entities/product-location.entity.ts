@@ -18,6 +18,11 @@ import { CountryEntity } from '../../country/entities/country.entity';
 import { StateEntity } from '../../state/entities/state.entity';
 import { ProductEntity } from '../../product/entities/product.entity';
 import { PriceHistoryEntity } from './product-location-price-history';
+import { Exclude, Expose } from 'class-transformer';
+import {
+  isPostcodeMockEnabled,
+  mockSourcingLocation,
+} from '../../postcode/mock-postcode.provider';
 import slugify from 'slugify';
 import { SEOEntity } from './product-location-seo';
 
@@ -106,6 +111,56 @@ export class ProductLocationEntity {
 
   @Column({ type: 'integer', default: 0 })
   likesCount: number;
+
+  // Dispatch centre, identified by its NIPOST postcode. Exposed to clients
+  // only through the `location` getter below.
+  @Exclude()
+  @Column({ type: 'varchar', nullable: true })
+  dispatchName: string | null;
+
+  @Exclude()
+  @Column({ type: 'varchar', nullable: true })
+  dispatchAddress: string | null;
+
+  @Exclude()
+  @Column({ type: 'varchar', length: 11, nullable: true })
+  dispatchPostcode: string | null;
+
+  @Exclude()
+  @Column({ type: 'boolean', default: false })
+  dispatchPostcodeVerified: boolean;
+
+  @Exclude()
+  @Column({ type: 'varchar', nullable: true })
+  dispatchLga: string | null;
+
+  @Exclude()
+  @Column({ type: 'double precision', nullable: true })
+  dispatchLatitude: number | null;
+
+  @Exclude()
+  @Column({ type: 'double precision', nullable: true })
+  dispatchLongitude: number | null;
+
+  /** Customer-visible dispatch centre, or null when none is set. */
+  @Expose()
+  get location() {
+    if (!this.dispatchPostcode || !this.dispatchName) {
+      // Dev only, response mapping only: nothing is written to the database.
+      return isPostcodeMockEnabled() ? mockSourcingLocation() : null;
+    }
+    return {
+      name: this.dispatchName,
+      address: this.dispatchAddress ?? undefined,
+      postcode: this.dispatchPostcode,
+      postcodeVerified: !!this.dispatchPostcodeVerified,
+      latitude: this.dispatchLatitude ?? undefined,
+      longitude: this.dispatchLongitude ?? undefined,
+      state: this.state?.name,
+      lga: this.dispatchLga ?? undefined,
+      country: this.country?.name,
+    };
+  }
 
   @Column()
   createdById: string;

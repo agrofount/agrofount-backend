@@ -14,6 +14,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { SellerInterestEntity } from './entities/seller-interest.entity';
 import { SellerInterestService } from './seller-interest.service';
 import { UploadModule } from '../upload/upload.module';
+import { PostcodeModule } from '../postcode/postcode.module';
 import { OutboxModule } from '../outbox/outbox.module';
 
 @Module({
@@ -32,6 +33,7 @@ import { OutboxModule } from '../outbox/outbox.module';
     InventoryModule,
     UploadModule,
     OutboxModule,
+    PostcodeModule,
   ],
   controllers: [ProductLocationController],
   providers: [ProductLocationService, SellerInterestService],
