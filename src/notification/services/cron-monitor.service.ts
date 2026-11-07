@@ -83,33 +83,37 @@ export class CronMonitorService implements OnModuleInit {
     const succeeded = !result.error;
     const errorMessage = result.error ? result.error.slice(0, 1000) : null;
 
-    await this.runRepo.update(run.id, {
-      status: succeeded ? 'success' : 'failed',
-      finishedAt,
-      durationMs,
-      sentCount: result.sent,
-      totalCount: result.total,
-      errorMessage,
-    });
+    // Publish the run as finished in the same transaction as its aggregate
+    // counters. Readers must never observe a completed run with stale totals.
+    await this.runRepo.manager.transaction(async (manager) => {
+      await manager.update(CronJobRunEntity, run.id, {
+        status: succeeded ? 'success' : 'failed',
+        finishedAt,
+        durationMs,
+        sentCount: result.sent,
+        totalCount: result.total,
+        errorMessage,
+      });
 
-    await this.configRepo
-      .createQueryBuilder()
-      .update()
-      .set({
-        lastRunAt: finishedAt,
-        lastRunStatus: succeeded ? 'success' : 'failed',
-        lastRunDurationMs: durationMs,
-        lastRunError: errorMessage,
-        totalRuns: () => '"totalRuns" + 1',
-        totalSuccesses: succeeded
-          ? () => '"totalSuccesses" + 1'
-          : () => '"totalSuccesses"',
-        totalFailures: !succeeded
-          ? () => '"totalFailures" + 1'
-          : () => '"totalFailures"',
-      })
-      .where('"jobName" = :jobName', { jobName: run.jobName })
-      .execute();
+      await manager
+        .createQueryBuilder()
+        .update(CronJobConfigEntity)
+        .set({
+          lastRunAt: finishedAt,
+          lastRunStatus: succeeded ? 'success' : 'failed',
+          lastRunDurationMs: durationMs,
+          lastRunError: errorMessage,
+          totalRuns: () => '"totalRuns" + 1',
+          totalSuccesses: succeeded
+            ? () => '"totalSuccesses" + 1'
+            : () => '"totalSuccesses"',
+          totalFailures: !succeeded
+            ? () => '"totalFailures" + 1'
+            : () => '"totalFailures"',
+        })
+        .where('"jobName" = :jobName', { jobName: run.jobName })
+        .execute();
+    });
 
     if (result.sent > 0 || result.error) {
       await this.notifyOpsOfRunStats(run.jobName, result);
