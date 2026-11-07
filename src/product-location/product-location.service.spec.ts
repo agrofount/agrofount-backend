@@ -257,7 +257,7 @@ describe('ProductLocationEntity mock location', () => {
     process.env = { ...env };
   });
 
-  it('returns the sample Oluyole centre in dev mock mode only', () => {
+  it('returns the sample Oluyole centre whenever mock mode is enabled', () => {
     const entity = new ProductLocationEntity();
     process.env.NIPOST_POSTCODE_MOCK = 'true';
     process.env.NODE_ENV = 'development';
@@ -273,12 +273,15 @@ describe('ProductLocationEntity mock location', () => {
     expect(entity.location).toBeNull();
     process.env.NIPOST_POSTCODE_MOCK = 'true';
     process.env.NODE_ENV = 'production';
-    expect(entity.location).toBeNull();
+    expect(entity.location).toMatchObject({
+      name: 'Oluyole Dispatch Centre',
+      postcode: 'OY03A05OL01',
+    });
   });
 
-  it('overrides stored dispatch data when the mock is on', () => {
+  it('overrides stored dispatch data when the mock is on, including production', () => {
     process.env.NIPOST_POSTCODE_MOCK = 'true';
-    process.env.NODE_ENV = 'development';
+    process.env.NODE_ENV = 'production';
     const entity = new ProductLocationEntity();
     entity.dispatchName = 'Real Centre';
     entity.dispatchPostcode = 'OG01A03FK01';
@@ -289,14 +292,11 @@ describe('ProductLocationEntity mock location', () => {
     expect(entity.dispatchPostcode).toBe('OG01A03FK01');
   });
 
-  it('returns stored dispatch data when the mock is off or in production', () => {
+  it('returns stored dispatch data when the mock is off', () => {
     const entity = new ProductLocationEntity();
     entity.dispatchName = 'Real Centre';
     entity.dispatchPostcode = 'OG01A03FK01';
     process.env.NIPOST_POSTCODE_MOCK = 'false';
-    process.env.NODE_ENV = 'development';
-    expect(entity.location?.name).toBe('Real Centre');
-    process.env.NIPOST_POSTCODE_MOCK = 'true';
     process.env.NODE_ENV = 'production';
     expect(entity.location?.name).toBe('Real Centre');
   });
