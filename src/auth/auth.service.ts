@@ -631,10 +631,7 @@ export class AuthService {
       // The challenge stores a normalized phone, while older user records may
       // retain spaces or punctuation. Compare normalized values so formatting
       // differences don't invalidate a correct OTP; still reject changed phones.
-      if (
-        !user?.phone ||
-        this.normalizePhone(user.phone) !== challenge.phone
-      ) {
+      if (!user?.phone || this.normalizePhone(user.phone) !== challenge.phone) {
         throw new NotFoundException('Invalid or expired reset token');
       }
     } else {
