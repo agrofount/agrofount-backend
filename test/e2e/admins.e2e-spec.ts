@@ -112,7 +112,6 @@ describe('AdminsController (e2e)', () => {
   describe('access control', () => {
     const matrix: [string, (id: string) => string, () => Principal][] = [
       ['POST', () => '/admin/register', () => creator],
-      ['GET', () => '/admin/profile', () => reader],
       ['GET', () => '/admin', () => reader],
       ['GET', (id) => `/admin/${id}`, () => reader],
       ['PUT', (id) => `/admin/${id}`, () => updater],
@@ -424,16 +423,36 @@ describe('AdminsController (e2e)', () => {
       expectNoSecrets(res.body);
     });
 
-    // BUG: getProfile() loads the admin without the `roles` relation, so the
-    // `role` field of AdminResponseDto is always undefined and the admin UI
-    // cannot show or gate on the caller's roles from this endpoint.
-    // src/admins/admins.service.ts getProfile (findOne without relations).
-    it.failing('includes the caller’s roles', async () => {
+    it('includes the caller’s roles', async () => {
       const res = await api(t)
         .get('/admin/profile')
         .set(reader.auth)
         .expect(200);
       expect(res.body.role.map((r) => r.name)).toEqual(['admins-reader']);
+    });
+
+    it('lets an admin without the admins permission read their own profile, with role permissions', async () => {
+      const res = await api(t)
+        .get('/admin/profile')
+        .set(outsider.auth)
+        .expect(200);
+      expect(res.body.id).toBe(outsider.entity.id);
+      expect(res.body.role).toHaveLength(1);
+      expect(res.body.role[0].name).toBe('admins-outsider');
+      expect(res.body.role[0].permissions).toEqual([
+        {
+          resource: 'products',
+          actions: ['read', 'create', 'update', 'delete'],
+        },
+      ]);
+      expectNoSecrets(res.body);
+    });
+
+    it('rejects anonymous callers, customers and tampered tokens', async () => {
+      await api(t).get('/admin/profile').expect(401);
+      const user = await createUser(t.app);
+      await api(t).get('/admin/profile').set(user.auth).expect(401);
+      await api(t).get('/admin/profile').set(bearer('x.y.z')).expect(401);
     });
 
     it('is not shadowed by GET /admin/:id', async () => {

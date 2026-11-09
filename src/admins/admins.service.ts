@@ -75,7 +75,10 @@ export class AdminsService {
   }
 
   async getProfile(id: string): Promise<AdminResponseDto> {
-    const user = await this.adminRepo.findOne({ where: { id } });
+    const user = await this.adminRepo.findOne({
+      where: { id },
+      relations: ['roles'],
+    });
     if (!user) {
       throw new NotFoundException(`Admin with ID ${id} not found`);
     }

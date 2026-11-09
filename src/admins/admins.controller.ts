@@ -61,11 +61,12 @@ export class AdminsController {
     };
   }
 
+  // Any signed-in admin may read their own profile: the portal builds its
+  // sidebar from the roles and permissions in it, so it cannot require one.
   @Get('profile')
-  @ApiOperation({ summary: 'Get admin data' })
-  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get the signed-in admin and their roles' })
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
   @ApiOkResponse({ type: UserResponseDto })
-  @RequiredPermissions('read_admins')
   async getProfile(@CurrentUser() user: AdminEntity) {
     return this.adminsService.getProfile(user.id);
   }
