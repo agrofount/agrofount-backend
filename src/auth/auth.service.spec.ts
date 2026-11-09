@@ -74,7 +74,7 @@ describe('AuthService security primitives', () => {
     );
 
     expect(repository.findOne).toHaveBeenCalledWith({
-      where: { id: adminId, isVerified: true },
+      where: { id: adminId, isVerified: true, isActive: true },
       lock: { mode: 'pessimistic_write' },
     });
     expect(

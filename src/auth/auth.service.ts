@@ -170,7 +170,7 @@ export class AuthService {
       }
   > {
     const current = await this.dataSource.getRepository(AdminEntity).findOne({
-      where: { id: admin.id, isVerified: true },
+      where: { id: admin.id, isVerified: true, isActive: true },
       relations: ['roles'],
     });
     if (!current) throw new UnauthorizedException('Invalid credentials');
@@ -197,7 +197,7 @@ export class AuthService {
     const admin = await this.dataSource.transaction(async (manager) => {
       const repository = manager.getRepository(AdminEntity);
       const locked = await repository.findOne({
-        where: { id: challenge.adminId, isVerified: true },
+        where: { id: challenge.adminId, isVerified: true, isActive: true },
         lock: { mode: 'pessimistic_write' },
       });
       if (!locked) throw new UnauthorizedException('Admin account unavailable');
@@ -778,7 +778,7 @@ export class AuthService {
     return this.dataSource.transaction(async (manager) => {
       const repository = manager.getRepository(AdminEntity);
       const admin = await repository.findOne({
-        where: { id: adminId, isVerified: true },
+        where: { id: adminId, isVerified: true, isActive: true },
         lock: { mode: 'pessimistic_write' },
       });
       if (!admin?.mfaEnabled || !admin.mfaSecretEncrypted) return false;
@@ -908,7 +908,7 @@ export class AuthService {
   ): Promise<UserEntity | AdminEntity | null> {
     if (principalType === AuthPrincipalType.Admin) {
       return manager.getRepository(AdminEntity).findOne({
-        where: { id: principalId, isVerified: true },
+        where: { id: principalId, isVerified: true, isActive: true },
         relations: ['roles'],
       });
     }

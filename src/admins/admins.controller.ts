@@ -8,6 +8,8 @@ import {
   UseGuards,
   Query,
   Put,
+  Patch,
+  HttpCode,
 } from '@nestjs/common';
 import { AdminsService } from './admins.service';
 import { UpdateAdminDto } from './dto/update-admin.dto';
@@ -27,6 +29,7 @@ import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 import { InviteAdminDto } from './dto/create-admin.dto';
+import { UpdateAdminStatusDto } from './dto/update-admin-status.dto';
 import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Admin')
@@ -97,6 +100,27 @@ export class AdminsController {
   ) {
     updateAdminDto.updatedBy = admin.id;
     return this.adminsService.update(id, updateAdminDto, admin);
+  }
+
+  @Patch(':id/status')
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('update_admins')
+  @ApiOperation({ summary: 'Deactivate or reactivate an admin' })
+  setStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateAdminStatusDto,
+    @CurrentUser() admin: AdminEntity,
+  ) {
+    return this.adminsService.setStatus(id, dto.isActive, admin);
+  }
+
+  // Super admin only; the service checks the role, so no permission string.
+  @Post(':id/mfa/reset')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard)
+  @ApiOperation({ summary: 'Clear an admin’s MFA so they enrol again' })
+  resetMfa(@Param('id') id: string, @CurrentUser() admin: AdminEntity) {
+    return this.adminsService.resetMfa(id, admin);
   }
 
   @Delete(':id')

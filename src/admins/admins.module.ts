@@ -7,12 +7,15 @@ import { NotificationModule } from '../notification/notification.module';
 import { PassportModule } from '@nestjs/passport';
 import { AdminStrategy } from '../auth/strategy/admin.strategy';
 import { RoleEntity } from '../role/entities/role.entity';
+import { AuthSessionEntity } from '../auth/entities/auth-session.entity';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AdminEntity, RoleEntity]),
+    TypeOrmModule.forFeature([AdminEntity, RoleEntity, AuthSessionEntity]),
     PassportModule,
     NotificationModule,
+    AuditLogModule,
   ],
   controllers: [AdminsController],
   providers: [AdminsService, AdminStrategy],

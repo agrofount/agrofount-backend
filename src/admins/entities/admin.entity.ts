@@ -54,6 +54,10 @@ export class AdminEntity {
   @Column({ default: false })
   isVerified: boolean;
 
+  /** Separate from isVerified: a deactivated admin cannot sign in or refresh. */
+  @Column({ default: true })
+  isActive: boolean;
+
   @Column({ type: 'int', default: 0 })
   tokenVersion: number;
 
