@@ -626,9 +626,15 @@ export class AuthService {
         'password-reset',
       );
       user = await this.userRepository.findOne({
-        where: { id: challenge.userId, phone: challenge.phone },
+        where: { id: challenge.userId },
       });
-      if (!user) {
+      // The challenge stores a normalized phone, while older user records may
+      // retain spaces or punctuation. Compare normalized values so formatting
+      // differences don't invalidate a correct OTP; still reject changed phones.
+      if (
+        !user?.phone ||
+        this.normalizePhone(user.phone) !== challenge.phone
+      ) {
         throw new NotFoundException('Invalid or expired reset token');
       }
     } else {
