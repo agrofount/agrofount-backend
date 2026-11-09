@@ -58,6 +58,18 @@ export class AdminResponseDto {
   profilePic: string;
 
   @ApiProperty({
+    description: 'False when the admin has been deactivated',
+    example: true,
+  })
+  isActive: boolean;
+
+  @ApiProperty({
+    description: 'Whether the admin has MFA set up',
+    example: true,
+  })
+  mfaEnabled: boolean;
+
+  @ApiProperty({
     description: 'user roles',
     example: ['admin'],
   })
@@ -85,6 +97,8 @@ export class AdminResponseDto {
     this.address = admin.address;
     this.role = admin.roles;
     this.isVerified = admin.isVerified;
+    this.isActive = admin.isActive;
+    this.mfaEnabled = admin.mfaEnabled;
     this.profilePic = admin.profilePic;
     this.createdAt = admin.createdAt;
     this.updatedAt = admin.updatedAt;

@@ -4,6 +4,7 @@ import { resetState } from './helpers/db';
 import { createAdmin, createUser, DEFAULT_PASSWORD } from './helpers/auth';
 import { AdminEntity } from '../../src/admins/entities/admin.entity';
 import { RoleEntity } from '../../src/role/entities/role.entity';
+import { AuditLogEntity } from '../../src/audit-log/audit-log.entity';
 import {
   adminWith,
   api,
@@ -716,6 +717,174 @@ describe('AdminsController (e2e)', () => {
         expect(saved.roles.map((r) => r.name)).not.toContain('full-role');
       },
     );
+  });
+
+  describe('PATCH /admin/:id/status', () => {
+    const setStatus = (id: string, p: Principal, body: any) =>
+      api(t).patch(`/admin/${id}/status`).set(p.auth).send(body);
+
+    it('deactivates an admin, ends their sessions and blocks login and refresh', async () => {
+      const target = await targetAdmin();
+      await api(t).get('/auth/profile').set(target.auth).expect(200);
+
+      const res = await setStatus(target.entity.id, updater, {
+        isActive: false,
+      }).expect(200);
+      expect(res.body).toEqual({ id: target.entity.id, isActive: false });
+
+      expect(
+        (await admins().findOneByOrFail({ id: target.entity.id })).isActive,
+      ).toBe(false);
+      await api(t).get('/auth/profile').set(target.auth).expect(401);
+      await api(t)
+        .post('/auth/refresh')
+        .send({ refreshToken: target.refreshToken })
+        .expect(401);
+      const login = await api(t)
+        .post('/auth/admin/login')
+        .send({ email: target.entity.email, password: target.password })
+        .expect(401);
+      expect(login.body.message).toMatch(/deactivated/i);
+
+      const audit = await t.dataSource
+        .getRepository(AuditLogEntity)
+        .findOneBy({ action: 'DEACTIVATE_ADMIN', entityId: target.entity.id });
+      expect(audit?.userId).toBe(updater.entity.id);
+    });
+
+    it('reactivates an admin so they can sign in again', async () => {
+      const target = await targetAdmin({ isActive: false } as any);
+      await api(t)
+        .post('/auth/admin/login')
+        .send({ email: target.entity.email, password: target.password })
+        .expect(401);
+      const res = await setStatus(target.entity.id, updater, {
+        isActive: true,
+      }).expect(200);
+      expect(res.body.isActive).toBe(true);
+      await api(t)
+        .post('/auth/admin/login')
+        .send({ email: target.entity.email, password: target.password })
+        .expect(201);
+    });
+
+    it('refuses to change the caller’s own status', async () => {
+      await setStatus(updater.entity.id, updater, { isActive: false }).expect(
+        400,
+      );
+      expect(
+        (await admins().findOneByOrFail({ id: updater.entity.id })).isActive,
+      ).toBe(true);
+    });
+
+    it('does not let a non-super admin deactivate a super admin', async () => {
+      const victim = await createAdmin(t.app);
+      await setStatus(victim.entity.id, updater, { isActive: false }).expect(
+        400,
+      );
+      expect(
+        (await admins().findOneByOrFail({ id: victim.entity.id })).isActive,
+      ).toBe(true);
+      await setStatus(victim.entity.id, superAdmin, {
+        isActive: false,
+      }).expect(200);
+    });
+
+    it('requires update_admins, a signed-in admin and a valid body', async () => {
+      const target = await targetAdmin();
+      await setStatus(target.entity.id, reader, { isActive: false }).expect(
+        403,
+      );
+      await api(t)
+        .patch(`/admin/${target.entity.id}/status`)
+        .send({ isActive: false })
+        .expect(401);
+      await setStatus(target.entity.id, updater, {}).expect(400);
+      await setStatus(target.entity.id, updater, { isActive: 'no' }).expect(
+        400,
+      );
+      await setStatus(NIL_UUID, updater, { isActive: false }).expect(404);
+    });
+
+    it('returns isActive, mfaEnabled and roles on the read endpoints, without secrets', async () => {
+      const target = await targetAdmin({
+        mfaEnabled: true,
+        mfaSecretEncrypted: 'secret',
+        mfaRecoveryCodeHashes: ['hash'],
+      } as any);
+      const one = await api(t)
+        .get(`/admin/${target.entity.id}`)
+        .set(reader.auth)
+        .expect(200);
+      expect(one.body).toMatchObject({ isActive: true, mfaEnabled: true });
+      expect(one.body.roles.map((r) => r.name)).toEqual(['ops-role']);
+      expectNoSecrets(one.body);
+
+      const list = await api(t)
+        .get('/admin')
+        .query({ search: target.entity.email })
+        .set(reader.auth)
+        .expect(200);
+      expect(list.body.data[0]).toMatchObject({
+        isActive: true,
+        mfaEnabled: true,
+      });
+      expectNoSecrets(list.body);
+
+      const profile = await api(t)
+        .get('/admin/profile')
+        .set(reader.auth)
+        .expect(200);
+      expect(profile.body).toMatchObject({ isActive: true, mfaEnabled: false });
+    });
+  });
+
+  describe('POST /admin/:id/mfa/reset', () => {
+    const reset = (id: string, p: Principal) =>
+      api(t).post(`/admin/${id}/mfa/reset`).set(p.auth);
+
+    it('lets a super admin clear MFA, signs the admin out and forces re-enrolment', async () => {
+      const target = await targetAdmin({
+        mfaEnabled: true,
+        mfaSecretEncrypted: 'secret',
+        mfaRecoveryCodeHashes: ['hash'],
+      } as any);
+      await api(t).get('/auth/profile').set(target.auth).expect(200);
+
+      const res = await reset(target.entity.id, superAdmin).expect(200);
+      expect(res.body).toEqual({ id: target.entity.id });
+
+      const row = await admins().findOneByOrFail({ id: target.entity.id });
+      expect(row.mfaEnabled).toBe(false);
+      expect(row.mfaSecretEncrypted).toBeNull();
+      expect(row.mfaRecoveryCodeHashes).toEqual([]);
+      await api(t).get('/auth/profile').set(target.auth).expect(401);
+
+      const login = await api(t)
+        .post('/auth/admin/login')
+        .send({ email: target.entity.email, password: target.password })
+        .expect(201);
+      expect(login.body.mfaSetupRequired).toBe(true);
+
+      const audit = await t.dataSource
+        .getRepository(AuditLogEntity)
+        .findOneBy({ action: 'RESET_ADMIN_MFA', entityId: target.entity.id });
+      expect(audit?.userId).toBe(superAdmin.entity.id);
+    });
+
+    it('is refused for non-super admins, even with update_admins', async () => {
+      const target = await targetAdmin({ mfaEnabled: true } as any);
+      await reset(target.entity.id, updater).expect(403);
+      expect(
+        (await admins().findOneByOrFail({ id: target.entity.id })).mfaEnabled,
+      ).toBe(true);
+    });
+
+    it('refuses to reset the caller’s own MFA and answers 404 for an unknown admin', async () => {
+      await reset(superAdmin.entity.id, superAdmin).expect(400);
+      await reset(NIL_UUID, superAdmin).expect(404);
+      await api(t).post(`/admin/${NIL_UUID}/mfa/reset`).expect(401);
+    });
   });
 
   describe('DELETE /admin/:id', () => {

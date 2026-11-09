@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -21,6 +22,11 @@ import { plainToInstance } from 'class-transformer';
 import { AdminResponseDto } from './admin.response.dto';
 import { Role, UserTypes } from '../auth/enums/role.enum';
 import {
+  AuthPrincipalType,
+  AuthSessionEntity,
+} from '../auth/entities/auth-session.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import {
   FilterOperator,
   paginate,
   Paginated,
@@ -31,6 +37,8 @@ import { createHash, randomBytes } from 'crypto';
 
 @Injectable()
 export class AdminsService {
+  private readonly logger = new Logger(AdminsService.name);
+
   constructor(
     @InjectRepository(AdminEntity)
     private adminRepo: Repository<AdminEntity>,
@@ -38,6 +46,9 @@ export class AdminsService {
     private roleRepo: Repository<RoleEntity>,
     private readonly configService: ConfigService,
     private readonly notificationService: NotificationService,
+    @InjectRepository(AuthSessionEntity)
+    private readonly sessionRepo: Repository<AuthSessionEntity>,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll(query: PaginateQuery): Promise<Paginated<AdminEntity>> {
@@ -65,7 +76,10 @@ export class AdminsService {
   }
 
   async findOne(id: string): Promise<AdminEntity> {
-    const user = await this.adminRepo.findOne({ where: { id } });
+    const user = await this.adminRepo.findOne({
+      where: { id },
+      relations: ['roles'],
+    });
     if (!user) {
       throw new NotFoundException(`Admin with ID ${id} not found`);
     }
@@ -248,12 +262,111 @@ export class AdminsService {
     if (!user || !user.isVerified || !isValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
+    // Said only after the password is right, so it reveals nothing to a guesser.
+    if (user.isActive === false) {
+      throw new UnauthorizedException('Account deactivated');
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, mfaSecretEncrypted, mfaRecoveryCodeHashes, ...result } =
       user;
 
     return result;
+  }
+
+  /** Deactivates or reactivates an admin. Deactivating signs them out at once. */
+  async setStatus(
+    id: string,
+    isActive: boolean,
+    actor: AdminEntity,
+  ): Promise<{ id: string; isActive: boolean }> {
+    if (id === actor.id) {
+      throw new BadRequestException(
+        'You cannot change the status of your own admin account',
+      );
+    }
+    const admin = await this.adminRepo.findOne({
+      where: { id },
+      relations: ['roles'],
+    });
+    if (!admin) {
+      throw new NotFoundException(`Admin with ID ${id} not found`);
+    }
+    this.assertSuperAdminChangeAllowed(actor, admin, []);
+
+    if (admin.isActive !== isActive) {
+      admin.isActive = isActive;
+      admin.updatedBy = actor.id;
+      if (!isActive) admin.tokenVersion = (admin.tokenVersion || 0) + 1;
+      await this.adminRepo.save(admin);
+      if (!isActive) await this.revokeSessions(admin.id);
+      await this.audit(
+        isActive ? 'ACTIVATE_ADMIN' : 'DEACTIVATE_ADMIN',
+        admin,
+        actor,
+        { isActive },
+      );
+    }
+    return { id: admin.id, isActive };
+  }
+
+  /** Super admin only: clears MFA so the admin must enrol again at next login. */
+  async resetMfa(id: string, actor: AdminEntity): Promise<{ id: string }> {
+    const actorIsSuperAdmin = actor.roles?.some(
+      (role) => role.name === Role.SuperAdmin,
+    );
+    if (!actorIsSuperAdmin) {
+      throw new ForbiddenException('Only a super admin can reset admin MFA');
+    }
+    if (id === actor.id) {
+      throw new BadRequestException('You cannot reset your own MFA');
+    }
+    const admin = await this.adminRepo.findOne({ where: { id } });
+    if (!admin) {
+      throw new NotFoundException(`Admin with ID ${id} not found`);
+    }
+
+    admin.mfaEnabled = false;
+    admin.mfaSecretEncrypted = null;
+    admin.mfaRecoveryCodeHashes = [];
+    admin.tokenVersion = (admin.tokenVersion || 0) + 1;
+    admin.updatedBy = actor.id;
+    await this.adminRepo.save(admin);
+    await this.revokeSessions(admin.id);
+    await this.audit('RESET_ADMIN_MFA', admin, actor);
+    return { id: admin.id };
+  }
+
+  private async revokeSessions(adminId: string): Promise<void> {
+    await this.sessionRepo
+      .createQueryBuilder()
+      .update(AuthSessionEntity)
+      .set({ revokedAt: new Date() })
+      .where('"principalType" = :type', { type: AuthPrincipalType.Admin })
+      .andWhere('"principalId" = :id', { id: adminId })
+      .andWhere('"revokedAt" IS NULL')
+      .execute();
+  }
+
+  private async audit(
+    action: string,
+    target: AdminEntity,
+    actor: AdminEntity,
+    changes?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.auditLogService
+      .record({
+        action,
+        entityType: 'Admin',
+        entityId: target.id,
+        userId: actor.id,
+        userEmail: actor.email,
+        actorType: 'admin',
+        changes: { targetEmail: target.email, ...changes },
+      })
+      .catch((error) =>
+        this.logger.error(`Failed to audit ${action}: ${error?.message}`),
+      );
   }
 
   private assertSuperAdminChangeAllowed(

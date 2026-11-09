@@ -57,7 +57,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (payload.principalType === 'admin') {
       const admin = await this.adminRepository.findOne({
-        where: { id: payload.id, isVerified: true },
+        where: { id: payload.id, isVerified: true, isActive: true },
         relations: ['roles'],
       });
       if (!admin) throw new UnauthorizedException('Account is unavailable');

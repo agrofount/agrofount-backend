@@ -335,7 +335,12 @@ describe('Admin login and MFA (e2e)', () => {
     it('keeps MFA material out of the admin profile responses', async () => {
       const { admin, auth } = await enrolled();
       const profile = await api(t).get('/admin/profile').set(auth).expect(200);
-      expect(JSON.stringify(profile.body)).not.toMatch(/mfa|recovery/i);
+      // The boolean mfaEnabled is exposed on purpose; the secret and the
+      // recovery codes never are.
+      expect(profile.body.mfaEnabled).toBe(true);
+      expect(JSON.stringify(profile.body)).not.toMatch(
+        /mfaSecret|recovery|otpauth/i,
+      );
       const one = await api(t)
         .get(`/admin/${admin.entity.id}`)
         .set(auth)
