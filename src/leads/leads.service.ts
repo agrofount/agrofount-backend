@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { Workbook } from 'exceljs';
 import { LeadEntity, LeadSource, LeadStatus } from './entities/lead.entity';
 import { CreateLeadDto } from './dto/create-lead.dto';
@@ -25,6 +25,9 @@ import { leadTemplateVariables } from './lead-template-variables.util';
 
 @Injectable()
 export class LeadsService {
+  /** Rows looked up and written per query during a bulk import. */
+  private static readonly IMPORT_CHUNK = 500;
+
   constructor(
     @InjectRepository(LeadEntity)
     private readonly leadRepo: Repository<LeadEntity>,
@@ -218,6 +221,9 @@ export class LeadsService {
     let updated = 0;
     let skipped = 0;
 
+    // Read every row first so existing leads can be fetched in a few queries
+    // and written back in bulk, instead of two or three round trips per row.
+    const prepared: Record<string, any>[] = [];
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
       const phone = col(row, 'phone_number') || col(row, 'phone');
@@ -228,19 +234,12 @@ export class LeadsService {
       }
 
       const sourceLeadId = col(row, 'lead_id');
-      const existing = await this.leadRepo.findOne({
-        where: sourceLeadId ? [{ sourceLeadId }, { phone }] : [{ phone }],
-      });
-
       const rawTime = col(row, 'created_time');
       const parsedTime = rawTime ? new Date(rawTime) : null;
       const sourceCreatedAt =
         parsedTime && !isNaN(parsedTime.getTime()) ? parsedTime : null;
 
-      // Only the raw imported fields are (re)written on a match — status,
-      // notes, managedBy, and conversion tracking are admin/lifecycle state
-      // and must survive a re-upload untouched.
-      const importedFields = {
+      prepared.push({
         sourceLeadId: sourceLeadId || undefined,
         name,
         phone,
@@ -258,10 +257,48 @@ export class LeadsService {
         formName: col(row, 'form_name') || undefined,
         customFields: extractCustomFields(row),
         sourceCreatedAt: sourceCreatedAt ?? undefined,
-      };
+      });
+    }
 
+    const byLeadId = new Map<string, LeadEntity>();
+    const byPhone = new Map<string, LeadEntity>();
+    const remember = (lead: LeadEntity) => {
+      if (lead.sourceLeadId && !byLeadId.has(lead.sourceLeadId)) {
+        byLeadId.set(lead.sourceLeadId, lead);
+      }
+      if (lead.phone && !byPhone.has(lead.phone)) {
+        byPhone.set(lead.phone, lead);
+      }
+    };
+    for (let i = 0; i < prepared.length; i += LeadsService.IMPORT_CHUNK) {
+      const chunk = prepared.slice(i, i + LeadsService.IMPORT_CHUNK);
+      const leadIds = chunk.map((r) => r.sourceLeadId).filter(Boolean);
+      const phones = chunk.map((r) => r.phone);
+      const found = await this.leadRepo.find({
+        where: [
+          ...(leadIds.length ? [{ sourceLeadId: In(leadIds) }] : []),
+          { phone: In(phones) },
+        ],
+      });
+      found.forEach(remember);
+    }
+
+    // Held in memory so a later row for the same lead merges into the earlier
+    // one, exactly as when each row was saved before the next was read.
+    const toSave: LeadEntity[] = [];
+    for (const importedFields of prepared) {
+      const existing =
+        (importedFields.sourceLeadId &&
+          byLeadId.get(importedFields.sourceLeadId)) ||
+        byPhone.get(importedFields.phone);
+
+      // Only the raw imported fields are (re)written on a match — status,
+      // notes, managedBy, and conversion tracking are admin/lifecycle state
+      // and must survive a re-upload untouched.
       if (existing) {
-        await this.leadRepo.save(this.leadRepo.merge(existing, importedFields));
+        this.leadRepo.merge(existing, importedFields);
+        if (!toSave.includes(existing)) toSave.push(existing);
+        remember(existing);
         updated++;
         continue;
       }
@@ -276,15 +313,19 @@ export class LeadsService {
         ? LeadStatus.Qualified
         : LeadStatus.New;
 
-      await this.leadRepo.save(
-        this.leadRepo.create({
-          ...importedFields,
-          source: LeadSource.Meta,
-          status: initialStatus,
-          managedBy: adminId,
-        }),
-      );
+      const lead = this.leadRepo.create({
+        ...importedFields,
+        source: LeadSource.Meta,
+        status: initialStatus,
+        managedBy: adminId,
+      });
+      toSave.push(lead);
+      remember(lead);
       inserted++;
+    }
+
+    for (let i = 0; i < toSave.length; i += LeadsService.IMPORT_CHUNK) {
+      await this.leadRepo.save(toSave.slice(i, i + LeadsService.IMPORT_CHUNK));
     }
 
     return { inserted, updated, skipped, total: rows.length - 1 };

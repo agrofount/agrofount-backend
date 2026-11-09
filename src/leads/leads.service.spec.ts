@@ -16,6 +16,20 @@ describe('LeadsService', () => {
           ) ?? null
         );
       }),
+      find: jest.fn(async ({ where }: any) => {
+        const clauses = Array.isArray(where) ? where : [where];
+        const matches = (lead: any, key: string, value: any) =>
+          value && Array.isArray(value.value)
+            ? value.value.includes(lead[key])
+            : lead[key] === value;
+        return existingLeads.filter((lead) =>
+          clauses.some((clause: any) =>
+            Object.entries(clause).every(([key, value]) =>
+              matches(lead, key, value),
+            ),
+          ),
+        );
+      }),
       create: jest.fn((value) => ({ ...value })),
       merge: jest.fn((entity, changes) => Object.assign(entity, changes)),
       save: jest.fn(async (value) => value),
@@ -305,6 +319,44 @@ describe('LeadsService', () => {
       expect(result).toEqual({ inserted: 0, updated: 1, skipped: 0, total: 1 });
       expect(leadRepo.create).not.toHaveBeenCalled();
       expect(leadRepo.merge).toHaveBeenCalled();
+    });
+
+    it('imports a large file with a handful of queries, not per-row round trips', async () => {
+      const { service, leadRepo } = setup();
+      const lines = ['lead_id,name,phone_number'];
+      for (let i = 0; i < 1200; i++) {
+        lines.push(`id-${i},Farmer ${i},0803${String(i).padStart(7, '0')}`);
+      }
+
+      const result = await service.uploadBulk(
+        Buffer.from(lines.join('\n')),
+        'admin-1',
+      );
+
+      expect(result).toEqual({
+        inserted: 1200,
+        updated: 0,
+        skipped: 0,
+        total: 1200,
+      });
+      expect(leadRepo.find).toHaveBeenCalledTimes(3);
+      expect(leadRepo.save).toHaveBeenCalledTimes(3);
+    });
+
+    it('merges a repeated phone within one file into a single lead', async () => {
+      const { service, leadRepo } = setup();
+      const csv = [
+        'lead_id,name,phone_number',
+        'a,First Name,08031112222',
+        'b,Second Name,08031112222',
+      ].join('\n');
+
+      const result = await service.uploadBulk(Buffer.from(csv), 'admin-1');
+
+      expect(result).toEqual({ inserted: 1, updated: 1, skipped: 0, total: 2 });
+      const saved = leadRepo.save.mock.calls.flatMap(([batch]) => batch);
+      expect(saved).toHaveLength(1);
+      expect(saved[0].name).toBe('Second Name');
     });
 
     it('auto-qualifies a new lead whose stated interest shows genuine purchase intent', async () => {
