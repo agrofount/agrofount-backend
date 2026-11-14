@@ -11,6 +11,7 @@ import {
   seedPayment,
   uniq,
 } from './g4/factories';
+import { seedCatalog } from './g3/fixtures';
 import { OrderEntity } from '../../src/order/entities/order.entity';
 import { OrderStatus } from '../../src/order/enums/order.enum';
 import { PaymentEntity } from '../../src/payment/entities/payment.entity';
@@ -30,6 +31,7 @@ import { PaystackStrategy } from '../../src/payment/strategies/paystack.strategy
 import { WalletService } from '../../src/wallet/wallet.service';
 import { WalletEntity } from '../../src/wallet/entities/wallet.entity';
 import { VoucherEntity } from '../../src/voucher/entities/voucher.entity';
+import { ProductLocationEntity } from '../../src/product-location/entities/product-location.entity';
 import { MessageTypes } from '../../src/notification/types/notification.type';
 
 describe('Payment (e2e)', () => {
@@ -351,29 +353,88 @@ describe('Payment (e2e)', () => {
       ).toBe('completed');
     });
 
-    it('rewards the referrer once, on the referred customer first completed payment', async () => {
+    const line = (id: string, price: number, quantity = 1) => ({
+      id,
+      name: 'Item',
+      unit: 'kg',
+      price,
+      quantity,
+    });
+
+    // A referred customer with a pending payment for an order with these lines.
+    async function referredPayment(items: ReturnType<typeof line>[]) {
       const referrer = await createUser(t.app);
       const referred = await createUser(t.app, {
         referredBy: referrer.entity.id,
       } as any);
-      const first = await pendingPayment({}, 10000, referred.entity.id);
-      await webhook(chargeSuccess(first.payment)).expect(201);
-
+      const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+      const order = await seedOrder(t.dataSource, referred.entity.id, {
+        totalPrice: total,
+        subTotal: total,
+        items,
+      });
+      const payment = await seedPayment(t.dataSource, order);
       const vouchers = () =>
         t.dataSource
           .getRepository(VoucherEntity)
           .find({ where: { user: { id: referrer.entity.id } } });
+      return { referrer, referred, payment, vouchers };
+    }
+
+    it('rewards the referrer once, on the referred customer first completed payment', async () => {
+      const catalog = await seedCatalog(t.app);
+      const { referred, payment, vouchers } = await referredPayment([
+        line(catalog.feed.id, 10000),
+      ]);
+      await webhook(chargeSuccess(payment)).expect(201);
+
       const afterFirst = await vouchers();
       expect(afterFirst).toHaveLength(1);
-      expect(Number(afterFirst[0].amount)).toBe(70); // 0.7% of 10,000
+      // The location has no rate of its own, so the 0.7% default applies.
+      expect(Number(afterFirst[0].amount)).toBe(70);
       expect(
-        (await payments().findOneByOrFail({ id: first.payment.id }))
+        (await payments().findOneByOrFail({ id: payment.id }))
           .referralProcessed,
       ).toBe(true);
 
-      const second = await pendingPayment({}, 10000, referred.entity.id);
-      await webhook(chargeSuccess(second.payment)).expect(201);
+      const secondOrder = await seedOrder(t.dataSource, referred.entity.id, {
+        totalPrice: 10000,
+        items: [line(catalog.feed.id, 10000)],
+      });
+      const second = await seedPayment(t.dataSource, secondOrder);
+      await webhook(chargeSuccess(second)).expect(201);
       expect(await vouchers()).toHaveLength(1);
+    });
+
+    it('uses each product location commission rate', async () => {
+      const catalog = await seedCatalog(t.app);
+      const locations = t.dataSource.getRepository(ProductLocationEntity);
+      await locations.update({ id: catalog.feed.id }, { commissionRate: 2 });
+      // The tonic location keeps the default rate.
+      const { payment, vouchers } = await referredPayment([
+        line(catalog.feed.id, 10000, 2), // 20,000 at 2% = 400
+        line(catalog.tonic.id, 10000), // 10,000 at 0.7% = 70
+      ]);
+      await webhook(chargeSuccess(payment)).expect(201);
+      const issued = await vouchers();
+      expect(issued).toHaveLength(1);
+      expect(Number(issued[0].amount)).toBe(470);
+    });
+
+    it('issues no voucher when every line is on a zero commission location', async () => {
+      const catalog = await seedCatalog(t.app);
+      await t.dataSource
+        .getRepository(ProductLocationEntity)
+        .update({ id: catalog.feed.id }, { commissionRate: 0 });
+      const { payment, vouchers } = await referredPayment([
+        line(catalog.feed.id, 10000),
+      ]);
+      await webhook(chargeSuccess(payment)).expect(201);
+      expect(await vouchers()).toHaveLength(0);
+      expect(
+        (await payments().findOneByOrFail({ id: payment.id }))
+          .referralProcessed,
+      ).toBe(true);
     });
 
     it('does not create a voucher for customers who were not referred', async () => {
