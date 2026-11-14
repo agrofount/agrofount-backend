@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -27,6 +28,13 @@ import { RequiredPermissions } from '../auth/decorator/required-permission.decor
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { UserEntity } from '../user/entities/user.entity';
 import { LeadsService } from './leads.service';
+import { LeadActor, LeadOwnershipService } from './lead-ownership.service';
+import {
+  BulkClaimLeadsDto,
+  CreateLeadNoteDto,
+  PerformanceQueryDto,
+} from './dto/lead-ownership.dto';
+import { Role } from '../auth/enums/role.enum';
 import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
 import { NotifyLeadDto } from './dto/notify-lead.dto';
 import { LeadEntity } from './entities/lead.entity';
@@ -38,7 +46,10 @@ import { BulkSmsLeadsDto } from './dto/bulk-sms-leads.dto';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
 export class LeadsController {
-  constructor(private readonly leadsService: LeadsService) {}
+  constructor(
+    private readonly leadsService: LeadsService,
+    private readonly ownership: LeadOwnershipService,
+  ) {}
 
   @Post('upload')
   @RequiredPermissions('import_leads')
@@ -106,6 +117,8 @@ export class LeadsController {
     @Query('sourceId') sourceId?: string,
     @Query('campaignName') campaignName?: string,
     @Query('campaignId') campaignId?: string,
+    @Query('ownerId') ownerId?: string,
+    @CurrentUser() user?: UserEntity,
   ) {
     const result = await this.leadsService.findAll({
       page: page ? Number(page) : undefined,
@@ -116,8 +129,19 @@ export class LeadsController {
       sourceLeadId: sourceLeadId ?? sourceId,
       campaignName,
       campaignId,
+      // 'me' means the signed-in admin, so the UI needs no extra lookup.
+      ownerId: ownerId === 'me' ? user?.id : ownerId,
     });
-    return { ...result, data: result.data.map(withInsights) };
+    const owners = await this.ownership.ownerNames(
+      result.data.map((lead) => lead.ownerId).filter(Boolean),
+    );
+    return {
+      ...result,
+      data: result.data.map((lead) => ({
+        ...withInsights(lead),
+        owner: lead.ownerId ? owners.get(lead.ownerId) ?? null : null,
+      })),
+    };
   }
 
   @Post('bulk-sms')
@@ -128,6 +152,34 @@ export class LeadsController {
   })
   sendBulkSms(@Body() dto: BulkSmsLeadsDto, @CurrentUser() user: UserEntity) {
     return this.leadsService.sendBulkSms(dto, user.id);
+  }
+
+  @Get('performance')
+  @RequiredPermissions('view_reports_leads')
+  @ApiOperation({
+    summary: 'Conversion performance of every lead owner, best first',
+  })
+  leaderboard(@Query() query: PerformanceQueryDto) {
+    return this.ownership.leaderboard(query);
+  }
+
+  @Get('performance/me')
+  @RequiredPermissions('read_leads')
+  @ApiOperation({
+    summary: 'Your own lead conversion performance: registered and paying',
+  })
+  myPerformance(
+    @CurrentUser() user: UserEntity,
+    @Query() query: PerformanceQueryDto,
+  ) {
+    return this.ownership.myPerformance(user.id, query);
+  }
+
+  @Post('claim')
+  @RequiredPermissions('assign_leads')
+  @ApiOperation({ summary: 'Take ownership of several unowned leads' })
+  claimMany(@Body() dto: BulkClaimLeadsDto, @CurrentUser() user: UserEntity) {
+    return this.ownership.claimMany(dto.leadIds, user.id);
   }
 
   @Get(':id')
@@ -146,7 +198,12 @@ export class LeadsController {
     @Body() dto: UpdateLeadStatusDto,
     @CurrentUser() user: UserEntity,
   ) {
-    return this.leadsService.updateStatus(id, dto, user.id);
+    return this.leadsService.updateStatus(
+      id,
+      dto,
+      user.id,
+      actorOf(user).isSuperAdmin,
+    );
   }
 
   @Post(':id/notify')
@@ -157,7 +214,61 @@ export class LeadsController {
     @Body() dto: NotifyLeadDto,
     @CurrentUser() user: UserEntity,
   ) {
-    return this.leadsService.notifyLead(id, dto, user.id);
+    return this.leadsService.notifyLead(
+      id,
+      dto,
+      user.id,
+      actorOf(user).isSuperAdmin,
+    );
+  }
+
+  @Post(':id/claim')
+  @RequiredPermissions('assign_leads')
+  @ApiOperation({ summary: 'Take ownership of a lead' })
+  claim(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.ownership.claim(id, user.id);
+  }
+
+  @Delete(':id/claim')
+  @RequiredPermissions('assign_leads')
+  @ApiOperation({ summary: 'Release a lead you own' })
+  release(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.ownership.release(id, actorOf(user));
+  }
+
+  @Get(':id/notes')
+  @RequiredPermissions('read_leads')
+  @ApiOperation({ summary: 'List the notes on a lead, newest first' })
+  listNotes(@Param('id', ParseUUIDPipe) id: string) {
+    return this.ownership.listNotes(id);
+  }
+
+  @Post(':id/notes')
+  @RequiredPermissions('update_leads')
+  @ApiOperation({ summary: 'Add a note to a lead' })
+  addNote(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateLeadNoteDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.ownership.addNote(id, dto.body, actorOf(user));
+  }
+
+  @Delete(':id/notes/:noteId')
+  @RequiredPermissions('update_leads')
+  @ApiOperation({ summary: 'Delete one of your notes' })
+  deleteNote(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('noteId', ParseUUIDPipe) noteId: string,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.ownership.deleteNote(id, noteId, actorOf(user));
   }
 
   @Delete(':id')
@@ -166,6 +277,14 @@ export class LeadsController {
   remove(@Param('id') id: string) {
     return this.leadsService.remove(id);
   }
+}
+
+function actorOf(user: UserEntity): LeadActor {
+  const roles = (user as unknown as { roles?: { name: string }[] }).roles;
+  return {
+    id: user.id,
+    isSuperAdmin: !!roles?.some((role) => role.name === Role.SuperAdmin),
+  };
 }
 
 function withInsights(lead: LeadEntity) {
@@ -219,6 +338,8 @@ function withLeadDetails(lead: LeadEntity) {
       status: lead.status,
       notes: lead.notes,
       managedBy: lead.managedBy,
+      ownerId: lead.ownerId,
+      assignedAt: lead.assignedAt,
       contactedAt: lead.contactedAt,
       convertedAt: lead.convertedAt,
       convertedUserId: lead.convertedUserId,

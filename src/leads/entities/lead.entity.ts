@@ -3,6 +3,7 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -91,6 +92,14 @@ export class LeadEntity {
 
   @Column({ nullable: true })
   managedBy: string;
+
+  /** Admin who has taken ownership of converting this lead. */
+  @Index('IDX_LEAD_OWNER')
+  @Column({ type: 'uuid', nullable: true })
+  ownerId: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  assignedAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
   sourceCreatedAt: Date;
