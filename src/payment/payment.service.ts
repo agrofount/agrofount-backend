@@ -20,6 +20,8 @@ import {
 import { PaystackStrategy } from './strategies/paystack.strategy';
 import { PaymentStrategy } from './interface/payment.interface';
 import { OrderEntity } from '../order/entities/order.entity';
+import { ProductLocationEntity } from '../product-location/entities/product-location.entity';
+import { computeReferralCommission } from './referral-commission';
 import { OrderStatus } from '../order/enums/order.enum';
 import { NotificationService } from '../notification/notification.service';
 import {
@@ -867,8 +869,25 @@ export class PaymentService {
         return null;
       }
 
-      let couponValue = Math.round(Number(order.totalPrice) * 0.007);
-      couponValue = Math.min(couponValue, 10000);
+      const items = order.items ?? [];
+      const locations = items.length
+        ? await manager.getRepository(ProductLocationEntity).find({
+            where: { id: In([...new Set(items.map((item) => item.id))]) },
+            select: ['id', 'commissionRate'],
+            withDeleted: true,
+          })
+        : [];
+      const couponValue = computeReferralCommission(
+        items,
+        new Map(locations.map((l) => [l.id, l.commissionRate])),
+      );
+      if (couponValue <= 0) {
+        // Every line is on a zero-commission location.
+        payment.referralProcessed = true;
+        await paymentRepository.save(payment);
+        return null;
+      }
+
       const voucher = await this.voucherService.generateVoucher(
         referrer,
         couponValue,
