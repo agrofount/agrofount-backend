@@ -913,6 +913,36 @@ describe('AdminsController (e2e)', () => {
         .expect(404);
     });
 
+    it('frees the email so the same person can be invited again, repeatedly', async () => {
+      const email = uniqueEmail('reinvite');
+      for (let round = 0; round < 2; round++) {
+        await api(t)
+          .post('/admin/register')
+          .set(creator.auth)
+          .send(inviteBody({ email }))
+          .expect(201);
+        const invited = await admins().findOneByOrFail({ email });
+        await api(t)
+          .delete(`/admin/${invited.id}`)
+          .set(deleter.auth)
+          .expect(200);
+
+        const old = await admins().findOneOrFail({
+          where: { id: invited.id },
+          withDeleted: true,
+        });
+        expect(old.email).toBe(`deleted_${invited.id}_${email}`);
+        expect(old.deletedAt).not.toBeNull();
+        expect(await admins().findOneBy({ email })).toBeNull();
+      }
+      await api(t)
+        .post('/admin/register')
+        .set(creator.auth)
+        .send(inviteBody({ email }))
+        .expect(201);
+      expect(await admins().findOneBy({ email })).not.toBeNull();
+    });
+
     it('refuses to delete the caller’s own account', async () => {
       const self = await adminWith(t, 'self-deleter', [
         { resource: 'admins', actions: ['delete'] },
