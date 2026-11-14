@@ -109,6 +109,7 @@ export const ACTIONS = {
   REFUND: 'refund', // Process refunds
   EXPORT: 'export', // Export data
   IMPORT: 'import', // Import data
+  ASSIGN: 'assign', // Take ownership of items (e.g. leads)
 
   // Chart/View Actions
   VIEW_CHART: 'view_chart', // View specific charts
@@ -526,6 +527,8 @@ function getDefaultActionsForResource(resource) {
         ACTIONS.DELETE,
         ACTIONS.IMPORT,
         ACTIONS.SEND,
+        ACTIONS.ASSIGN,
+        ACTIONS.VIEW_REPORTS,
       ];
 
     case RESOURCES.CREDIT_FACILITY:

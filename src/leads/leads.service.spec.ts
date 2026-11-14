@@ -138,6 +138,7 @@ describe('LeadsService', () => {
       expect(result.data).toEqual([
         {
           ...leads[0],
+          customerStage: 'lead',
           messageCount: 3,
           smsCount: 3,
           lastMessageSentAt,
@@ -148,6 +149,7 @@ describe('LeadsService', () => {
         },
         {
           ...leads[1],
+          customerStage: 'lead',
           messageCount: 0,
           smsCount: 0,
           lastMessageSentAt: null,

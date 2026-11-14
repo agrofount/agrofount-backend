@@ -6,12 +6,15 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { Workbook } from 'exceljs';
+import { LeadNoteEntity } from './entities/lead-note.entity';
+import { assertCanWorkLead } from './lead-ownership.service';
 import { LeadEntity, LeadSource, LeadStatus } from './entities/lead.entity';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
 import { NotifyLeadDto } from './dto/notify-lead.dto';
 import { NotificationService } from '../notification/notification.service';
 import { MessageTypes } from '../notification/types/notification.type';
+import { PaymentStatus } from '../payment/enum/payment.enum';
 import { UserEntity } from '../user/entities/user.entity';
 import { extractLeadInsights, hasPurchaseIntent } from './lead-insights.util';
 import { BulkSmsLeadsDto } from './dto/bulk-sms-leads.dto';
@@ -340,6 +343,8 @@ export class LeadsService {
     sourceLeadId?: string;
     campaignName?: string;
     campaignId?: string;
+    /** An admin id, or 'unassigned' for leads nobody owns. */
+    ownerId?: string;
   }) {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(1000, Math.max(1, params.limit ?? 20));
@@ -358,6 +363,11 @@ export class LeadsService {
       Object.values(LeadSource).includes(params.source as LeadSource)
     ) {
       query.andWhere('lead.source = :source', { source: params.source });
+    }
+    if (params.ownerId === 'unassigned') {
+      query.andWhere('lead.ownerId IS NULL');
+    } else if (params.ownerId && /^[0-9a-f-]{36}$/i.test(params.ownerId)) {
+      query.andWhere('lead.ownerId = :ownerId', { ownerId: params.ownerId });
     }
     if (params.sourceLeadId?.trim()) {
       query.andWhere('lead.sourceLeadId ILIKE :sourceLeadId', {
@@ -450,8 +460,29 @@ export class LeadsService {
       ]),
     );
 
+    // Where each lead's customer is: still a lead, registered, or paying.
+    const accountIds = data
+      .map((lead) => lead.convertedUserId)
+      .filter((id): id is string => Boolean(id));
+    const payingAccounts = new Set<string>(
+      accountIds.length
+        ? (
+            await this.dataSource.query(
+              `SELECT DISTINCT "userId"::text AS "userId" FROM payments
+               WHERE "paymentStatus" = $1 AND "userId"::text = ANY($2::text[])`,
+              [PaymentStatus.Completed, accountIds],
+            )
+          ).map((row: { userId: string }) => row.userId)
+        : [],
+    );
+
     return {
       data: data.map((lead) => {
+        const customerStage = !lead.convertedUserId
+          ? 'lead'
+          : payingAccounts.has(lead.convertedUserId)
+          ? 'paying'
+          : 'registered';
         const meta = messageMetaByLead.get(lead.id) ?? {
           messageCount: 0,
           lastMessageSentAt: null,
@@ -460,6 +491,7 @@ export class LeadsService {
         };
         return {
           ...lead,
+          customerStage,
           messageCount: meta.messageCount,
           smsCount: meta.messageCount,
           lastMessageSentAt: meta.lastMessageSentAt,
@@ -579,11 +611,21 @@ export class LeadsService {
     id: string,
     dto: UpdateLeadStatusDto,
     adminId: string,
+    isSuperAdmin = false,
   ): Promise<LeadEntity> {
     const lead = await this.findOne(id);
+    assertCanWorkLead(lead, { id: adminId, isSuperAdmin });
     lead.status = dto.status;
     lead.managedBy = adminId;
-    if (dto.notes) lead.notes = dto.notes;
+    if (dto.notes) {
+      lead.notes = dto.notes;
+      // Keep the running history too, not just the latest note.
+      await this.dataSource.getRepository(LeadNoteEntity).save({
+        leadId: lead.id,
+        authorId: adminId,
+        body: dto.notes,
+      });
+    }
     if (dto.status === LeadStatus.Contacted && !lead.contactedAt) {
       lead.contactedAt = new Date();
     }
@@ -597,8 +639,10 @@ export class LeadsService {
     id: string,
     dto: NotifyLeadDto,
     adminId: string,
+    isSuperAdmin = false,
   ): Promise<{ success: boolean }> {
     const lead = await this.findOne(id);
+    assertCanWorkLead(lead, { id: adminId, isSuperAdmin });
     const variables = leadTemplateVariables(lead);
     const message = renderTemplate(dto.message, variables);
     const subject = dto.subject
