@@ -138,7 +138,15 @@ export class AdminsService {
     }
     this.assertSuperAdminChangeAllowed(actor, admin, []);
 
-    await this.adminRepo.softRemove(admin);
+    // The email column is unique across soft-deleted rows too. Free the
+    // address so the same person can be invited again, and keep the id in the
+    // new value so repeated delete and re-invite cycles never collide.
+    await this.adminRepo.manager.transaction(async (manager) => {
+      await manager.update(AdminEntity, admin.id, {
+        email: `deleted_${admin.id}_${admin.email}`,
+      });
+      await manager.softDelete(AdminEntity, admin.id);
+    });
   }
 
   async register(
