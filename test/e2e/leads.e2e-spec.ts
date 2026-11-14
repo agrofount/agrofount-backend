@@ -8,6 +8,7 @@ import { createAdmin, createUser } from './helpers/auth';
 import { MessageEntity } from '../../src/notification/entities/message.entity';
 import { MessageTypes } from '../../src/notification/types/notification.type';
 import { noThrottleConfigure } from './g6/fixtures';
+import { adminWith } from './g4/factories';
 import {
   LeadEntity,
   LeadSource,
@@ -175,6 +176,65 @@ describe('Leads (e2e)', () => {
 
     it.each(routes)('%s %s rejects customers with 401', async (m, p) => {
       await (http() as any)[m](p).set(customer.auth).expect(401);
+    });
+  });
+
+  describe('leads permissions', () => {
+    // Route, the single permission it needs, and the success status.
+    const gated: [string, string, string][] = [
+      ['post', '/leads/upload', 'import'],
+      ['get', '/leads/stats', 'read'],
+      ['get', '/leads', 'read'],
+      ['post', '/leads/bulk-sms', 'send'],
+      ['get', `/leads/${MISSING_UUID}`, 'read'],
+      ['patch', `/leads/${MISSING_UUID}/status`, 'update'],
+      ['post', `/leads/${MISSING_UUID}/notify`, 'send'],
+      ['delete', `/leads/${MISSING_UUID}`, 'delete'],
+    ];
+    const actions = ['read', 'update', 'delete', 'import', 'send'];
+
+    it.each(gated)(
+      '%s %s is forbidden for an admin without any leads permission',
+      async (m, p) => {
+        const none = await adminWith(t.app, 'leads-none', []);
+        await (http() as any)[m](p).set(none.auth).expect(403);
+      },
+    );
+
+    it.each(gated)(
+      '%s %s is forbidden when the role only holds the other leads actions',
+      async (m, p, needed) => {
+        const others = await adminWith(t.app, `leads-not-${needed}`, [
+          {
+            resource: 'leads',
+            actions: actions.filter((a) => a !== needed),
+          },
+        ]);
+        await (http() as any)[m](p).set(others.auth).expect(403);
+      },
+    );
+
+    it.each(gated)(
+      '%s %s passes the guard with only its own permission',
+      async (m, p, needed) => {
+        const only = await adminWith(t.app, `leads-only-${needed}`, [
+          { resource: 'leads', actions: [needed] },
+        ]);
+        const res = await (http() as any)[m](p).set(only.auth);
+        expect(res.status).not.toBe(401);
+        expect(res.status).not.toBe(403);
+      },
+    );
+
+    it('lists leads as a resource on the roles page', async () => {
+      const res = await http()
+        .get('/role/permissions')
+        .set(admin.auth)
+        .expect(200);
+      const leads = res.body.find((p: any) => p.resource === 'leads');
+      expect(leads.actions).toEqual(
+        expect.arrayContaining(['read', 'update', 'delete', 'import', 'send']),
+      );
     });
   });
 
