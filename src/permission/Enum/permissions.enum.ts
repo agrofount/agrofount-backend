@@ -63,6 +63,7 @@ export const RESOURCES = {
 
   // Marketing
   CAMPAIGNS: 'campaigns',
+  LEADS: 'leads',
   DISCOUNTS: 'discounts',
   PROMOTIONS: 'promotions',
   COUPONS: 'coupons',
@@ -517,6 +518,15 @@ function getDefaultActionsForResource(resource) {
 
     case RESOURCES.SEO:
       return [ACTIONS.CREATE, ACTIONS.READ, ACTIONS.UPDATE];
+
+    case RESOURCES.LEADS:
+      return [
+        ACTIONS.READ,
+        ACTIONS.UPDATE,
+        ACTIONS.DELETE,
+        ACTIONS.IMPORT,
+        ACTIONS.SEND,
+      ];
 
     case RESOURCES.CREDIT_FACILITY:
     case RESOURCES.WALLETS:

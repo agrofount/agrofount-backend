@@ -22,6 +22,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { RequiredPermissions } from '../auth/decorator/required-permission.decorator';
 import { CurrentUser } from '../utils/decorators/current-user.decorator';
 import { UserEntity } from '../user/entities/user.entity';
 import { LeadsService } from './leads.service';
@@ -34,11 +36,12 @@ import { BulkSmsLeadsDto } from './dto/bulk-sms-leads.dto';
 @Controller('leads')
 @ApiTags('Leads')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, AdminAuthGuard)
+@UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
 export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
 
   @Post('upload')
+  @RequiredPermissions('import_leads')
   @ApiOperation({
     summary:
       'Bulk upload leads from one or more Meta lead gen files (CSV or XLSX)',
@@ -84,12 +87,14 @@ export class LeadsController {
   }
 
   @Get('stats')
+  @RequiredPermissions('read_leads')
   @ApiOperation({ summary: 'Get lead funnel stats and conversion rate' })
   getStats() {
     return this.leadsService.getStats();
   }
 
   @Get()
+  @RequiredPermissions('read_leads')
   @ApiOperation({ summary: 'List leads with optional filters' })
   async findAll(
     @Query('page') page?: string,
@@ -116,6 +121,7 @@ export class LeadsController {
   }
 
   @Post('bulk-sms')
+  @RequiredPermissions('send_leads')
   @ApiOperation({
     summary:
       'Send a personalized bulk SMS campaign to filtered leads using template variables',
@@ -125,6 +131,7 @@ export class LeadsController {
   }
 
   @Get(':id')
+  @RequiredPermissions('read_leads')
   @ApiOperation({ summary: 'Get a single lead' })
   async findOne(@Param('id') id: string) {
     const lead = await this.leadsService.findOne(id);
@@ -132,6 +139,7 @@ export class LeadsController {
   }
 
   @Patch(':id/status')
+  @RequiredPermissions('update_leads')
   @ApiOperation({ summary: 'Update lead status through the conversion funnel' })
   updateStatus(
     @Param('id') id: string,
@@ -142,6 +150,7 @@ export class LeadsController {
   }
 
   @Post(':id/notify')
+  @RequiredPermissions('send_leads')
   @ApiOperation({ summary: 'Send SMS or email to a lead' })
   notify(
     @Param('id') id: string,
@@ -152,6 +161,7 @@ export class LeadsController {
   }
 
   @Delete(':id')
+  @RequiredPermissions('delete_leads')
   @ApiOperation({ summary: 'Soft delete a lead' })
   remove(@Param('id') id: string) {
     return this.leadsService.remove(id);
