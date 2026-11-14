@@ -12,6 +12,7 @@ import {
   Patch,
   Query,
   ParseBoolPipe,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { Paginate, Paginated, PaginateQuery } from 'nestjs-paginate';
@@ -63,6 +64,14 @@ export class UserController {
   @ApiOkResponse({ type: UserResponseDto })
   findOne(@CurrentUser() user: UserEntity) {
     return this.userService.findOne(user.id);
+  }
+
+  @Get(':id/referrals')
+  @UseInterceptors(ClassSerializerInterceptor)
+  @UseGuards(JwtAuthGuard, AdminAuthGuard, RolesGuard)
+  @RequiredPermissions('read_users')
+  getReferrals(@Param('id', ParseUUIDPipe) id: string) {
+    return this.userService.getReferrals(id);
   }
 
   // Must stay below the static 'profile' route, or ':id' captures it.

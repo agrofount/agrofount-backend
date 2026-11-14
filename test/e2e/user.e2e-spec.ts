@@ -2,6 +2,13 @@ import { TestApp } from './helpers/app';
 import { resetState } from './helpers/db';
 import { createAdmin, createUser } from './helpers/auth';
 import { OrderEntity } from '../../src/order/entities/order.entity';
+import { PaymentEntity } from '../../src/payment/entities/payment.entity';
+import { PaymentStatus } from '../../src/payment/enum/payment.enum';
+import { WalletEntity } from '../../src/wallet/entities/wallet.entity';
+import {
+  VoucherEntity,
+  VoucherStatus,
+} from '../../src/voucher/entities/voucher.entity';
 import { UserEntity } from '../../src/user/entities/user.entity';
 import { LivestockFarmerProfile } from '../../src/user/entities/profile.entity';
 import { LivestockBreed } from '../../src/user/entities/breed.entity';
@@ -89,6 +96,24 @@ describe('UserController (e2e)', () => {
     ]);
   });
   afterAll(() => t.close());
+
+  let seq = 0;
+  const seedPayment = async (
+    userId: string,
+    orderId: string,
+    paymentStatus: PaymentStatus,
+    amount: number,
+  ) =>
+    t.dataSource.getRepository(PaymentEntity).save(
+      t.dataSource.getRepository(PaymentEntity).create({
+        userId,
+        orderId,
+        paymentStatus,
+        amount,
+        amountPaid: paymentStatus === PaymentStatus.Completed ? amount : 0,
+        reference: `REF-${Date.now()}-${seq++}-${userId.slice(0, 6)}`,
+      } as any),
+    );
 
   describe('access control matrix', () => {
     const customer = () => createUser(t.app);
@@ -234,6 +259,161 @@ describe('UserController (e2e)', () => {
     });
   });
 
+  describe('GET /user/:id/referrals', () => {
+    const seedReferralVoucher = (
+      referrer: UserEntity,
+      referredId: string,
+      overrides: Partial<VoucherEntity> = {},
+    ) =>
+      t.dataSource.getRepository(VoucherEntity).save(
+        t.dataSource.getRepository(VoucherEntity).create({
+          code: `RF${Date.now().toString(36)}${seq++}`.toUpperCase(),
+          amount: 700,
+          user: referrer,
+          sourceKey: `referral:${referredId}`,
+          expiresAt: new Date(Date.now() + 10 * 86_400_000),
+          ...overrides,
+        } as any),
+      );
+
+    it('lists referrals, rewards and earnings for a referrer', async () => {
+      const referrer = await createUser(t.app, { referralCode: `RC${seq++}X` });
+      const paid = await createUser(t.app, {
+        referredBy: referrer.entity.id,
+      } as any);
+      const unpaid = await createUser(t.app, {
+        referredBy: referrer.entity.id,
+      } as any);
+      const order = await t.dataSource.getRepository(OrderEntity).save(
+        t.dataSource.getRepository(OrderEntity).create({
+          userId: paid.entity.id,
+          code: `RO-${paid.entity.id.slice(0, 8)}`,
+          totalPrice: 100000,
+          address: {},
+        } as unknown as OrderEntity),
+      );
+      await seedPayment(
+        paid.entity.id,
+        order.id,
+        PaymentStatus.Completed,
+        100000,
+      );
+      await seedReferralVoucher(referrer.entity, paid.entity.id);
+      // A non-referral voucher must not count as commission.
+      await t.dataSource.getRepository(VoucherEntity).save(
+        t.dataSource.getRepository(VoucherEntity).create({
+          code: `OTHER${seq++}`,
+          amount: 5000,
+          user: referrer.entity,
+          sourceKey: 'campaign:welcome',
+          expiresAt: new Date(Date.now() + 86_400_000),
+        } as any),
+      );
+
+      const res = await api(t)
+        .get(`/user/${referrer.entity.id}/referrals`)
+        .set(reader.auth)
+        .expect(200);
+      expect(res.body.referralCode).toBe(referrer.entity.referralCode);
+      expect(res.body.referredBy).toBeNull();
+      expect(res.body.referredCount).toBe(2);
+      const row = (id: string) =>
+        res.body.referrals.find((r: any) => r.id === id);
+      expect(row(paid.entity.id)).toMatchObject({
+        email: paid.entity.email,
+        hasPaidOrder: true,
+        rewardAmount: 700,
+        rewardStatus: 'active',
+        isVerified: true,
+      });
+      expect(row(unpaid.entity.id)).toMatchObject({
+        hasPaidOrder: false,
+        rewardAmount: null,
+        rewardStatus: null,
+      });
+      expect(res.body.earnings).toEqual({
+        currency: 'NGN',
+        totalEarned: 700,
+        redeemed: 0,
+        available: 700,
+        expired: 0,
+        voucherCount: 1,
+      });
+      expectNoSecrets(res.body);
+
+      // The referred customer sees who referred them.
+      const back = await api(t)
+        .get(`/user/${paid.entity.id}/referrals`)
+        .set(reader.auth)
+        .expect(200);
+      expect(back.body.referredBy).toEqual({
+        id: referrer.entity.id,
+        username: referrer.entity.username,
+        email: referrer.entity.email,
+      });
+      expect(back.body.referredCount).toBe(0);
+    });
+
+    it('splits earnings by redeemed, available and expired', async () => {
+      const referrer = await createUser(t.app);
+      await seedReferralVoucher(referrer.entity, 'a', {
+        amount: 100,
+        status: VoucherStatus.Redeemed,
+        used: true,
+      });
+      await seedReferralVoucher(referrer.entity, 'b', { amount: 200 });
+      await seedReferralVoucher(referrer.entity, 'c', {
+        amount: 400,
+        expiresAt: new Date(Date.now() - 86_400_000),
+      });
+      const res = await api(t)
+        .get(`/user/${referrer.entity.id}/referrals`)
+        .set(reader.auth)
+        .expect(200);
+      expect(res.body.earnings).toEqual({
+        currency: 'NGN',
+        totalEarned: 700,
+        redeemed: 100,
+        available: 200,
+        expired: 400,
+        voucherCount: 3,
+      });
+    });
+
+    it('returns empty data for a user with no referrals', async () => {
+      const user = await createUser(t.app);
+      const res = await api(t)
+        .get(`/user/${user.entity.id}/referrals`)
+        .set(reader.auth)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        referredBy: null,
+        referredCount: 0,
+        referrals: [],
+        earnings: { totalEarned: 0, available: 0, voucherCount: 0 },
+      });
+    });
+
+    it('answers 404 for an unknown user and 400 for a malformed id', async () => {
+      await api(t)
+        .get(`/user/${NIL_UUID}/referrals`)
+        .set(reader.auth)
+        .expect(404);
+      await api(t)
+        .get('/user/not-a-uuid/referrals')
+        .set(reader.auth)
+        .expect(400);
+    });
+
+    it('needs read_users', async () => {
+      const user = await createUser(t.app);
+      const path = `/user/${user.entity.id}/referrals`;
+      await api(t).get(path).expect(401);
+      await api(t).get(path).set(user.auth).expect(401);
+      await api(t).get(path).set(updater.auth).expect(403);
+    });
+  });
+
   describe('GET /user/:id', () => {
     it('returns the user with an order count and no secrets', async () => {
       const user = await createUser(t.app);
@@ -263,6 +443,65 @@ describe('UserController (e2e)', () => {
         .set(reader.auth)
         .expect(200);
       expect(none.body.orderCount).toBe(0);
+    });
+
+    it('adds spend, last order, wallet balance and profile fields', async () => {
+      const user = await createUser(t.app, {
+        referralCode: `REF${Date.now().toString(36).toUpperCase()}`,
+        state: 'Lagos',
+        city: 'Ikeja',
+      });
+      const orderIds: string[] = [];
+      for (const code of ['S1', 'S2']) {
+        const order = await t.dataSource.getRepository(OrderEntity).save(
+          t.dataSource.getRepository(OrderEntity).create({
+            userId: user.entity.id,
+            code: `${code}-${user.entity.id.slice(0, 8)}`,
+            totalPrice: 100,
+            address: {},
+          } as unknown as OrderEntity),
+        );
+        orderIds.push(order.id);
+      }
+      await seedPayment(
+        user.entity.id,
+        orderIds[0],
+        PaymentStatus.Completed,
+        100,
+      );
+      await seedPayment(user.entity.id, orderIds[1], PaymentStatus.Failed, 400);
+      await t.dataSource
+        .getRepository(WalletEntity)
+        .save({ userId: user.entity.id, balance: 250 } as any);
+
+      const res = await api(t)
+        .get(`/user/${user.entity.id}`)
+        .set(reader.auth)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        orderCount: 2,
+        totalSpent: 100,
+        walletBalance: 250,
+        referralCode: user.entity.referralCode,
+        state: 'Lagos',
+        city: 'Ikeja',
+        isVerified: true,
+      });
+      expect(new Date(res.body.lastOrderAt).getTime()).not.toBeNaN();
+      expect(res.body.createdAt).toBeDefined();
+      expect(res.body.updatedAt).toBeDefined();
+      expectNoSecrets(res.body);
+
+      const fresh = await createUser(t.app);
+      const none = await api(t)
+        .get(`/user/${fresh.entity.id}`)
+        .set(reader.auth)
+        .expect(200);
+      expect(none.body).toMatchObject({
+        totalSpent: 0,
+        lastOrderAt: null,
+        walletBalance: null,
+      });
     });
 
     it('answers 404 for an unknown or soft-deleted user', async () => {

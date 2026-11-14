@@ -7,7 +7,14 @@ import {
 } from '@nestjs/common';
 import { UserEntity } from './entities/user.entity';
 import { OrderEntity } from '../order/entities/order.entity';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, Like, Repository } from 'typeorm';
+import { PaymentEntity } from '../payment/entities/payment.entity';
+import { PaymentStatus } from '../payment/enum/payment.enum';
+import { WalletEntity } from '../wallet/entities/wallet.entity';
+import {
+  VoucherEntity,
+  VoucherStatus,
+} from '../voucher/entities/voucher.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   FilterOperator,
@@ -32,6 +39,8 @@ import { UpdateBasicUserDetailDto } from './dto/UpdateBasicUserDetail.dto';
 import { AdminEntity } from '../admins/entities/admin.entity';
 import { Role, UserTypes } from '../auth/enums/role.enum';
 import { ACTIONS, RESOURCES } from '../permission/Enum/permissions.enum';
+
+const REFERRAL_LIST_LIMIT = 100;
 
 type UserRemovalActor = UserEntity | AdminEntity;
 
@@ -235,13 +244,132 @@ export class UserService {
       throw new NotFoundException(`User with ID ${id} not found`);
     }
 
-    const orderCount = await this.dataSource
-      .getRepository(OrderEntity)
-      .createQueryBuilder('order')
-      .where('order.userId = :userId', { userId: id })
-      .getCount();
+    const [orderCount, lastOrder, spent, wallet] = await Promise.all([
+      this.dataSource
+        .getRepository(OrderEntity)
+        .createQueryBuilder('order')
+        .where('order.userId = :userId', { userId: id })
+        .getCount(),
+      this.dataSource
+        .getRepository(OrderEntity)
+        .createQueryBuilder('order')
+        .select('MAX(order.createdAt)', 'lastOrderAt')
+        .where('order.userId = :userId', { userId: id })
+        .getRawOne<{ lastOrderAt: Date | null }>(),
+      this.dataSource
+        .getRepository(PaymentEntity)
+        .createQueryBuilder('payment')
+        .select('COALESCE(SUM(payment.amountPaid), 0)', 'total')
+        .where('payment.userId = :userId', { userId: id })
+        .andWhere('payment.paymentStatus = :status', {
+          status: PaymentStatus.Completed,
+        })
+        .getRawOne<{ total: string }>(),
+      this.dataSource
+        .getRepository(WalletEntity)
+        .findOne({ where: { userId: id } }),
+    ]);
 
-    return { ...plainToInstance(UserEntity, user), orderCount };
+    return {
+      ...plainToInstance(UserEntity, user),
+      orderCount,
+      totalSpent: Number(spent?.total ?? 0),
+      lastOrderAt: lastOrder?.lastOrderAt ?? null,
+      walletBalance: wallet ? Number(wallet.balance) : null,
+    };
+  }
+
+  /** Referral data for the admin customer page. */
+  async getReferrals(id: string) {
+    const user = await this.userRepo.findOne({ where: { id } });
+    if (!user) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    const referrer = user.referredBy
+      ? await this.userRepo.findOne({
+          where: { id: user.referredBy },
+          select: ['id', 'username', 'email'],
+        })
+      : null;
+
+    const [referred, referredCount] = await this.userRepo.findAndCount({
+      where: { referredBy: id },
+      order: { createdAt: 'DESC' },
+      take: REFERRAL_LIST_LIMIT,
+      select: ['id', 'username', 'email', 'createdAt', 'isVerified'],
+    });
+
+    const vouchers = await this.dataSource
+      .getRepository(VoucherEntity)
+      .find({ where: { user: { id }, sourceKey: Like('referral:%') } });
+
+    const now = Date.now();
+    const statusOf = (v: VoucherEntity): VoucherStatus =>
+      v.status === VoucherStatus.Active &&
+      new Date(v.expiresAt).getTime() <= now
+        ? VoucherStatus.Expired
+        : v.status;
+    const byReferral = new Map(
+      vouchers.map((v) => [v.sourceKey.slice('referral:'.length), v]),
+    );
+
+    const ids = referred.map((r) => r.id);
+    const paid = ids.length
+      ? await this.dataSource
+          .getRepository(PaymentEntity)
+          .createQueryBuilder('payment')
+          .select('DISTINCT payment.userId', 'userId')
+          .where('payment.userId IN (:...ids)', { ids })
+          .andWhere('payment.paymentStatus = :status', {
+            status: PaymentStatus.Completed,
+          })
+          .getRawMany<{ userId: string }>()
+      : [];
+    const paidIds = new Set(paid.map((p) => p.userId));
+
+    const earnings = {
+      currency: 'NGN',
+      totalEarned: 0,
+      redeemed: 0,
+      available: 0,
+      expired: 0,
+      voucherCount: vouchers.length,
+    };
+    for (const v of vouchers) {
+      const amount = Number(v.amount);
+      earnings.totalEarned += amount;
+      const status = statusOf(v);
+      if (status === VoucherStatus.Redeemed) earnings.redeemed += amount;
+      else if (status === VoucherStatus.Active) earnings.available += amount;
+      else if (status === VoucherStatus.Expired) earnings.expired += amount;
+    }
+
+    return {
+      referralCode: user.referralCode ?? null,
+      referredBy: referrer
+        ? {
+            id: referrer.id,
+            username: referrer.username,
+            email: referrer.email,
+          }
+        : null,
+      referredCount,
+      referrals: referred.map((r) => {
+        const voucher = byReferral.get(r.id);
+        return {
+          id: r.id,
+          username: r.username,
+          email: r.email,
+          joinedAt: r.createdAt,
+          isVerified: r.isVerified,
+          hasPaidOrder: paidIds.has(r.id),
+          rewardAmount: voucher ? Number(voucher.amount) : null,
+          rewardStatus: voucher ? statusOf(voucher) : null,
+        };
+      }),
+      earnings,
+    };
   }
 
   async findByEmailOrPhone(emailOrPhone: string): Promise<UserEntity> {
