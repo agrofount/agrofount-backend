@@ -6,6 +6,7 @@ import {
   IsInt,
   IsLatitude,
   IsLongitude,
+  Max,
   MaxLength,
   IsNotEmpty,
   IsNumber,
@@ -152,6 +153,18 @@ export class CreateProductLocationDto {
   @IsOptional()
   @IsDateString({}, { each: true })
   availableDates: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Referral commission as a percent of the line value (0 to 100). Leave unset for the platform default. Send null on update to reset to the default',
+    example: 1.5,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  commissionRate?: number | null;
 
   @ApiPropertyOptional({
     type: DispatchLocationDto,

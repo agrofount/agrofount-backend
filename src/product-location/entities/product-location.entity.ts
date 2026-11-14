@@ -41,6 +41,13 @@ export class ProductLocationEntity {
   @Column({ default: false })
   bestSeller: boolean;
 
+  /**
+   * Referral commission as a percent of the line value. Null means the
+   * platform default applies.
+   */
+  @Column('decimal', { precision: 5, scale: 2, nullable: true })
+  commissionRate: number | null;
+
   @Column('json', { default: [] })
   uom: {
     unit: string;
