@@ -12,6 +12,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { OrderStatus } from '../enums/order.enum';
+import { OrderAttributionSource } from '../../leads/enums/lead-pipeline.enum';
 import {
   PaymentChannel,
   PaymentMethod,
@@ -122,6 +123,26 @@ export class OrderEntity {
 
   @Column({ nullable: true })
   voucherCode: string;
+
+  /** Lead this order came from, when there is one. */
+  @Index('IDX_ORDER_LEAD')
+  @Column({ type: 'uuid', nullable: true })
+  leadId: string | null;
+
+  /** Staff member credited with this order. Only an admin can change it. */
+  @Index('IDX_ORDER_ATTRIBUTED_ADMIN')
+  @Column({ type: 'uuid', nullable: true })
+  attributedAdminId: string | null;
+
+  @Column({
+    type: 'enum',
+    enum: OrderAttributionSource,
+    default: OrderAttributionSource.Unattributed,
+  })
+  attributionSource: OrderAttributionSource;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  attributedAt: Date | null;
 
   @Column({ nullable: true })
   idempotencyKey: string;
