@@ -40,6 +40,15 @@ import { NotifyLeadDto } from './dto/notify-lead.dto';
 import { LeadEntity } from './entities/lead.entity';
 import { extractLeadInsights } from './lead-insights.util';
 import { BulkSmsLeadsDto } from './dto/bulk-sms-leads.dto';
+import {
+  ActivitiesQueryDto,
+  CreateAdminLeadDto,
+  CreateLeadActivityDto,
+  NotesFeedQueryDto,
+  ReassignLeadDto,
+  UpdateLeadProfileDto,
+} from './dto/lead-pipeline.dto';
+import { LeadActivityService } from './lead-activity.service';
 
 @Controller('leads')
 @ApiTags('Leads')
@@ -49,7 +58,25 @@ export class LeadsController {
   constructor(
     private readonly leadsService: LeadsService,
     private readonly ownership: LeadOwnershipService,
+    private readonly activities: LeadActivityService,
   ) {}
+
+  @Post()
+  @RequiredPermissions('create_leads')
+  @ApiOperation({
+    summary:
+      'Create a lead by hand. A matching phone number adds a note to the existing lead instead',
+  })
+  async create(
+    @Body() dto: CreateAdminLeadDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    const { lead, duplicate } = await this.leadsService.createByAdmin(
+      dto,
+      user.id,
+    );
+    return { duplicate, lead: withLeadDetails(lead) };
+  }
 
   @Post('upload')
   @RequiredPermissions('import_leads')
@@ -118,6 +145,11 @@ export class LeadsController {
     @Query('campaignName') campaignName?: string,
     @Query('campaignId') campaignId?: string,
     @Query('ownerId') ownerId?: string,
+    @Query('stage') stage?: string,
+    @Query('buyerType') buyerType?: string,
+    @Query('stateId') stateId?: string,
+    @Query('overdue') overdue?: string,
+    @Query('slaBreached') slaBreached?: string,
     @CurrentUser() user?: UserEntity,
   ) {
     const result = await this.leadsService.findAll({
@@ -131,6 +163,11 @@ export class LeadsController {
       campaignId,
       // 'me' means the signed-in admin, so the UI needs no extra lookup.
       ownerId: ownerId === 'me' ? user?.id : ownerId,
+      stage,
+      buyerType,
+      stateId,
+      overdue,
+      slaBreached,
     });
     const owners = await this.ownership.ownerNames(
       result.data.map((lead) => lead.ownerId).filter(Boolean),
@@ -175,6 +212,29 @@ export class LeadsController {
     return this.ownership.myPerformance(user.id, query);
   }
 
+  @Get('performance/:adminId')
+  @RequiredPermissions('view_reports_leads')
+  @ApiOperation({
+    summary:
+      'Drill-down for one admin: conversion numbers, leads per stage, lost reasons and overdue follow-ups',
+  })
+  adminPerformance(
+    @Param('adminId', ParseUUIDPipe) adminId: string,
+    @Query() query: PerformanceQueryDto,
+  ) {
+    return this.ownership.adminDrillDown(adminId, query);
+  }
+
+  @Get('notes')
+  @RequiredPermissions('view_reports_leads')
+  @ApiOperation({
+    summary:
+      'Notes written on any lead, newest first, filterable by admin and date',
+  })
+  notesFeed(@Query() query: NotesFeedQueryDto) {
+    return this.ownership.notesFeed(query);
+  }
+
   @Post('claim')
   @RequiredPermissions('assign_leads')
   @ApiOperation({ summary: 'Take ownership of several unowned leads' })
@@ -188,6 +248,66 @@ export class LeadsController {
   async findOne(@Param('id') id: string) {
     const lead = await this.leadsService.findOne(id);
     return withLeadDetails(lead);
+  }
+
+  @Patch(':id')
+  @RequiredPermissions('update_leads')
+  @ApiOperation({ summary: 'Edit a lead profile (not its phone number)' })
+  updateProfile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateLeadProfileDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.leadsService
+      .updateProfile(id, dto, user.id, actorOf(user).isSuperAdmin)
+      .then(withLeadDetails);
+  }
+
+  @Post(':id/reassign')
+  @RequiredPermissions('reassign_leads')
+  @ApiOperation({ summary: 'Move a lead to another admin and log it' })
+  reassign(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReassignLeadDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.ownership.reassign(
+      id,
+      dto.toOwnerId,
+      actorOf(user),
+      dto.reason,
+    );
+  }
+
+  @Get(':id/owner-history')
+  @RequiredPermissions('read_leads')
+  @ApiOperation({ summary: 'Who owned the lead, and every reassignment' })
+  ownerHistory(@Param('id', ParseUUIDPipe) id: string) {
+    return this.ownership.ownerHistory(id);
+  }
+
+  @Get(':id/activities')
+  @RequiredPermissions('read_leads')
+  @ApiOperation({ summary: 'Calls, messages, visits and quotes, newest first' })
+  listActivities(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: ActivitiesQueryDto,
+  ) {
+    return this.activities.list(id, query.page, query.limit);
+  }
+
+  @Post(':id/activities')
+  @RequiredPermissions('update_leads')
+  @ApiOperation({
+    summary:
+      'Log a call, WhatsApp message, visit, quote or note. Send idempotencyKey so retries do not duplicate',
+  })
+  addActivity(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateLeadActivityDto,
+    @CurrentUser() user: UserEntity,
+  ) {
+    return this.activities.add(id, dto, actorOf(user));
   }
 
   @Patch(':id/status')

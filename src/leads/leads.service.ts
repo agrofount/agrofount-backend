@@ -8,6 +8,20 @@ import { DataSource, In, Repository } from 'typeorm';
 import { Workbook } from 'exceljs';
 import { LeadNoteEntity } from './entities/lead-note.entity';
 import { assertCanWorkLead } from './lead-ownership.service';
+import { LeadActivityEntity } from './entities/lead-activity.entity';
+import { LeadOwnerHistoryEntity } from './entities/lead-owner-history.entity';
+import { AdminEntity } from '../admins/entities/admin.entity';
+import {
+  CreateAdminLeadDto,
+  LeadProfileDto,
+  UpdateLeadProfileDto,
+} from './dto/lead-pipeline.dto';
+import {
+  LeadActivityType,
+  LeadBuyerType,
+  LeadStage,
+} from './enums/lead-pipeline.enum';
+import { phoneLookupKeys, toE164 } from './lead-phone.util';
 import { LeadEntity, LeadSource, LeadStatus } from './entities/lead.entity';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadStatusDto } from './dto/update-lead-status.dto';
@@ -112,6 +126,148 @@ export class LeadsService {
       status: LeadStatus.New,
     });
     return this.leadRepo.save(lead);
+  }
+
+  /** Profile columns shared by creating and editing a lead. */
+  private profileFields(dto: LeadProfileDto): Partial<LeadEntity> {
+    const text = (value?: string) =>
+      value === undefined ? undefined : value.trim() || null;
+    const fields: Partial<LeadEntity> = {
+      contactPerson: text(dto.contactPerson),
+      email: text(dto.email) ?? undefined,
+      townOrLga: text(dto.townOrLga),
+      state: text(dto.state) ?? undefined,
+      stateId: dto.stateId,
+      buyerType: dto.buyerType,
+      productInterest: dto.productInterest,
+      farmSize: dto.farmSize === undefined ? undefined : String(dto.farmSize),
+      farmSizeUnit: dto.farmSizeUnit,
+      estimatedOrderValueKobo: dto.estimatedOrderValueKobo,
+      sourceDetail: text(dto.sourceDetail),
+      partnerName: text(dto.partnerName),
+    };
+    // Leave out what was not sent so an edit never blanks a column.
+    return Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined),
+    ) as Partial<LeadEntity>;
+  }
+
+  private async assertStateExists(stateId?: string) {
+    if (!stateId) return;
+    const [row] = await this.dataSource.query(
+      `SELECT 1 FROM "state" WHERE "id" = $1`,
+      [stateId],
+    );
+    if (!row) throw new BadRequestException('Unknown state');
+  }
+
+  /**
+   * Creates a lead by hand (customer support, social team or a rep in the
+   * field). A lead with the same phone number is never duplicated: the
+   * submission is logged as a note on the existing lead and its owner is kept.
+   * Passing ownerId hands the lead to that admin and starts the contact clock.
+   */
+  async createByAdmin(
+    dto: CreateAdminLeadDto,
+    actorId: string,
+  ): Promise<{ lead: LeadEntity; duplicate: boolean }> {
+    const keys = phoneLookupKeys(dto.phone);
+    if (!keys.length) throw new BadRequestException('Invalid phone number');
+    await this.assertStateExists(dto.stateId);
+
+    if (dto.ownerId) {
+      const owner = await this.dataSource
+        .getRepository(AdminEntity)
+        .findOne({ where: { id: dto.ownerId }, select: ['id', 'isActive'] });
+      if (!owner || !owner.isActive) {
+        throw new BadRequestException('The owner must be an active admin');
+      }
+    }
+
+    const existing = await this.leadRepo
+      .createQueryBuilder('lead')
+      .where('lead."normalizedPhone" IN (:...keys)', { keys })
+      .orderBy('lead.createdAt', 'ASC')
+      .getOne();
+    if (existing) {
+      const summary = [
+        `Duplicate submission (source: ${dto.source}).`,
+        dto.note?.trim(),
+      ]
+        .filter(Boolean)
+        .join(' ');
+      await this.dataSource.getRepository(LeadActivityEntity).save({
+        leadId: existing.id,
+        authorId: actorId,
+        type: LeadActivityType.Note,
+        summary,
+      });
+      await this.leadRepo.update(
+        { id: existing.id },
+        { lastActivityAt: new Date() },
+      );
+      return { lead: await this.findOne(existing.id), duplicate: true };
+    }
+
+    const handedOver = !!dto.ownerId && dto.ownerId !== actorId;
+    const ownerId = dto.ownerId ?? (dto.assignToMe ? actorId : null);
+    const now = new Date();
+    const lead = await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(LeadEntity);
+      const saved = await repo.save(
+        repo.create({
+          ...this.profileFields(dto),
+          name: dto.name.trim(),
+          phone: toE164(dto.phone),
+          source: dto.source,
+          status: LeadStatus.New,
+          stage: LeadStage.New,
+          createdById: actorId,
+          ownerId,
+          assignedAt: ownerId ? now : null,
+          handedOverAt: handedOver ? now : null,
+          notes: dto.note?.trim() || undefined,
+        }),
+      );
+      if (ownerId) {
+        await manager.getRepository(LeadOwnerHistoryEntity).insert({
+          leadId: saved.id,
+          fromOwnerId: null,
+          toOwnerId: ownerId,
+          actorId,
+          reason: handedOver ? 'Handed over at creation' : null,
+        });
+      }
+      if (dto.note?.trim()) {
+        await manager.getRepository(LeadNoteEntity).save({
+          leadId: saved.id,
+          authorId: actorId,
+          body: dto.note.trim(),
+        });
+      }
+      return saved;
+    });
+    return { lead: await this.findOne(lead.id), duplicate: false };
+  }
+
+  /** Edits the profile of a lead. The phone number is not editable here. */
+  async updateProfile(
+    id: string,
+    dto: UpdateLeadProfileDto,
+    adminId: string,
+    isSuperAdmin = false,
+  ): Promise<LeadEntity> {
+    const lead = await this.findOne(id);
+    assertCanWorkLead(lead, { id: adminId, isSuperAdmin });
+    await this.assertStateExists(dto.stateId);
+    const changes: Partial<LeadEntity> = this.profileFields(dto);
+    if (dto.name !== undefined) changes.name = dto.name.trim();
+    if (!Object.keys(changes).length) {
+      throw new BadRequestException('Nothing to update');
+    }
+    changes.managedBy = adminId;
+    await this.leadRepo.update({ id }, changes);
+    return this.findOne(id);
   }
 
   async linkConversionByContact(
@@ -345,6 +501,13 @@ export class LeadsService {
     campaignId?: string;
     /** An admin id, or 'unassigned' for leads nobody owns. */
     ownerId?: string;
+    stage?: string;
+    buyerType?: string;
+    stateId?: string;
+    /** 'true' keeps only leads with a past-due next action that are still open. */
+    overdue?: string;
+    /** 'true' keeps only leads not contacted within the 24 hour handover SLA. */
+    slaBreached?: string;
   }) {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(1000, Math.max(1, params.limit ?? 20));
@@ -369,6 +532,33 @@ export class LeadsService {
     } else if (params.ownerId && /^[0-9a-f-]{36}$/i.test(params.ownerId)) {
       query.andWhere('lead.ownerId = :ownerId', { ownerId: params.ownerId });
     }
+    if (
+      params.stage &&
+      Object.values(LeadStage).includes(params.stage as LeadStage)
+    ) {
+      query.andWhere('lead.stage = :stage', { stage: params.stage });
+    }
+    if (
+      params.buyerType &&
+      Object.values(LeadBuyerType).includes(params.buyerType as LeadBuyerType)
+    ) {
+      query.andWhere('lead.buyerType = :buyerType', {
+        buyerType: params.buyerType,
+      });
+    }
+    if (params.stateId && /^[0-9a-f-]{36}$/i.test(params.stateId)) {
+      query.andWhere('lead.stateId = :stateId', { stateId: params.stateId });
+    }
+    if (params.overdue === 'true') {
+      query
+        .andWhere('lead.nextActionAt < now()')
+        .andWhere('lead.stage NOT IN (:...closedStages)', {
+          closedStages: [LeadStage.OrderedPaid, LeadStage.Lost],
+        });
+    }
+    if (params.slaBreached === 'true') {
+      query.andWhere('lead.slaBreachedAt IS NOT NULL');
+    }
     if (params.sourceLeadId?.trim()) {
       query.andWhere('lead.sourceLeadId ILIKE :sourceLeadId', {
         sourceLeadId: `%${params.sourceLeadId.trim()}%`,
@@ -388,7 +578,7 @@ export class LeadsService {
     if (params.search?.trim()) {
       const s = params.search.trim();
       query.andWhere(
-        '(lead.name ILIKE :search OR lead.phone ILIKE :search OR lead.state ILIKE :search OR lead.campaignName ILIKE :search OR lead.sourceLeadId ILIKE :search)',
+        '(lead.name ILIKE :search OR lead.phone ILIKE :search OR lead.state ILIKE :search OR lead.contactPerson ILIKE :search OR lead.townOrLga ILIKE :search OR lead.campaignName ILIKE :search OR lead.sourceLeadId ILIKE :search)',
         { search: `%${s}%` },
       );
     }

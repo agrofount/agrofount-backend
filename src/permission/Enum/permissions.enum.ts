@@ -110,6 +110,7 @@ export const ACTIONS = {
   EXPORT: 'export', // Export data
   IMPORT: 'import', // Import data
   ASSIGN: 'assign', // Take ownership of items (e.g. leads)
+  REASSIGN: 'reassign', // Move an owned item to another admin (e.g. leads)
 
   // Chart/View Actions
   VIEW_CHART: 'view_chart', // View specific charts
@@ -529,6 +530,8 @@ function getDefaultActionsForResource(resource) {
         ACTIONS.SEND,
         ACTIONS.ASSIGN,
         ACTIONS.VIEW_REPORTS,
+        ACTIONS.CREATE,
+        ACTIONS.REASSIGN,
       ];
 
     case RESOURCES.CREDIT_FACILITY:
