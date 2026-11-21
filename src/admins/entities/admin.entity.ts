@@ -80,6 +80,14 @@ export class AdminEntity {
   @Exclude()
   verificationTokenExpires: Date;
 
+  /** First day in role. Quarterly sales targets run from this date. */
+  @Column({ type: 'date', nullable: true })
+  startDate: string | null;
+
+  /** Staff referral code a buyer or Ayo can apply to an order. */
+  @Column({ type: 'varchar', unique: true, nullable: true })
+  referralCode: string | null;
+
   @Column({ type: 'uuid', nullable: true })
   createdBy: string;
 

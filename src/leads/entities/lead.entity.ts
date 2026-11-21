@@ -7,6 +7,13 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import {
+  LeadBuyerType,
+  LeadFarmSizeUnit,
+  LeadLostReason,
+  LeadProductInterest,
+  LeadStage,
+} from '../enums/lead-pipeline.enum';
 
 export enum LeadStatus {
   New = 'new',
@@ -21,8 +28,17 @@ export enum LeadSource {
   Manual = 'manual',
   Website = 'website',
   Other = 'other',
+  FieldVisit = 'field_visit',
+  Referral = 'referral',
+  CsSocial = 'cs_social',
+  Whatsapp = 'whatsapp',
+  PhoneCall = 'phone_call',
+  AyoWebChat = 'ayo_web_chat',
+  EventMarket = 'event_market',
+  Partner = 'partner',
 }
 
+@Index('IDX_LEAD_OWNER_STAGE', ['ownerId', 'stage'])
 @Entity('leads')
 export class LeadEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -37,6 +53,7 @@ export class LeadEntity {
   @Column()
   phone: string;
 
+  @Index('IDX_leads_normalized_phone')
   @Column({
     type: 'varchar',
     select: false,
@@ -100,6 +117,88 @@ export class LeadEntity {
 
   @Column({ type: 'timestamp', nullable: true })
   assignedAt: Date | null;
+
+  // ---- Pipeline (status above is kept for existing campaigns and reports) ----
+
+  @Column({ type: 'enum', enum: LeadStage, default: LeadStage.New })
+  stage: LeadStage;
+
+  @Column({ type: 'enum', enum: LeadLostReason, nullable: true })
+  lostReason: LeadLostReason | null;
+
+  // ---- Buyer profile ----
+
+  @Column({ type: 'varchar', nullable: true })
+  contactPerson: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  townOrLga: string | null;
+
+  /** Reference to the state table. The free-text `state` stays for other states. */
+  @Column({ type: 'uuid', nullable: true })
+  stateId: string | null;
+
+  @Column({ type: 'enum', enum: LeadBuyerType, nullable: true })
+  buyerType: LeadBuyerType | null;
+
+  @Column({ type: 'enum', enum: LeadProductInterest, nullable: true })
+  productInterest: LeadProductInterest | null;
+
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
+  farmSize: string | null;
+
+  @Column({ type: 'enum', enum: LeadFarmSizeUnit, nullable: true })
+  farmSizeUnit: LeadFarmSizeUnit | null;
+
+  /** Integer kobo. */
+  @Column({
+    type: 'bigint',
+    nullable: true,
+    transformer: {
+      to: (value?: number | null) => value,
+      from: (value?: string | null) =>
+        value === null || value === undefined ? null : Number(value),
+    },
+  })
+  estimatedOrderValueKobo: number | null;
+
+  /** For example facebook, instagram or tiktok when source is cs_social. */
+  @Column({ type: 'varchar', nullable: true })
+  sourceDetail: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  partnerName: string | null;
+
+  // ---- Handover SLA (first contact time is the existing contactedAt) ----
+
+  /** Staff member who created the lead, when it was handed to a rep. */
+  @Column({ type: 'uuid', nullable: true })
+  createdById: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  handedOverAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  slaWarnedAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  slaBreachedAt: Date | null;
+
+  // ---- Follow-up ----
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  nextAction: string | null;
+
+  @Index('IDX_LEAD_NEXT_ACTION_AT', { where: '"nextActionAt" IS NOT NULL' })
+  @Column({ type: 'timestamptz', nullable: true })
+  nextActionAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  lastActivityAt: Date | null;
+
+  /** Set when personal data was removed on request. */
+  @Column({ type: 'timestamptz', nullable: true })
+  anonymisedAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
   sourceCreatedAt: Date;
